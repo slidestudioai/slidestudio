@@ -1,0 +1,58 @@
+/* v40 */
+/* Balans (AI varaq) oynasi doim eng ustki qatlamda */
+#ssQuotaPop { z-index: 2147483000 !important; }
+.swal2-container { z-index: 2147482000 !important; }
+/* v42: Sozlamalar paneli — tor ekranda ham sig'sin, gorizontal skroll bo'lmasin */
+.sidebar:has(.settings-panel-inner) { width: min(320px, 92vw) !important; }
+.settings-panel-inner, .settings-panel-body, .settings-user-card, .ss-set-card { min-width: 0; max-width: 100%; }
+.settings-panel-body { overflow-x: hidden; }
+.settings-user-info { min-width: 0; }
+.settings-user-status, .ss-set-row small { overflow-wrap: anywhere; }
+.ss-set-row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.ss-set-row .ss-set-btn, .ss-set-row .ss-switch { flex-shrink: 0; }
+.settings-panel-body .ss-meter-wrap, .settings-panel-body .ss-meter-wrap * { max-width: 100%; box-sizing: border-box; }
+/* Namoyish (iframe ko'rsatgich) */
+.presentation-overlay.pres-v40 .pres-canvas-container,
+.presentation-overlay.pres-v40 .pres-controls,
+.presentation-overlay.pres-v40 .close-pres-btn { display: none !important; }
+.presentation-overlay.pres-v40 { overflow: hidden; }
+#ssPrepOverlay { z-index: 2147483100 !important; }
+/* Minimalist interfeys: takrorlanuvchi tugmalar yashirildi (menyuda bor) */
+#btnReferral { display: none !important; }
+/* Chap panel: miniatyuralar harakatsiz va silliq */
+#sidebar .slide-thumb img { pointer-events: none; }
+#sidebar .sidebar-slides-scroll { overscroll-behavior: contain; scroll-behavior: auto; }
+
+/* ================= v44: mobil/tor ekran tuzatmalari ================= */
+/* 1) Sahifa HECH QACHON gorizontal siljimasin (overflow:hidden dasturiy skrollni to'xtatmaydi, clip to'xtatadi) */
+html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior: none; }
+@supports (overflow: clip) {
+  html, body { overflow-x: clip; }
+}
+body { position: relative; }
+.canvas-wrapper, .editor-container, .workspace { overflow-x: hidden; }
+@supports (overflow: clip) {
+  .canvas-wrapper, .editor-container, .workspace { overflow-x: clip; }
+}
+/* Fabric'ning yashirin textarea'si ekrandan tashqariga chiqib, fokusda sahifani surib yubormasin */
+textarea[data-fabric="textarea"] { position: fixed !important; left: 0 !important; top: 0 !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none !important; font-size: 16px !important; transform: none !important; }
+
+/* 2) Balans bloki (AI varaqlar): hech qachon tor ekranga sig'maslik bo'lmasin */
+.ss-meter { min-width: 0 !important; width: 100%; box-sizing: border-box; }
+.ss-meter-wrap { min-width: 0; width: 100%; box-sizing: border-box; }
+.ss-meter-row { min-width: 0; flex-wrap: wrap; row-gap: 2px; }
+.ss-meter-row .ss-meter-name { min-width: 0; overflow-wrap: anywhere; }
+.ss-meter-row b { white-space: nowrap; margin-left: auto; }
+.ss-meter-foot { flex-wrap: wrap; row-gap: 2px; min-width: 0; }
+.ss-meter-foot > span { min-width: 0; overflow-wrap: anywhere; }
+.ss-meter-foot.ss-cross { flex-wrap: wrap; }
+.ss-bal-card { padding: 10px 12px; overflow: hidden; }
+.ss-bal-card .ss-set-row { padding-bottom: 0; }
+.settings-panel-body { overflow-x: hidden !important; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.settings-panel-body * { max-width: 100%; box-sizing: border-box; }
+.settings-user-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ssQuotaPop { width: min(280px, calc(100vw - 16px)) !important; max-width: calc(100vw - 16px) !important; box-sizing: border-box; left: auto; }
+#ssQuotaPop .ss-set-btn { white-space: normal; }
+@media (max-width: 420px) {
+  .sidebar:has(.settings-panel-inner) { width: min(300px, 94vw) !important; }
+}

@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+  /* v39: brauzer xotirasi qulfi — slayd/media/loyiha ma'lumotlari localStorage/sessionStorage'ga YOZILMAYDI (faqat RAM).
+     ISTISNO: Supabase login sessiyasi (token) — 'ss-auth-v39' kaliti ostida saqlanadi, shuning uchun sahifa
+     yangilanganda yoki uzoq turib qolganda akkauntdan chiqib ketilmaydi. Boshqa hamma kalit tozalanadi. */
+  (function(){
+    var AUTH_PREFIX = 'ss-auth-v39';
+    var P = window.Storage && window.Storage.prototype;
+    var rawGet, rawSet, rawRemove, rawKey, ls = null;
+    try { ls = window.localStorage; } catch(e) { ls = null; }
+    if (P && ls) {
+      rawGet = P.getItem; rawSet = P.setItem; rawRemove = P.removeItem; rawKey = P.key;
+      // 1) auth bo'lmagan eski kalitlarni tozalash
+      try {
+        var del = [];
+        for (var i = 0; i < ls.length; i++) { var k = rawKey.call(ls, i); if (k && k.indexOf(AUTH_PREFIX) !== 0) del.push(k); }
+        del.forEach(function(k){ rawRemove.call(ls, k); });
+      } catch(e) {}
+      // 2) faqat auth kalitlari uchun adapter (Supabase shuni ishlatadi)
+      window.__ssAuthStorage = {
+        getItem: function(k){ try { return String(k).indexOf(AUTH_PREFIX) === 0 ? rawGet.call(ls, k) : null; } catch(e) { return null; } },
+        setItem: function(k, v){ try { if (String(k).indexOf(AUTH_PREFIX) === 0) rawSet.call(ls, k, v); } catch(e) {} },
+        removeItem: function(k){ try { if (String(k).indexOf(AUTH_PREFIX) === 0) rawRemove.call(ls, k); } catch(e) {} }
+      };
+    } else {
+      // localStorage bloklangan bo'lsa — xotirada (RAM) saqlanadi, sahifa yopilguncha
+      var mem = {};
+      window.__ssAuthStorage = {
+        getItem: function(k){ return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null; },
+        setItem: function(k, v){ mem[k] = String(v); },
+        removeItem: function(k){ delete mem[k]; }
+      };
+    }
+    try { window.sessionStorage.clear(); } catch(e) {}
+    // 3) qolgan kod uchun Storage — jim "bo'sh" (v38 qulfi saqlanadi)
+    try {
+      if (P) {
+        P.getItem = function(){ return null; };
+        P.setItem = function(){};
+        P.removeItem = function(){};
+        P.clear = function(){};
+        P.key = function(){ return null; };
+      }
+    } catch(e) {}
+  })();
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Slide Studio — AI</title>
+  <meta name="description" content="AI yordamida professional slayd va taqdimotlar yarating. Slide Studio AI — ko'p tilli slayd muharriri.">
+  <meta name="theme-color" content="#7c3aed">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Courier+Prime&family=Georgia&family=Impact&family=Montserrat:wght@500;700&family=Pacifico&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>if(window.pdfjsLib){pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}</script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" />
+  <style>
+    /* FOIT: ikonka matn nomi ko'rinmasin (chevron_left, edit_note...) */
+    .material-symbols-outlined {
+      font-family: 'Material Symbols Outlined', sans-serif !important;
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      visibility: hidden;
+      width: 1.25em; height: 1.25em;
+      display: inline-flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      line-height: 1;
+    }
+    body.fonts-ready .material-symbols-outlined,
+    .fonts-ready .material-symbols-outlined {
+      visibility: visible;
+    }
+  </style>
+  <link rel="stylesheet" href="styles.css?v=43">
+  <link rel="stylesheet" href="mobile.css?v=4">
+  <link rel="stylesheet" href="v38.css?v=3">
+  <link rel="stylesheet" href="v39.css?v=1">
+  <link rel="stylesheet" href="v40.css?v=5">
+</head>
+<body>
+<script>
+(function(){
+  function mark(){ try{ document.body.classList.add('fonts-ready'); }catch(e){} }
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(mark).catch(mark);
+  }
+  // Fallback: material symbols yuklanguncha kut
+  setTimeout(mark, 1200);
+  window.addEventListener('load', mark);
+})();
+</script>
+
+  <div id="loadingOverlay">
+    <div class="glass-loader">
+      <div class="glass-spinner"></div>
+      <div class="glass-loader-title">Slide Studio</div>
+      <div class="glass-loader-sub">Yuklanmoqda...</div>
+      <div class="glass-shimmer"></div>
+    </div>
+  </div>
+
+  <div id="toastNotification">
+    <span class="material-symbols-outlined" style="color:#22c55e; font-size:18px;">check_circle</span>
+    <span id="toastMessage">Xabar</span>
+  </div>
+
+  <div class="top-header">
+    <button class="btn-hamburger" onclick="toggleSidebarMenu()" title="Slaydlar ro'yxati">
+      <span class="material-symbols-outlined">menu</span>
+    </button>
+
+    <div class="slide-logo" title="Slide Studio">S</div>
+    <div class="title-container">
+      <div id="presentationTitle" class="doc-title" contenteditable="true" onblur="onTitleChange()">Yangi Slayd Taqdimoti</div>
+      <div class="top-menu-bar">
+        <div class="top-menu-item" onclick="toggleDropdown(event, 'fileMenu')">Fayl
+          <div id="fileMenu" class="dropdown-menu">
+            <div onclick="addSlide('title_body')"><span class="material-symbols-outlined">add</span> Yangi slayd</div>
+            <div onclick="openImportModal()"><span class="material-symbols-outlined">upload_file</span> Ochish (Import)</div>
+            <div onclick="openExportModal()"><span class="material-symbols-outlined">download</span> Saqlash / Yuklab olish</div>
+          </div>
+        </div>
+        <div class="top-menu-item" onclick="toggleDropdown(event, 'editMenu')">Tahrirlash
+          <div id="editMenu" class="dropdown-menu">
+            <div onclick="undo()"><span class="material-symbols-outlined">undo</span> Bekor qilish</div>
+            <div onclick="redo()"><span class="material-symbols-outlined">redo</span> Qaytarish</div>
+            <div onclick="copyObject()"><span class="material-symbols-outlined">content_copy</span> Nusxalash</div>
+            <div onclick="ssPasteLatest()"><span class="material-symbols-outlined">content_paste</span> Joylashtirish</div>
+            <div onclick="selectAll()"><span class="material-symbols-outlined">select_all</span> Barchasini tanlash</div>
+          </div>
+        </div>
+        <div class="top-menu-item" onclick="toggleDropdown(event, 'insertMenu')">Qo'shish
+          <div id="insertMenu" class="dropdown-menu">
+            <div onclick="addTextBox()"><span class="material-symbols-outlined">title</span> Matn maydoni</div>
+            <div onclick="triggerDirectImageUpload()"><span class="material-symbols-outlined">image</span> Rasm yuklash</div>
+            <div onclick="toggleShapesMenu(event)"><span class="material-symbols-outlined">shapes</span> Shakllar</div>
+            <div onclick="openMediaBrowser()"><span class="material-symbols-outlined">travel_explore</span> Onlayn rasm / GIF / video</div>
+            <div onclick="addVideoDialog()"><span class="material-symbols-outlined">movie</span> Video (link yoki fayl)</div>
+            <div onclick="addLinkDialog()"><span class="material-symbols-outlined">link</span> Havola (link tugma)</div>
+            <div onclick="addButtonDialog()"><span class="material-symbols-outlined">smart_button</span> Tugma (interaktiv)</div>
+          </div>
+        </div>
+        <div class="top-menu-item top-menu-anim" onclick="toggleAnimPanel(event)" title="Animatsiya paneli"><span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">animation</span> Animatsiya</div>
+        <div class="top-menu-item" onclick="toggleDropdown(event, 'viewMenu')">Ko'rinish
+          <div id="viewMenu" class="dropdown-menu">
+            <div onclick="toggleFitFullScreen()"><span class="material-symbols-outlined">crop_free</span> Katta qilish</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn-login" id="googleLoginBtn" onclick="handleGoogleLogin()">
+        <span class="material-symbols-outlined" style="color:#4285F4;">account_circle</span>
+        <span id="loginBtnText">Login</span>
+      </button>
+      <button class="btn-ai-toggle" onclick="toggleAISidebar()" title="AI">
+        <span class="material-symbols-outlined">auto_awesome</span><span class="ai-label"> AI</span>
+      </button>
+      <button class="btn-ribbon-toggle" onclick="toggleRibbonToolbar()" title="Asboblar paneli (ochish/yopish)">
+        <span class="material-symbols-outlined" id="ribbonToggleIcon">tune</span>
+      </button>
+      <button class="btn-slideshow" onclick="startPresentation()" title="Namoyish">
+        <span class="material-symbols-outlined">play_arrow</span><span class="slideshow-label"> Namoyish</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="tokenStatusBar">Varaq: <span id="statCredits">-</span> | Sessiya: <span id="statPagesUsed">0</span></div>
+
+  <div class="toolbar-container" id="ribbonToolbar">
+    <button class="tb-btn" title="Undo" onclick="undo()"><span class="material-symbols-outlined">undo</span></button>
+    <button class="tb-btn" title="Redo" onclick="redo()"><span class="material-symbols-outlined">redo</span></button>
+    <div class="divider"></div>
+    <button class="tb-btn desk-only" title="Yangi slayd" onclick="addSlide('title_body')"><span class="material-symbols-outlined">add</span></button>
+    <button class="tb-btn desk-only" title="Matn qo'shish" onclick="addTextBox()"><span class="material-symbols-outlined">text_fields</span></button>
+    <button class="tb-btn desk-only" title="Rasm yuklash" onclick="triggerDirectImageUpload()"><span class="material-symbols-outlined">image</span></button>
+    <button class="tb-btn" title="Shakllar" onclick="toggleShapesMenu(event)"><span class="material-symbols-outlined">shapes</span></button>
+    <button class="tb-btn desk-only" title="Onlayn rasm / GIF / video" onclick="openMediaBrowser()"><span class="material-symbols-outlined">travel_explore</span></button>
+    <button class="tb-btn desk-only" title="Video qo'shish (YouTube / MP4 link yoki fayl)" onclick="addVideoDialog()"><span class="material-symbols-outlined">movie</span></button>
+    <button class="tb-btn desk-only" title="Tugma qo'shish" onclick="addButtonDialog()"><span class="material-symbols-outlined">smart_button</span></button>
+    <button class="tb-btn desk-only" title="Havola qo'shish" onclick="addLinkDialog()"><span class="material-symbols-outlined">link</span></button>
+    <button class="tb-btn" title="Animatsiya" onclick="toggleAnimPanel(event)"><span class="material-symbols-outlined">animation</span></button>
+    <div class="divider"></div>
+    <select id="fontFamily" class="tb-select" onchange="applyTextStyle('fontFamily', this.value)">
+      <option value="Arial">Arial</option>
+      <option value="Times New Roman">Times New Roman</option>
+      <option value="Courier New">Courier New</option>
+      <option value="Georgia">Georgia</option>
+      <option value="Impact">Impact</option>
+      <option value="Pacifico">Pacifico</option>
+      <option value="Roboto">Roboto</option>
+      <option value="Montserrat">Montserrat</option>
+      <option value="Caveat">Caveat</option>
+    </select>
+    <div class="font-size-control">
+      <button class="font-size-btn" onclick="changeFontSize(-2)">-</button>
+      <input type="number" id="fontSize" class="tb-input-num" value="28" min="8" max="120" onchange="applyTextStyle('fontSize', parseInt(this.value))">
+      <button class="font-size-btn" onclick="changeFontSize(2)">+</button>
+    </div>
+    <button class="tb-btn" title="Qalin" onclick="toggleBold()"><span class="material-symbols-outlined">format_bold</span></button>
+    <button class="tb-btn" title="Oqma" onclick="toggleItalic()"><span class="material-symbols-outlined">format_italic</span></button>
+    <button class="tb-btn" title="Tagiga chizilgan" onclick="toggleUnderline()"><span class="material-symbols-outlined">format_underlined</span></button>
+    <button class="tb-btn" title="Matn rangi" onclick="openColorPicker('text')"><span class="material-symbols-outlined">format_color_text</span></button>
+    <div class="divider"></div>
+    <button class="tb-btn" title="Chapga" onclick="setTextAlignment('left')"><span class="material-symbols-outlined">format_align_left</span></button>
+    <button class="tb-btn" title="Markazga" onclick="setTextAlignment('center')"><span class="material-symbols-outlined">format_align_center</span></button>
+    <button class="tb-btn" title="O'ngga" onclick="setTextAlignment('right')"><span class="material-symbols-outlined">format_align_right</span></button>
+    <div class="divider"></div>
+    <button class="tb-btn" title="Shakl rangi" onclick="openColorPicker('fill')"><span class="material-symbols-outlined">palette</span></button>
+    <button class="tb-btn" title="Eng tepaga (hammasining ustiga) — Ctrl+]" onclick="bringToFront()"><span class="material-symbols-outlined">flip_to_front</span></button>
+    <button class="tb-btn" title="Eng pastga (hammasining tagiga) — Ctrl+[" onclick="sendToBack()"><span class="material-symbols-outlined">flip_to_back</span></button>
+    <div class="divider"></div>
+    <button class="tb-btn desk-only" title="Orqa fon rangi" onclick="openColorPicker('bg')"><span class="material-symbols-outlined">format_color_fill</span></button>
+    <button class="tb-btn" title="Orqa fon rasmi" onclick="triggerBackgroundImageUpload()"><span class="material-symbols-outlined">wallpaper</span></button>
+  </div>
+
+  <div class="mobile-action-bar" id="mobileActionBar">
+    <button class="mab-btn primary" onclick="openImportModal()">
+      <span class="material-symbols-outlined">folder_open</span> Ochish
+    </button>
+    <button class="mab-btn" onclick="addSlide('title_body')">
+      <span class="material-symbols-outlined">add_box</span> Slayd
+    </button>
+    <button class="mab-btn" onclick="addTextBox()">
+      <span class="material-symbols-outlined">title</span> Matn
+    </button>
+    <button class="mab-btn" onclick="triggerDirectImageUpload()">
+      <span class="material-symbols-outlined">image</span> Rasm
+    </button>
+    <button class="mab-btn accent" onclick="openMediaBrowser()">
+      <span class="material-symbols-outlined">gif_box</span> GIF/Rasm/Video
+    </button>
+    <button class="mab-btn" onclick="addVideoDialog()">
+      <span class="material-symbols-outlined">movie</span> Video
+    </button>
+    <button class="mab-btn" onclick="addButtonDialog()">
+      <span class="material-symbols-outlined">smart_button</span> Tugma
+    </button>
+    <button class="mab-btn" onclick="addLinkDialog()">
+      <span class="material-symbols-outlined">link</span> Havola
+    </button>
+    <button class="mab-btn" onclick="toggleAnimPanel(event)">
+      <span class="material-symbols-outlined">animation</span> Animatsiya
+    </button>
+    <button class="mab-btn" onclick="openColorPicker('bg')">
+      <span class="material-symbols-outlined">format_color_fill</span> Fon
+    </button>
+    <button class="mab-btn" onclick="zoomCanvasIn()">
+      <span class="material-symbols-outlined">zoom_in</span> +
+    </button>
+    <button class="mab-btn" onclick="zoomCanvasOut()">
+      <span class="material-symbols-outlined">zoom_out</span> −
+    </button>
+    <button class="mab-btn" onclick="resetCanvasZoom()">
+      <span class="material-symbols-outlined">fit_screen</span> Fit
+    </button>
+    <button class="mab-btn" onclick="deleteSelected()">
+      <span class="material-symbols-outlined">delete</span> O'chirish
+    </button>
+  </div>
+
+  <div class="workspace">
+    <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebarMenu()"></div>
+
+    <div class="sidebar" id="sidebar"></div>
+
+    <div class="editor-container" id="editorContainer">
+      <div class="pending-images-bar" id="pendingImagesBar">
+        <span class="pending-label">
+          <span class="material-symbols-outlined" style="font-size:15px;">radar</span>
+          Rasmlar:
+        </span>
+        <div class="pending-cards" id="pendingImagesCards"></div>
+      </div>
+
+      <div class="workspace-previews-bar" id="workspacePreviewsBar">
+        <span class="label">Varoq:</span>
+      </div>
+
+      <div class="sticky-slide-counter" id="stickySlideCounter">
+        <span class="material-symbols-outlined" style="font-size: 16px; color: #0b57d0;">slideshow</span>
+        <span id="slideCounterText">1 / 1</span>
+      </div>
+
+      <div class="canvas-wrapper" id="canvasWrapper">
+        <div class="canvas-card" id="canvasCard">
+          <div id="gifBgOverlay" class="gif-bg-overlay"></div>
+          <canvas id="mainCanvas" width="960" height="540"></canvas>
+          <div id="gifOverlay" class="gif-overlay"></div>
+          <div id="imageBadgesOverlay"></div>
+          <div id="guideV" class="guide guide-v"></div>
+          <div id="guideH" class="guide guide-h"></div>
+        </div>
+      </div>
+
+      <div class="bottom-controls-wrapper">
+        <div class="bottom-mobile-controls">
+          <button class="bottom-ctrl-btn" onclick="switchSlide(activeIndex - 1)" title="Oldingi slayd">
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+          <button class="bottom-ctrl-btn" onclick="openExportModal()" title="Saqlash">
+            <span class="material-symbols-outlined">save</span>
+          </button>
+          <button class="bottom-ctrl-btn" onclick="toggleFitFullScreen()" title="Katta qilish">
+            <span class="material-symbols-outlined">crop_free</span>
+          </button>
+          <button class="bottom-ctrl-btn" onclick="switchSlide(activeIndex + 1)" title="Keyingi slayd">
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
+
+        <div class="bottom-ai-container" onclick="openBottomAiModal()">
+          <span class="material-symbols-outlined" style="color:#7c3aed; font-size:20px;">edit_note</span>
+          <span class="bottom-ai-input-display">Shu varoq haqida yozing...</span>
+          <button class="bottom-ai-btn" type="button"><span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></button>
+        </div>
+      </div>
+
+      <button class="fullscreen-exit-btn" id="fullScreenExitBtn" onclick="toggleFitFullScreen(false)" title="Chiqish">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+    </div>
+
+    <div class="ai-sidebar" id="aiSidebar">
+      <div class="ai-sidebar-header">
+        <h4><span class="material-symbols-outlined" style="color: #7c3aed;">auto_awesome</span> AI</h4>
+        <select id="aiModelSelect" class="ai-model-select" title="Model tanlash">
+          <option value="fast" selected>Tez AI</option>
+          <option value="deep">Chuqur AI (3× varaq)</option>
+        </select>
+        <button class="tb-btn" onclick="startNewChat()" title="Yangi suhbat (tarixni tozalash)"><span class="material-symbols-outlined">add_comment</span></button>
+        <button class="tb-btn" onclick="toggleAISidebar()"><span class="material-symbols-outlined">close</span></button>
+  </div>
+  <div class="ai-chat-body" id="aiChatBody">
+        <div class="ai-msg bot">Salom! Men Slide Studio AI assistentiman. Istalgan tilda yozing — shu tilda javob beraman. Menga istalgan mavzuda slayd yaratishni yoki tahrirlashni buyurishingiz mumkin.</div>
+      </div>
+      <div class="ai-sidebar-footer">
+        <div class="ai-balance-strip" id="aiBalanceStrip" style="display:none"></div>
+        <div class="chat-previews-bar" id="chatPreviewsBar"></div>
+        <div class="ai-sidebar-input-box">
+          <button class="attach-btn" id="attachBtnSidebar" title="Rasm biriktirish">
+            <span class="material-symbols-outlined" style="font-size:20px;">attach_file</span>
+          </button>
+          <textarea id="aiSidebarInput" rows="1" placeholder="Butun slayd uchun buyruq..." oninput="autoGrowSidebarInput(this)" onkeydown="handleSidebarInputKey(event)"></textarea>
+          <button class="send-btn" id="btnSidebarAi" onclick="sendSidebarAiPrompt()"><span class="material-symbols-outlined">send</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="bottomAiModal" class="bottom-ai-modal">
+    <div class="bottom-ai-modal-content">
+      <div class="bottom-ai-modal-header">
+        <span style="font-weight:600; font-size:13px; display:flex; align-items:center; gap:6px;">
+          <span class="material-symbols-outlined" style="font-size:18px; color:#7c3aed;">edit_note</span>
+          Varoq <span id="bottomAiSlideNum">1</span> uchun buyruq
+        </span>
+        <button onclick="closeBottomAiModal()" style="background:transparent; border:none; cursor:pointer; color:#5f6368; padding:4px; border-radius:50%;">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div id="bottomAiPreviews" class="bottom-ai-previews"></div>
+      <textarea id="bottomAiTextarea" class="bottom-ai-textarea" placeholder="Shu varoq haqida yozing..." onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); sendBottomAiPrompt(); }"></textarea>
+      <div class="bottom-ai-modal-footer">
+        <button class="attach-btn" id="attachBtnBottomModal" title="Rasm biriktirish">
+          <span class="material-symbols-outlined" style="font-size:20px;">attach_file</span>
+        </button>
+
+        <button id="btnBottomAiSend" class="bottom-ai-send-btn" onclick="sendBottomAiPrompt()">
+          <span class="material-symbols-outlined" style="font-size:16px;">send</span>
+          Yuborish
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="shapesMenu" class="shapes-menu">
+    <div class="shape-opt" title="To'rtburchak" onclick="addShape('rect')"><span class="material-symbols-outlined">rectangle</span></div>
+    <div class="shape-opt" title="Aylana" onclick="addShape('circle')"><span class="material-symbols-outlined">circle</span></div>
+    <div class="shape-opt" title="Uchburchak" onclick="addShape('triangle')"><span class="material-symbols-outlined">change_history</span></div>
+    <div class="shape-opt" title="Chiziq" onclick="addShape('line')"><span class="material-symbols-outlined">horizontal_rule</span></div>
+    <div class="shape-opt" title="O'ng strelka" onclick="addShape('arrow_right')"><span class="material-symbols-outlined">arrow_forward</span></div>
+    <div class="shape-opt" title="Tepaga strelka" onclick="addShape('arrow_up')"><span class="material-symbols-outlined">arrow_upward</span></div>
+    <div class="shape-opt" title="Pastga strelka" onclick="addShape('arrow_down')"><span class="material-symbols-outlined">arrow_downward</span></div>
+    <div class="shape-opt" title="Yulduz" onclick="addShape('star')"><span class="material-symbols-outlined">grade</span></div>
+    <div class="shape-opt" title="Beshburchak" onclick="addShape('pentagon')"><span class="material-symbols-outlined">pentagon</span></div>
+    <div class="shape-opt" title="Oltiburchak" onclick="addShape('hexagon')"><span class="material-symbols-outlined">hexagon</span></div>
+    <div class="shape-opt" title="Yurak" onclick="addShape('heart')"><span class="material-symbols-outlined">favorite</span></div>
+    <div class="shape-opt" title="Chat Bubble" onclick="addShape('chat_bubble')"><span class="material-symbols-outlined">chat_bubble</span></div>
+  </div>
+
+  <div id="colorModal" class="color-modal-overlay">
+    <div class="color-modal-card">
+      <div class="color-modal-header">
+        <button onclick="closeColorPicker()">Bekor qilish</button>
+        <span style="font-size:13px; font-weight:600;">Rang tanlash</span>
+        <button class="btn-select" onclick="confirmColorSelection()">Tanlash</button>
+      </div>
+      <div class="color-modal-tabs">
+        <button id="tabPalette" class="color-tab-btn active" onclick="switchColorTab('palette')">Palitra</button>
+        <button id="tabCustom" class="color-tab-btn" onclick="switchColorTab('custom')">Maxsus</button>
+      </div>
+      <div class="color-modal-body">
+        <div id="paletteView" class="palette-grid"></div>
+        <div id="customView" class="spectrum-container" style="display:none;">
+          <div class="spectrum-box" id="spectrumBox" onmousedown="handleSpectrumDrag(event)">
+            <div class="spectrum-overlay-white"></div>
+            <div class="spectrum-overlay-black"></div>
+            <div class="spectrum-handle" id="spectrumHandle"></div>
+          </div>
+          <input type="range" class="hue-slider" id="hueSlider" min="0" max="360" value="0" oninput="updateHue(this.value)">
+          <div class="rgb-inputs">
+            <div class="rgb-field"><input type="number" id="rgbR" min="0" max="255" value="255" onchange="updateFromRGBInputs()"><label>R</label></div>
+            <div class="rgb-field"><input type="number" id="rgbG" min="0" max="255" value="0" onchange="updateFromRGBInputs()"><label>G</label></div>
+            <div class="rgb-field"><input type="number" id="rgbB" min="0" max="255" value="0" onchange="updateFromRGBInputs()"><label>B</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="exportModal" class="modal-overlay">
+    <div class="modal-card">
+      <h3>Slaydni Saqlash / Export qilish</h3>
+      <p style="font-size: 12px; color: #5f6368;">Qaysi formatda yuklab olmoqchisiz?</p>
+      <button class="modal-btn" onclick="exportHTML(); closeExportModal();"><span class="material-symbols-outlined" style="color:#94a3b8;">html</span> HTML — mustaqil namoyish (oflayn, matn belgilanadi) + qayta tahrirlash</button>
+      <button class="modal-btn" onclick="exportPPTX(); closeExportModal();"><span class="material-symbols-outlined" style="color:#b06000;">slideshow</span> PPTX (PowerPoint / Google Slides / WPS — havola, tugma, MP4 ishlaydi)</button>
+      <button class="modal-btn" onclick="exportPDF(); closeExportModal();"><span class="material-symbols-outlined" style="color:#d93025;">picture_as_pdf</span> PDF (animatsiyasiz, havolalari bosiladi)</button>
+      <button class="tb-btn" style="align-self: flex-end; margin-top: 8px;" onclick="closeExportModal()">Bekor qilish</button>
+    </div>
+  </div>
+
+  <div id="importModal" class="modal-overlay">
+    <div class="modal-card">
+      <h3>Faylni Import Qilish</h3>
+      <p style="font-size: 12px; color: #5f6368;">PPTX / PDF / HTML — dunyo standarti. PPTX va HTML qayta tahrirlanadi.</p>
+      <input type="file" id="importFileInput" accept=".pptx,.pdf,.html,.htm" style="font-size:12px;">
+      <button class="modal-btn" id="btnDoImport" onclick="performImport()"><span class="material-symbols-outlined" style="color:#94a3b8;">file_upload</span> Import qilish</button>
+      <button class="tb-btn" style="align-self: flex-end; margin-top: 8px;" onclick="closeImportModal()">Bekor qilish</button>
+    </div>
+  </div>
+
+  <div id="mediaBrowserModal" class="media-browser-overlay" role="dialog" aria-modal="true" aria-label="Rasm, GIF va video qo'shish">
+    <div class="media-browser-card">
+      <div class="mb-head">
+        <div class="mb-seg">
+          <button id="mediaTabImages" class="media-tab-btn active" onclick="switchMediaTab('images')">
+            <span class="material-symbols-outlined">image</span> Rasm
+          </button>
+          <button id="mediaTabGifs" class="media-tab-btn" onclick="switchMediaTab('gifs')">
+            <span class="material-symbols-outlined">gif_box</span> GIF
+          </button>
+          <button id="mediaTabVideos" class="media-tab-btn" onclick="switchMediaTab('videos')">
+            <span class="material-symbols-outlined">movie</span> Video
+          </button>
+        </div>
+        <button class="mb-icon-btn" onclick="mediaRefresh()" title="Yangilash"><span class="material-symbols-outlined">refresh</span></button>
+        <button class="mb-icon-btn" onclick="closeMediaBrowser()" title="Yopish"><span class="material-symbols-outlined">close</span></button>
+      </div>
+
+      <div class="mb-search">
+        <span class="material-symbols-outlined mb-search-ico">search</span>
+        <input type="text" id="mediaSearchInput" class="media-search-input" placeholder="Qidirish: mashina, tabiat, happy..." autocomplete="off" enterkeyhint="search" oninput="mediaSearchDebounced()" onkeydown="if(event.key==='Enter'){event.preventDefault(); mediaSearchOnline();}">
+        <button id="mediaClearBtn" class="mb-clear" type="button" onclick="mediaClearSearch()" style="display:none;"><span class="material-symbols-outlined">close</span></button>
+      </div>
+
+      <div id="mediaChips" class="mb-chips"></div>
+
+      <div id="mediaSearchResults" class="media-results-grid"></div>
+
+      <div class="mb-actionbar">
+        <div id="mediaSelThumb" class="mb-sel-thumb"></div>
+        <div id="mediaSelInfo" class="mb-sel-info">Tanlash uchun bosing</div>
+        <button id="mediaBgBtn" class="mb-btn soft" onclick="mediaSetAsBackground()"><span class="material-symbols-outlined">wallpaper</span><span class="mb-btn-label">Fon</span></button>
+        <button id="mediaPlaceBtn" class="mb-btn primary" onclick="mediaPlaceSelected()" disabled><span class="material-symbols-outlined">add_photo_alternate</span><span class="mb-btn-label">Slaydga qo'yish</span></button>
+      </div>
+
+      <details class="mb-more">
+        <summary><span class="material-symbols-outlined">add_link</span> URL yoki fayldan qo'shish</summary>
+        <div class="mb-more-body">
+          <div class="media-url-row">
+            <input type="text" id="mediaUrlInput" class="media-url-input" placeholder="https://... rasm, GIF yoki video (YouTube, Vimeo, .mp4) manzili">
+            <button class="mb-btn soft" onclick="mediaAddFromUrl()">Qo'shish</button>
+          </div>
+          <label class="mb-btn soft mb-upload">
+            <span class="material-symbols-outlined">upload</span> Fayldan yuklash
+            <input type="file" id="mediaFileInput" accept="image/*,video/*" multiple style="display:none;" onchange="mediaHandleFiles(event)">
+          </label>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <div id="presentationOverlay" class="presentation-overlay">
+    <button class="close-pres-btn" onclick="closePresentation()"><span class="material-symbols-outlined">close</span></button>
+    <div class="pres-canvas-container">
+      <div class="pres-stage" id="presStage">
+        <div id="presentationGifBg" class="pres-gif-bg"></div>
+        <img id="presentationImage" src="" alt="Slide Presentation">
+        <div id="presentationGifOverlay" class="pres-gif-overlay"></div>
+      </div>
+    </div>
+    <div class="pres-controls">
+      <button class="pres-btn" onclick="event.stopPropagation(); prevPresentationSlide()"><span class="material-symbols-outlined">chevron_left</span></button>
+      <span id="presCounter" style="font-size:13px; font-weight:600;">1 / 1</span>
+      <button class="pres-btn" onclick="event.stopPropagation(); nextPresentationSlide()"><span class="material-symbols-outlined">chevron_right</span></button>
+    </div>
+  </div>
+
+  <div id="slideContextMenu" class="context-menu">
+    <div class="context-menu-item" onclick="duplicateSlide()"><span class="material-symbols-outlined">content_copy</span> Nusxalash</div>
+    <div class="context-menu-item" onclick="deleteSlide()"><span class="material-symbols-outlined">delete</span> O'chirish</div>
+  </div>
+
+  <div id="objectContextMenu" class="context-menu">
+    <div class="context-menu-item" onclick="copyObject()"><span class="material-symbols-outlined">content_copy</span> Nusxalash</div>
+    <div class="context-menu-item" onclick="ssPasteLatest()"><span class="material-symbols-outlined">content_paste</span> Joylashtirish</div>
+    <div class="context-menu-item" onclick="bringToFront()"><span class="material-symbols-outlined">flip_to_front</span> Eng tepaga</div>
+    <div class="context-menu-item" onclick="sendToBack()"><span class="material-symbols-outlined">flip_to_back</span> Eng pastga</div>
+    <div class="context-menu-item" onclick="deleteSelected()"><span class="material-symbols-outlined">delete</span> O'chirish</div>
+  </div>
+
+  <div id="imageHoverTooltip"></div>
+  <script src="js/00a_media_ram.js?v=1"></script>
+  <script src="js/00_gif_decoder.js?v=2"></script>
+  <script src="js/01_state.js?v=141"></script>
+  <script src="js/02_gif_overlay.js?v=40"></script>
+  <script src="js/03_auth_project.js?v=147"></script>
+  <script src="js/04_websocket_stream.js?v=138"></script>
+  <script src="js/05_ai_chat.js?v=37"></script>
+  <script src="js/06_media_gif.js?v=37"></script>
+  <script src="js/07_ai_commands.js?v=40"></script>
+  <script src="js/08_canvas_slides.js?v=500"></script>
+  <script src="js/09_editor_ui.js?v=137"></script>
+  <script src="js/10_export_present.js?v=492"></script>
+  <script src="js/11_monitoring.js?v=530"></script>
+  <script src="js/12_mobile.js?v=4"></script>
+  <script src="js/13_community.js?v=104"></script>
+  <script src="js/14_pptx_io.js?v=12"></script>
+  <script src="js/15_video_anim_btn.js?v=52"></script>
+  <script src="js/16_shapes_fonts.js?v=1"></script>
+  <script src="js/17_ux_fix.js?v=6"></script>
+  <script src="js/18_v29_ux.js?v=1"></script>
+  <script src="js/19_v30_guard.js?v=3"></script>
+  <script src="js/20_v30_media.js?v=1"></script>
+  <script src="js/21_v30_ui.js?v=1"></script>
+  <script src="js/22_v31_fixes.js?v=492"></script>
+  <script src="js/23_v36_fixes.js?v=4"></script>
+  <script src="js/24_v37_upgrade.js?v=2"></script>
+  <script src="js/25_v38_media_fx.js?v=492"></script>
+  <script src="js/26_v38_input.js?v=2"></script>
+  <script src="js/27_v38_app.js?v=4"></script>
+  <script src="js/28_v39_fixes.js?v=2"></script>
+  <script src="js/29_v40_html_export.js?v=5"></script>
+  <script src="js/30_v40_present_persist.js?v=7"></script>
+  <script src="js/31_v42_responsive.js?v=2"></script>
+  <script src="js/32_v43_slim_images.js?v=1"></script>
+  <script src="js/33_v43_telegram.js?v=1"></script>
+  <script src="js/34_v44_mobile_fix.js?v=1"></script>
+  <script src="js/35_v45_tglink.js?v=2"></script>
+  <script src="js/36_v45_tgdeck.js?v=1"></script>
+  <script src="js/37_v45_deck_guard.js?v=1"></script>
+  <script src="js/38_v46_fixes.js?v=2"></script>
+  <script src="js/39_v47_pro_ads_admin.js?v=530"></script>
+  <script src="js/40_v48_slide_fx.js?v=492"></script>
+  </body>
+</html>

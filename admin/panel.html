@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="uz"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Admin</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--card2:#1f232c;--line:#2a2f3a;--tx:#e8eaf0;--mut:#8b93a5;--pri:#4f8cff;--ok:#2fbf71;--warn:#f5a524;--bad:#ef4f5f;--vip:#c9a227;--r:14px}
+@media (prefers-color-scheme:light){:root{--bg:#f3f5f9;--card:#fff;--card2:#f0f2f7;--line:#dde1ea;--tx:#161a22;--mut:#667085}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+body{padding-bottom:calc(74px + env(safe-area-inset-bottom,0px));padding-top:env(safe-area-inset-top,0px)}
+header{position:sticky;top:0;z-index:20;background:var(--bg);padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+header h1{font-size:17px;margin:0;flex:1}
+header .dot{width:9px;height:9px;border-radius:50%;background:var(--ok)}
+main{max-width:980px;margin:0 auto;padding:14px 14px 30px}
+nav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--card);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom,0px));overflow-x:auto}
+nav button{flex:1;min-width:64px;background:none;border:0;color:var(--mut);padding:6px 2px;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px;border-radius:10px}
+nav button i{font-style:normal;font-size:20px}
+nav button.on{color:var(--pri);background:rgba(79,140,255,.12)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px}
+.stat b{display:block;font-size:24px;margin-top:2px}.stat span{color:var(--mut);font-size:12px}
+h2{font-size:15px;margin:18px 2px 8px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+input,select,textarea{width:100%;background:var(--card2);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font:inherit;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--pri)}
+textarea{min-height:90px;resize:vertical}
+label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+.btn{background:var(--pri);color:#fff;border:0;border-radius:10px;padding:11px 14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.sec{background:var(--card2);color:var(--tx);border:1px solid var(--line)}.btn.bad{background:var(--bad)}.btn.ok{background:var(--ok)}.btn.vip{background:var(--vip);color:#111}
+.btn.sm{padding:7px 10px;font-size:13px}.btn:disabled{opacity:.5}
+.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}.row>.fit{flex:none}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:8px 0}.chip{flex:none;padding:6px 12px;border-radius:99px;background:var(--card2);border:1px solid var(--line);color:var(--mut);font-size:13px}.chip.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.item{display:flex;gap:10px;align-items:center;padding:12px;border-bottom:1px solid var(--line)}.item:last-child{border:0}
+.item .t{flex:1;min-width:0}.item .t b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.item .t small{color:var(--mut)}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;background:var(--card2);color:var(--mut)}
+.badge.pro{background:rgba(79,140,255,.18);color:var(--pri)}.badge.vip{background:rgba(201,162,39,.2);color:var(--vip)}.badge.bad{background:rgba(239,79,95,.18);color:var(--bad)}.badge.ok{background:rgba(47,191,113,.18);color:var(--ok)}
+.sheet{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center}
+.sheet>div{background:var(--bg);width:100%;max-width:640px;max-height:92vh;overflow:auto;border-radius:20px 20px 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom,0px))}
+@media(min-width:700px){.sheet{align-items:center}.sheet>div{border-radius:20px}}
+.sheet h3{margin:0 0 4px}.x{float:right;background:none;border:0;color:var(--mut);font-size:24px}
+.sw{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}
+.sw input{width:auto}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:90px;background:#222;color:#fff;padding:10px 16px;border-radius:12px;z-index:99;max-width:90%;font-size:14px}
+.toast.err{background:var(--bad)}
+.ad{display:flex;gap:10px;padding:12px;border-bottom:1px solid var(--line)}.ad img,.ad video{width:64px;height:64px;object-fit:cover;border-radius:10px;background:var(--card2);flex:none}
+.empty{color:var(--mut);text-align:center;padding:26px}
+.kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);gap:10px}.kv:last-child{border:0}.kv span:first-child{color:var(--mut)}
+.pill-ok{color:var(--ok)}.pill-bad{color:var(--bad)}
+.preview{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card2);margin-top:8px}.preview img,.preview video{width:100%;max-height:160px;object-fit:cover;display:block}.preview div{padding:10px}
+</style></head><body>
+<header><span class="dot" id="dot"></span><h1 id="ttl">Admin panel</h1><button class="btn sec sm" onclick="load(true)">⟳</button></header>
+<main id="main"><div class="empty">Yuklanmoqda…</div></main>
+<nav id="nav"></nav>
+<script>
+"use strict";
+const tg=window.Telegram&&Telegram.WebApp; try{tg&&tg.ready();tg&&tg.expand();}catch(e){}
+const TOKEN=(location.pathname.split('/')[2]||'');
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num=v=>v==null?'—':Number(v).toLocaleString('uz');
+let tab=localStorage.getItem('adm_tab')||'home';
+const TABS=[['home','📊','Bosh'],['users','👥','Odamlar'],['ads','📢','Reklama'],['settings','⚙️','Sozlama'],['more','☰','Yana']];
+
+async function api(op,body){
+  let r;
+  try{r=await fetch('/_a/api/'+op,{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Token':TOKEN},body:JSON.stringify(body||{})});}
+  catch(e){toast('Tarmoq xatosi',1);throw e;}
+  if(r.status===404){dead();throw new Error('expired');}
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){toast(j.error||('Xato '+r.status),1);throw new Error(j.error||r.status);}
+  return j;
+}
+function dead(){document.body.innerHTML='<div class="empty" style="padding:80px 20px">🔒 Sessiya tugagan.<br>Botda <b>admin</b> deb yozib, panelni qayta oching.</div>';}
+function toast(m,err){const t=document.createElement('div');t.className='toast'+(err?' err':'');t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),err?4200:2200);}
+function sheet(html){closeSheet();const s=document.createElement('div');s.className='sheet';s.id='sheet';s.innerHTML='<div>'+html+'</div>';s.addEventListener('click',e=>{if(e.target===s)closeSheet();});document.body.appendChild(s);return s;}
+function closeSheet(){const s=$('#sheet');if(s)s.remove();}
+function fdate(v){if(!v)return '—';const d=new Date(v);return isNaN(d)?'—':d.toLocaleString('uz',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});}
+function nav(){$('#nav').innerHTML=TABS.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="go('${t[0]}')"><i>${t[1]}</i>${t[2]}</button>`).join('');}
+function go(t){tab=t;localStorage.setItem('adm_tab',t);nav();load();}
+async function load(force){nav();const m=$('#main');try{await ({home,users,ads,settings,more}[tab])(m);}catch(e){if(e.message!=='expired')m.innerHTML='<div class="empty">Yuklanmadi: '+esc(e.message)+'</div>';}}
+
+/* ---------------- BOSH ---------------- */
+async function home(m){
+  const [s,sys]=await Promise.all([api('stats'),api('system')]);
+  const st=(k,v,x)=>`<div class="card stat"><span>${k}</span><b>${v}</b>${x?`<span>${x}</span>`:''}</div>`;
+  const mig=sys.migration||{};const bad=Object.keys(mig).filter(k=>!mig[k]);
+  m.innerHTML=(bad.length?`<div class="card" style="border-color:var(--warn)">⚠️ Bazada yetishmaydi: <b>${bad.map(esc).join(', ')}</b><br><small style="color:var(--mut)">Supabase → SQL Editor da <b>SUPABASE_SCHEMA.sql</b> ni bir marta ishga tushiring.</small></div>`:'')+
+  `<h2>Foydalanuvchilar</h2><div class="grid">${st('Jami',num(s.users_total),'+'+num(s.new_7d)+' (7 kun)')}${st('Faol (24 soat)',num(s.users_24h),num(s.users_7d)+' (7 kun)')}${st('Telegram',num(s.tg_users),'ulangan: '+num(s.linked))}${st('VIP / cheksiz',num(s.vip)+' / '+num(s.unlimited))}${st('Bloklangan',num(s.blocked))}</div>
+  <h2>Daromad</h2><div class="grid">${st('Paket (30 kun)',num(s.purchases_30d))}${st('Jami buyurtma',num(s.orders_total))}</div>
+  <h2>Reklama</h2><div class="grid">${st('Faol reklama',num(s.ads_active))}${st('Ko\'rsatildi',num(s.ad_impressions))}${st('Bosildi',num(s.ad_clicks),'CTR '+s.ad_ctr+'%')}</div>
+  <h2>Server</h2><div class="grid">${st('Onlayn (WS)',num(s.ws_live))}${st('Sessiyalar',num(s.sessions))}${st('Holat',sys.paused?'⏸ to\'xtatilgan':'🟢 ishlayapti')}</div>`;
+}
+
+/* ---------------- FOYDALANUVCHILAR ---------------- */
+let uq='',uf='all';
+async function users(m){
+  m.innerHTML=`<input id="uq" placeholder="Email, Telegram ID yoki user_id…" value="${esc(uq)}"><div class="chips">${[['all','Hammasi'],['vip','VIP'],['unlimited','Cheksiz'],['blocked','Bloklangan'],['tg','Telegram']].map(c=>`<span class="chip ${uf===c[0]?'on':''}" onclick="uf='${c[0]}';users($('#main'))">${c[1]}</span>`).join('')}</div><div class="card" id="ulist" style="padding:0"><div class="empty">…</div></div>`;
+  let tm;$('#uq').addEventListener('input',e=>{uq=e.target.value;clearTimeout(tm);tm=setTimeout(fill,350);});
+  await fill();
+  async function fill(){const r=await api('users',{q:uq,filter:uf,limit:40});$('#ulist').innerHTML=r.users.length?r.users.map(u=>`<div class="item" onclick="openUser('${esc(u.user_id)}')"><div class="t"><b>${esc(u.email||u.user_id)}</b><small>${planBadge(u)} ${u.tg_id?'✈️ '+u.tg_id+' ':''}· ${u.unlimited?'∞':u.free_pages+' + '+u.paid_pages} varaq</small></div>${u.blocked?'<span class="badge bad">blok</span>':''}</div>`).join(''):'<div class="empty">Topilmadi</div>';}
+}
+function planBadge(u){if(u.vip_admin||u.plan==='vip')return '<span class="badge vip">VIP</span>';if(u.unlimited)return '<span class="badge vip">∞</span>';return '<span class="badge">Bepul</span>';}
+async function openUser(id){
+  const r=await api('user',{user_id:id});const u=r.user;
+  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(u.email||'Foydalanuvchi')}</h3>
+  <div style="margin:4px 0 10px">${planBadge(u)} ${u.blocked?'<span class="badge bad">bloklangan</span>':''} ${u.linked?'<span class="badge ok">Google+TG ulangan</span>':''}</div>
+  <div class="card"><div class="kv"><span>ID</span><span style="font-size:11px">${esc(u.user_id)}</span></div><div class="kv"><span>Telegram</span><span>${u.tg_id||'—'}</span></div><div class="kv"><span>Bepul / Paket</span><span>${u.unlimited?'∞':u.free_pages+' / '+u.paid_pages} varaq</span></div><div class="kv"><span>Kunlik bepul</span><span>${u.daily_pages}${u.daily_override_pages!=null?' (shaxsiy)':''}</span></div><div class="kv"><span>Oxirgi faollik</span><span>${fdate(u.last_active)}</span></div></div>
+  ${u.vip_admin?'<div class="card" style="margin-top:10px">👑 Bu admin akkaunt — doim VIP (cheksiz, reklamasiz). Env ro\'yxatidan boshqariladi.</div>':''}
+  <h2>Reja</h2><div class="row"><button class="btn sec sm" onclick="act('${esc(id)}','set_plan',{plan:'free'})">Bepul</button><button class="btn sm vip" onclick="act('${esc(id)}','set_plan',{plan:'vip'})">VIP ∞</button></div>
+  <h2>Varaqlar</h2><div class="row"><input id="cadd" type="number" step="1" placeholder="+100 yoki -20"><button class="btn ok fit" onclick="act('${esc(id)}','add_credits',{pages:+$('#cadd').value})">Qo'shish</button></div>
+  <div class="row" style="margin-top:8px"><input id="cfree" type="number" placeholder="Bepul = "><input id="cpaid" type="number" placeholder="Paket = "><button class="btn sec fit" onclick="act('${esc(id)}','set_credits',{free_pages:$('#cfree').value,paid_pages:$('#cpaid').value})">O'rnatish</button></div>
+  <div class="row" style="margin-top:8px"><input id="cdaily" type="number" placeholder="Shaxsiy kunlik limit (bo'sh = oddiy)"><button class="btn sec fit" onclick="act('${esc(id)}','daily_override',{pages:$('#cdaily').value})">Saqlash</button></div>
+  <div class="row" style="margin-top:8px"><button class="btn sec sm" onclick="act('${esc(id)}','fill_free',{})">Bepulni to'ldirish</button></div>
+  <h2>Boshqaruv</h2>
+  <div class="sw"><span>♾ Cheksiz</span><input type="checkbox" ${u.unlimited_flag?'checked':''} onchange="act('${esc(id)}','unlimited',{value:this.checked})"></div>
+  <div class="sw"><span>⛔ Bloklash</span><input type="checkbox" ${u.blocked?'checked':''} onchange="act('${esc(id)}','block',{value:this.checked})"></div>
+  <label>Izoh (faqat admin ko'radi)</label><div class="row"><input id="cnote" value="${esc(u.note)}"><button class="btn sec fit" onclick="act('${esc(id)}','note',{text:$('#cnote').value})">Saqlash</button></div>
+  <h2>Oxirgi harakatlar</h2><div class="card" style="padding:0">${(r.ledger||[]).map(l=>`<div class="item"><div class="t"><b>${esc(l.kind)}</b><small>${fdate(l.created_at)}</small></div><b>${l.amount>0?'+':''}${num(l.amount)}</b></div>`).join('')||'<div class="empty">Yo\'q</div>'}</div>`);
+}
+async function act(id,action,extra){
+  try{const r=await api('user_action',Object.assign({user_id:id,action},extra));toast('✓ '+(r.note||'Saqlandi'));await openUser(id);if(tab==='users')users($('#main'));}catch(e){}
+}
+
+/* ---------------- REKLAMA ---------------- */
+let adCache=[];
+async function ads(m){
+  m.innerHTML='<div class="row"><button class="btn" onclick="editAd()">＋ Yangi reklama</button></div><div class="card" id="alist" style="padding:0;margin-top:12px"><div class="empty">…</div></div><p style="color:var(--mut);font-size:12px;margin:10px 4px">Pro, VIP va admin akkauntlarga reklama hech qachon ko\'rsatilmaydi. Saytda — chap panelda slaydlar tagida; botda — taqdimot yuborilgach (oraliq «Sozlama»da).</p>';
+  try{const r=await api('ads');adCache=r.ads;}catch(e){$('#alist').innerHTML='<div class="empty">'+esc(e.message)+'</div>';return;}
+  $('#alist').innerHTML=adCache.length?adCache.map(a=>`<div class="ad">${media(a)}<div class="t" style="flex:1;min-width:0"><b>${esc(a.title||'(sarlavhasiz)')}</b> ${a.active?'<span class="badge ok">faol</span>':'<span class="badge">o\'chiq</span>'}<br><small style="color:var(--mut)">${esc(a.body).slice(0,70)}</small><br><small style="color:var(--mut)">${{both:'Sayt+Bot',site:'Sayt',bot:'Bot'}[a.placement]} · 👁 ${num(a.impressions)} · 👆 ${num(a.clicks)}${a.impressions?' ('+(a.clicks*100/a.impressions).toFixed(1)+'%)':''}</small><div class="row" style="margin-top:6px"><button class="btn sec sm" onclick="editAd(${a.id})">Tahrir</button><button class="btn sec sm" onclick="toggleAd(${a.id},${!a.active})">${a.active?'O\'chirish':'Yoqish'}</button><button class="btn bad sm" onclick="delAd(${a.id})">🗑</button></div></div></div>`).join(''):'<div class="empty">Hali reklama yo\'q</div>';
+}
+function media(a){const u=a.media_preview;if(!u)return '<div style="width:64px;height:64px;border-radius:10px;background:var(--card2);display:grid;place-items:center">📢</div>';return a.media_type==='video'?`<video src="${esc(u)}" muted></video>`:`<img src="${esc(u)}" alt="">`;}
+let upData=null;
+function editAd(id){
+  upData=null;const a=adCache.find(x=>x.id===id)||{title:'',body:'',media_type:'none',media_url:'',link_url:'',button_text:'Batafsil',placement:'both',active:true,weight:1};
+  const loc=v=>v?new Date(new Date(v).getTime()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16):'';
+  sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${id?'Reklamani tahrirlash':'Yangi reklama'}</h3>
+  <label>Sarlavha (80 belgi)</label><input id="a_t" maxlength="80" value="${esc(a.title)}" oninput="prev()">
+  <label>Matn (400 belgi)</label><textarea id="a_b" maxlength="400" oninput="prev()">${esc(a.body)}</textarea>
+  <label>Media turi</label><select id="a_mt" onchange="prev()"><option value="none">Yo'q (faqat matn)</option><option value="image">Rasm</option><option value="video">Video (mp4/webm havola)</option></select>
+  <div id="a_img"><label>Rasm yuklash (avtomatik kichraytiriladi)</label><input type="file" id="a_f" accept="image/png,image/jpeg,image/webp" onchange="pickImg(this)"></div>
+  <label>yoki media havolasi (https://…)</label><input id="a_mu" placeholder="https://…" value="${esc(a.media_url)}" oninput="upData=null;prev()">
+  ${a.media_is_upload?'<small style="color:var(--mut)">Hozir yuklangan rasm bor — yangi tanlamasangiz o\'zgarmaydi.</small>':''}
+  <label>Bosilganda ochiladigan havola (https://…)</label><input id="a_l" placeholder="https://…" value="${esc(a.link_url)}">
+  <div class="row"><div><label>Tugma matni</label><input id="a_bt" maxlength="24" value="${esc(a.button_text)}" oninput="prev()"></div><div><label>Joylashuv</label><select id="a_p"><option value="both">Sayt + Bot</option><option value="site">Faqat sayt</option><option value="bot">Faqat bot</option></select></div></div>
+  <label>Necha soat ko'rsatilsin? <small style="color:var(--mut)">(bosing — tugash vaqti avtomatik qo'yiladi)</small></label>
+  <div class="chips" id="a_hrs">${[[1,'1 soat'],[6,'6 soat'],[12,'12 soat'],[24,'1 kun'],[72,'3 kun'],[168,'7 kun'],[720,'30 kun'],[0,'Cheksiz']].map(h=>`<span class="chip" onclick="setHrs(${h[0]})">${h[1]}</span>`).join('')}<input id="a_hc" type="number" min="1" placeholder="soat" style="width:84px;flex:none" onchange="setHrs(+this.value)"></div>
+  <div class="row"><div><label>Boshlanish</label><input type="datetime-local" id="a_s" value="${loc(a.starts_at)}"></div><div><label>Tugash</label><input type="datetime-local" id="a_e" value="${loc(a.ends_at)}"></div></div>
+  <div class="row"><div><label>Ko'rsatish ustuvorligi (1–100)</label><input type="number" id="a_w" min="1" max="100" value="${a.weight||1}"></div><div><label>Holat</label><select id="a_a"><option value="1">Faol</option><option value="0">O'chiq</option></select></div></div>
+  <label>Ko'rinishi</label><div class="preview" id="a_pv"></div>
+  <div class="row" style="margin-top:14px"><button class="btn" onclick="saveAd(${id||0})">Saqlash</button></div>`);
+  $('#a_mt').value=a.media_type;$('#a_p').value=a.placement;$('#a_a').value=a.active?'1':'0';prev(a.media_is_upload?a.media_preview:null);
+}
+function setHrs(h){
+  const f=d=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+  const now=new Date();
+  if(!h||h<=0){$('#a_s').value='';$('#a_e').value='';toast('Muddat cheklanmagan');return;}
+  $('#a_s').value=f(now);$('#a_e').value=f(new Date(now.getTime()+h*3600000));
+  document.querySelectorAll('#a_hrs .chip').forEach(c=>c.classList.remove('on'));
+  toast('Tugash: '+fdate($('#a_e').value));
+}
+function prev(keep){
+  const t=$('#a_t').value,b=$('#a_b').value,mt=$('#a_mt').value,u=upData||$('#a_mu').value||keep||'';
+  $('#a_img').style.display=mt==='image'?'block':'none';
+  let m='';if(mt==='image'&&u)m=`<img src="${esc(u)}" alt="">`;if(mt==='video'&&u)m=`<video src="${esc(u)}" muted autoplay loop playsinline></video>`;
+  $('#a_pv').innerHTML=m+`<div><b>${esc(t)}</b><br><span style="color:var(--mut)">${esc(b)}</span><br><span class="badge pro" style="margin-top:6px">${esc($('#a_bt').value)}</span></div>`;
+}
+function pickImg(inp){
+  const f=inp.files[0];if(!f)return;const img=new Image();const fr=new FileReader();
+  fr.onload=()=>{img.onload=()=>{const M=960,k=Math.min(1,M/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    let d=c.toDataURL('image/jpeg',.82);if(d.length>1500000)d=c.toDataURL('image/jpeg',.6);upData=d;$('#a_mu').value='';prev();};img.src=fr.result;};fr.readAsDataURL(f);
+}
+async function saveAd(id){
+  const mt=$('#a_mt').value;
+  const ad={id:id||undefined,title:$('#a_t').value,body:$('#a_b').value,media_type:mt,media_url:mt==='none'?'':(upData||$('#a_mu').value.trim()),link_url:$('#a_l').value.trim(),button_text:$('#a_bt').value,placement:$('#a_p').value,weight:+$('#a_w').value||1,active:$('#a_a').value==='1',starts_at:$('#a_s').value?new Date($('#a_s').value).toISOString():null,ends_at:$('#a_e').value?new Date($('#a_e').value).toISOString():null};
+  try{await api('ad_save',{ad});toast('✓ Saqlandi');closeSheet();ads($('#main'));}catch(e){}
+}
+async function toggleAd(id,v){try{await api('ad_toggle',{id,active:v});ads($('#main'));}catch(e){}}
+async function delAd(id){if(!confirm('Reklama o\'chirilsinmi?'))return;try{await api('ad_delete',{id});ads($('#main'));}catch(e){}}
+
+/* ---------------- SOZLAMALAR ---------------- */
+async function settings(m){
+  const r=await api('settings');const s=r.settings;
+  const n=(k,l,h)=>`<label>${l}</label><input type="number" min="0" id="s_${k}" value="${s[k]}">${h?`<small style="color:var(--mut)">${h}</small>`:''}`;
+  const sw=(k,l)=>`<div class="sw"><span>${l}</span><input type="checkbox" id="s_${k}" ${s[k]?'checked':''}></div>`;
+  m.innerHTML=`${r.persisted?'':'<div class="card" style="border-color:var(--warn);margin-bottom:10px">⚠️ Sozlamalar faqat xotirada (restartda yo\'qoladi). SUPABASE_SCHEMA.sql ni ishga tushiring.</div>'}
+  <h2>Limitlar (Tez-varaq hisobida)</h2><div class="card">${n('free_daily_pages','Bepul kunlik varaq','Chuqur AI uchun 3 baravar kam hisoblanadi')}${n('pack_pages','Bitta paketdagi varaq (to\'lovdan keyin beriladi)','Narx: PACK_PRICE_USD (env) va Lemon Squeezy mahsulotida bir xil bo\'lsin')}${n('daily_message_limit','Bir foydalanuvchi kunlik AI xabarlari (0 = cheksiz)')}</div>
+  <h2>Reklama</h2><div class="card">${sw('ads_enabled','Reklama umuman yoqilgan')}${sw('ads_site','Saytda (chap panel)')}${sw('ads_bot','Telegram botda')}${n('ad_bot_interval_min','Botda reklama oralig\'i (daqiqa)','Bir foydalanuvchiga ketma-ket reklama yuborilmasligi uchun')}</div>
+  <h2>E'lon va texnik ishlar</h2><div class="card">${sw('maintenance','Texnik ishlar rejimi (AI faqat adminlarga)')}<label>Texnik ishlar matni</label><input id="s_maintenance_text" value="${esc(s.maintenance_text)}"><label>Saytdagi e'lon (bo'sh = ko'rinmaydi)</label><input id="s_announcement" maxlength="600" value="${esc(s.announcement)}"></div>
+  <div class="row" style="margin-top:14px"><button class="btn" onclick="saveSettings()">Saqlash</button></div>`;
+}
+async function saveSettings(){
+  const v={};['free_daily_pages','pack_pages','daily_message_limit','ad_bot_interval_min'].forEach(k=>v[k]=+$('#s_'+k).value);
+  ['ads_enabled','ads_site','ads_bot','maintenance'].forEach(k=>v[k]=$('#s_'+k).checked);v.maintenance_text=$('#s_maintenance_text').value;v.announcement=$('#s_announcement').value;
+  try{const r=await api('settings_set',{values:v});toast(r.persisted?'✓ Saqlandi':'⚠ Faqat xotirada: '+(r.error||''),!r.persisted);}catch(e){}
+}
+
+/* ---------------- YANA: xabar / tizim / jurnal ---------------- */
+let mtab='bc';
+async function more(m){
+  m.innerHTML=`<div class="chips">${[['bc','📣 Xabar'],['sys','🛠 Tizim'],['led','🧾 Jurnal']].map(c=>`<span class="chip ${mtab===c[0]?'on':''}" onclick="mtab='${c[0]}';more($('#main'))">${c[1]}</span>`).join('')}</div><div id="mbody"></div>`;
+  await ({bc,sys,led}[mtab])($('#mbody'));
+}
+async function bc(b){
+  b.innerHTML=`<div class="card"><label>Kimga</label><select id="b_a" onchange="bcCount()"><option value="all">Hamma bot foydalanuvchilari</option><option value="free">Faqat bepul</option><option value="pro">Faqat VIP/admin</option><option value="linked">Faqat Google ulaganlar</option></select><small id="b_c" style="color:var(--mut)"></small><label>Xabar (oddiy matn)</label><textarea id="b_t" maxlength="3500" placeholder="Xabar matni…"></textarea><div class="row" style="margin-top:10px"><button class="btn" id="b_s" onclick="bcSend()">Yuborish</button></div><div id="b_p" style="margin-top:10px"></div></div>`;bcCount();
+}
+async function bcCount(){try{const r=await api('broadcast_preview',{audience:$('#b_a').value});$('#b_c').textContent='Qabul qiluvchilar: '+num(r.count);}catch(e){}}
+async function bcSend(){
+  const t=$('#b_t').value.trim();if(t.length<2)return toast('Matn yozing',1);if(!confirm('Xabar hammaga yuborilsinmi? Qaytarib bo\'lmaydi.'))return;
+  $('#b_s').disabled=true;try{const r=await api('broadcast',{audience:$('#b_a').value,text:t});const tick=async()=>{const s=await api('broadcast_status',{job:r.job});$('#b_p').innerHTML=`Yuborildi: <b>${s.sent}</b> / ${s.total} · xato: ${s.failed}${s.done?' ✅':''}`;if(!s.done)setTimeout(tick,1500);else $('#b_s').disabled=false;};tick();}catch(e){$('#b_s').disabled=false;}
+}
+async function sys(b){
+  const s=await api('system');const y=v=>v?'<span class="pill-ok">✓</span>':'<span class="pill-bad">✗</span>';
+  b.innerHTML=`<div class="card"><div class="kv"><span>Supabase</span>${y(s.supabase)}</div><div class="kv"><span>AI kalit</span><span>${y(s.ai_key)} ${esc(s.ai_key_hint)}</span></div><div class="kv"><span>AI model</span><span>${esc(s.model||'—')}</span></div><div class="kv"><span>Telegram bot</span>${y(s.telegram)}</div><div class="kv"><span>PUBLIC_BASE_URL</span><span>${esc(s.public_base_url||'—')}</span></div><div class="kv"><span>Admin Telegram ID / email</span><span>${s.admin_tg_ids} / ${s.admin_emails}</span></div></div>
+  <h2>To'lov (Lemon Squeezy)</h2><div class="card">${Object.entries(s.lemon).map(([k,v])=>`<div class="kv"><span style="font-size:12px">${k.replace('LEMON_SQUEEZY_','')}</span>${y(v)}</div>`).join('')}</div>
+  <h2>Baza (SUPABASE_SCHEMA.sql)</h2><div class="card">${Object.entries(s.migration).map(([k,v])=>`<div class="kv"><span>${k}</span>${y(v)}</div>`).join('')}<div class="kv"><span>Sozlamalar bazada saqlanadi</span>${y(s.settings_persisted)}</div></div>
+  <h2>Boshqaruv</h2><div class="card"><div class="row"><button class="btn ${s.paused?'ok':'bad'}" onclick="pause(${!s.paused})">${s.paused?'▶️ Serverni davom ettirish':'⏸ Yangi so\'rovlarni to\'xtatish'}</button></div><label>AI API kalitini almashtirish</label><div class="row"><input id="k_i" type="password" placeholder="sk-…" autocomplete="off"><button class="btn sec fit" onclick="setKey()">Saqlash</button></div><small style="color:var(--mut)">Server xotirasida darhol yangilanadi; Render env'dagi AI_API_KEY ni ham yangilab qo'ying.</small></div>`;
+}
+async function pause(v){if(!confirm(v?'Yangi AI so\'rovlari to\'xtatilsinmi?':'Davom ettirilsinmi?'))return;try{await api('pause',{value:v});more($('#main'));}catch(e){}}
+async function setKey(){const k=$('#k_i').value.trim();if(!k)return;try{const r=await api('set_ai_key',{key:k});toast('✓ '+r.note);$('#k_i').value='';more($('#main'));}catch(e){}}
+let ltab='ledger';
+async function led(b){
+  b.innerHTML=`<div class="chips">${[['ledger','Balans'],['orders','To\'lovlar'],['audit','Admin harakatlari']].map(c=>`<span class="chip ${ltab===c[0]?'on':''}" onclick="ltab='${c[0]}';led($('#mbody'))">${c[1]}</span>`).join('')}</div><div class="card" style="padding:0" id="lbody"><div class="empty">…</div></div>`;
+  const r=await api(ltab,{limit:80});const rows=r.rows||[];
+  $('#lbody').innerHTML=rows.length?rows.map(x=>ltab==='audit'?`<div class="item"><div class="t"><b>${esc(x.action)}</b><small>${esc(x.actor)} · ${esc(x.target)} · ${fdate(x.created_at)}</small></div></div>`:ltab==='orders'?`<div class="item"><div class="t"><b>${esc(x.email||x.user_id)}</b><small>#${esc(x.order_id)} · ${fdate(x.created_at)}</small></div><b>${num(x.pages)}</b></div>`:`<div class="item"><div class="t"><b>${esc(x.email||x.user_id)}</b><small>${esc(x.kind)} · ${fdate(x.created_at)}</small></div><b>${x.amount>0?'+':''}${num(x.amount)}</b></div>`).join(''):'<div class="empty">Bo\'sh</div>';
+}
+(async()=>{nav();try{await api('ping');}catch(e){return;}load();})();
+</script></body></html>

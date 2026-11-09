@@ -1,0 +1,64 @@
+services:
+  - type: web
+    name: slide-studio
+    runtime: docker
+    plan: free          # bepul reja uxlab qoladi; doimiy ishlashi uchun 'starter' ga o'zgartiring
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: AI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: TELEGRAM_MODE
+        value: auto
+      - key: LOG_LEVEL
+        value: warning
+      - key: SLIDE_STUDIO_HMAC_SECRET
+        generateValue: true
+      - key: AI_BASE_URL
+        value: https://api.deepseek.com
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: FREE_DAILY_PAGES
+        value: "10"
+      - key: PAGES_PER_PACK
+        value: "100"
+      - key: PACK_PRICE_USD
+        value: "1.58"
+      - key: IMG_PROXY_CACHE_MB
+        value: "32"
+      - key: LEMON_SQUEEZY_API_KEY
+        sync: false
+      - key: LEMON_SQUEEZY_STORE_ID
+        sync: false
+      - key: LEMON_SQUEEZY_VARIANT_ID
+        sync: false
+      - key: LEMON_SQUEEZY_WEBHOOK_SECRET
+        sync: false
+      - key: ADMIN_TG_IDS
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: KLIPY_API_KEY
+        sync: false
+      - key: GIPHY_API_KEY
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: PIXABAY_API_KEY
+        sync: false
+      - key: UNSPLASH_ACCESS_KEY
+        sync: false
