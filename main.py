@@ -882,17 +882,24 @@ _RL_RULES = (            # (path prefix, limit per 60s per IP)
 )
 _RL_EXEMPT = ("/api/payment/lemon-webhook", "/webhook/lemonsqueezy")
 
+# v53: X-Forwarded-For ning BOSHIDAGI qiymatni mijoz o'zi yozishi mumkin (soxta IP -> rate limit ishlamasdi).
+# Ishonchli qiymat — o'ngdan TRUSTED_PROXY_HOPS-chi element (Render proksisi haqiqiy IP ni oxiriga qo'shadi).
+# CF-Connecting-IP / True-Client-IP faqat TRUST_CF_CONNECTING_IP=1 bo'lsa (sayt Cloudflare ortida bo'lsa) ishlatiladi.
+TRUSTED_PROXY_HOPS = max(0, _env_int("TRUSTED_PROXY_HOPS", 1))
+TRUST_CF_CONNECTING_IP = os.environ.get("TRUST_CF_CONNECTING_IP", "").strip().lower() in ("1", "true", "yes")
+
 def _client_ip(request) -> str:
-    """v52: Render/Cloudflare ortida request.client.host = proxy IP (hamma foydalanuvchi BITTA IP bo'lib qolardi va
-    limit hammaga birdan tegardi). Haqiqiy IP: CF-Connecting-IP / True-Client-IP / X-Forwarded-For[0]."""
+    """Rate limit uchun mijoz IP manzili (soxtalashtirib bo'lmaydigan qismidan)."""
     h = request.headers
-    for name in ("cf-connecting-ip", "true-client-ip"):
-        v = (h.get(name) or "").strip()
-        if v:
-            return v[:64]
-    xff = (h.get("x-forwarded-for") or "").split(",")[0].strip()
-    if xff:
-        return xff[:64]
+    if TRUST_CF_CONNECTING_IP:
+        for name in ("cf-connecting-ip", "true-client-ip"):
+            v = (h.get(name) or "").strip()
+            if v:
+                return v[:64]
+    if TRUSTED_PROXY_HOPS > 0:
+        parts = [p.strip() for p in (h.get("x-forwarded-for") or "").split(",") if p.strip()]
+        if parts:
+            return parts[-min(TRUSTED_PROXY_HOPS, len(parts))][:64]
     return request.client.host if request.client else "?"
 
 def _rate_limited(ip: str, path: str) -> bool:
