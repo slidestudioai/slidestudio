@@ -113,6 +113,7 @@
               if (window.Monitoring && window.Monitoring.showLimitModal) window.Monitoring.showLimitModal();
             } catch (_) {}
             showToast(data.message || 'Limit tugadi', 'error');
+            twoPassState = null;      // v53: reja bo'yicha yaratish to'xtaydi (keyingi xabarda eski reja davom etib ketmasin)
             try { finishAiStream(); } catch (e) {}
             return;
           }
@@ -181,6 +182,7 @@
               if (span) span.innerText = "⚠️ " + data.message;
             }
             aiSessionActive = false;
+            twoPassState = null;      // v53: xatoda reja bo'yicha yaratish to'xtaydi
             try { markStreamInterrupted(/limit|quota|rate|tugadi/i.test(String(data.message || '')) ? 'limit' : 'error'); } catch (e) {}
             finishAiStream();
           }

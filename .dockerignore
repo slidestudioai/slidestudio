@@ -9,3 +9,6 @@ __pycache__/
 venv/
 node_modules/
 *.zip
+tests/
+requirements-dev.txt
+pytest.ini

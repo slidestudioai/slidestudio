@@ -113,10 +113,14 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
                 created = datetime.fromisoformat(created.replace("Z", "+00:00"))
             if created and created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
-            if created and datetime.now(timezone.utc) - created > timedelta(days=NEW_ACCOUNT_WINDOW_DAYS):
-                return {"ok": False, "error": "Bonus faqat yangi akkaunt ochganlar uchun"}
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[REFERRAL] akkaunt sanasini o'qib bo'lmadi: {str(e)[:120]}")
+            created = None
+        # v53: sana aniqlanmasa bonus BERILMAYDI (avval xatoda tekshiruv o'tkazib yuborilib, eski akkaunt ham bonus olardi)
+        if not isinstance(created, datetime):
+            return {"ok": False, "error": "Hozir tekshirib bo'lmadi. Birozdan keyin qayta urinib ko'ring.", "status": 503}
+        if datetime.now(timezone.utc) - created > timedelta(days=NEW_ACCOUNT_WINDOW_DAYS):
+            return {"ok": False, "error": "Bonus faqat yangi akkaunt ochganlar uchun"}
         try:
             res = await asyncio.to_thread(
                 lambda: sb.table("referral_codes").select("user_id").eq("code", code).limit(1).execute())
@@ -153,9 +157,13 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             return {"error": "Taklif jadvallari yaratilmagan", "status": 503}
         try:
             async with user_lock(inviter):
-                u = await asyncio.to_thread(get_usage, inviter, "")
-                u = add_paid(u, REFERRAL_BONUS_PAGES)
-                await asyncio.to_thread(save_credits, inviter, u, 0)
+                atomic = ctx.get("update_usage_atomic")
+                if atomic:          # v53: optimistic lock — parallel to'lov/yechish bilan to'qnashmaydi
+                    await asyncio.to_thread(atomic, inviter, "", lambda u: (add_paid(u, REFERRAL_BONUS_PAGES), None))
+                else:
+                    u = await asyncio.to_thread(get_usage, inviter, "")
+                    u = add_paid(u, REFERRAL_BONUS_PAGES)
+                    await asyncio.to_thread(save_credits, inviter, u, 0)
             print(f"[REFERRAL] +{REFERRAL_BONUS_PAGES} varaq → {inviter} (taklif: {invitee})")
         except Exception as e:
             try:

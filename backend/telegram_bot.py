@@ -557,6 +557,14 @@ def _page_units(mode: str) -> int:
     return int(_deps["MODES"][mode if mode in _deps["MODES"] else "fast"]["page"])
 
 
+def _deep_mult() -> int:
+    """1 Chuqur-varaq necha Tez-varaqqa teng (narx backend/monitoring.py MODES dan; matnga qotirib yozilmaydi)."""
+    try:
+        return max(1, _page_units("deep") // _page_units("fast"))
+    except Exception:
+        return 2
+
+
 def _pages_left(usage: dict, mode: str) -> float:
     return _deps["total_credits"](usage) / _page_units(mode)
 
@@ -649,12 +657,18 @@ async def _credits_text(user: dict) -> str:
 
 async def _charge(uid: str, email: str, pages: int, tokens: int, mode: str, details: dict) -> Tuple[dict, int]:
     """Slaydlar uchun yechadi (pages=0 bo'lsa — oddiy chat narxi). (usage, yechilgan_birlik)."""
+    def _fn(u):
+        u = _deps["apply_reset"](u)
+        u["total_tokens"] = (u.get("total_tokens") or 0) + tokens
+        u["daily_tokens"] = (u.get("daily_tokens") or 0) + tokens
+        u, ch, rs = _deps["charge"](u, int(pages), 0, mode)
+        return u, (ch, rs)
     async with _ulock(uid):
-        usage = await asyncio.to_thread(_usage_now_sync, uid, email)
-        usage["total_tokens"] = (usage.get("total_tokens") or 0) + tokens
-        usage["daily_tokens"] = (usage.get("daily_tokens") or 0) + tokens
-        usage, charged, reason = _deps["charge"](usage, int(pages), 0, mode)
-        await asyncio.to_thread(_deps["save_usage"], uid, usage, 0)
+        if _deps.get("update_atomic"):          # v53: boshqa server nusxasi / webhook bilan to'qnashuvda qayta hisoblaydi
+            usage, (charged, reason) = await asyncio.to_thread(_deps["update_atomic"], uid, email, _fn)
+        else:
+            usage, (charged, reason) = _fn(await asyncio.to_thread(_usage_now_sync, uid, email))
+            await asyncio.to_thread(_deps["save_usage"], uid, usage, 0)
         if int(charged) > 0:
             await asyncio.to_thread(_deps["ledger_log"], uid, "tg_" + str(reason), -int(charged), usage, 0, details)
         return usage, int(charged)
@@ -814,6 +828,8 @@ def _link_code_sync(user_id: str, email: str) -> str:
 
 
 def _link_consume_sync(user: dict, code: str) -> dict:
+    """Kodni ATOMIK ishlatadi: DELETE ... RETURNING — bir kodni faqat bitta so'rov oladi (ikki marta ishlatib bo'lmaydi).
+    Natija: {"ok": True, "tid", "user_id", "email"} yoki {"error": ...}. Ulashning o'zi — async _link_apply()."""
     sb = _sb()
     if not sb:
         return {"error": "db"}
@@ -822,7 +838,7 @@ def _link_consume_sync(user: dict, code: str) -> dict:
     if not code:
         return {"error": "bad_code"}
     try:
-        res = sb.table("tg_link_codes").select("*").eq("code", code).limit(1).execute()
+        res = sb.table("tg_link_codes").delete().eq("code", code).execute()     # bir martalik
     except Exception as e:
         _db_warn(e)
         return {"error": "db"}
@@ -836,51 +852,98 @@ def _link_consume_sync(user: dict, code: str) -> dict:
         expired = exp < datetime.now(timezone.utc)
     except Exception:
         expired = True
-    sb.table("tg_link_codes").delete().eq("code", code).execute()          # bir martalik
     if expired:
         return {"error": "bad_code"}
-    return _link_apply_sync(tid, str(row["user_id"]), str(row["email"]))
+    return {"ok": True, "tid": tid, "user_id": str(row["user_id"]), "email": str(row["email"])}
 
 
-def _link_apply_sync(tid: int, uid: str, email: str) -> dict:
-    """Telegram ID ni sayt akkauntiga bog'laydi (kod orqali ham, havola orqali ham shu yerga keladi)."""
+def _tg_src_uid_sync(tid: int, uid: str) -> Optional[str]:
+    """Botda yaratilgan tg<ID>@t.me akkaunti (sayt akkauntidan boshqa bo'lsa) — pullik varaqlar shu yerdan ko'chadi."""
     sb = _sb()
     if not sb:
-        return {"error": "db"}
+        return None
+    q = sb.table("user_usage").select("user_id").eq("email", _tg_email(tid)).limit(1).execute()
+    if q.data and str(q.data[0]["user_id"]) != uid:
+        return str(q.data[0]["user_id"])
+    return None
 
-    # Oldin botda sotib olingan PULLIK varaqlar yo'qolmasin: tg<ID>@t.me akkauntidan sayt akkauntiga ko'chiriladi.
-    # (Bepul kunlik varaqlar ko'chirilmaydi — ikki akkaunt orqali ko'paytirib bo'lmasin.)
-    moved = 0
+
+def _move_paid_sync(src_uid: str, uid: str, email: str, tid: int) -> int:
+    """Pullik varaqlarni (BIRLIK) src -> dst ko'chiradi. Avval SQL funksiyasi (bitta tranzaksiya, atomik);
+    funksiya bazada yo'q bo'lsa — zaxira yo'l (chaqiruvchi ikkala foydalanuvchi lock'ini ushlab turadi)."""
+    sb = _sb()
+    _deps["get_usage"](uid, email)                     # qabul qiluvchi qatori bazada bo'lsin
     try:
-        tg_email = _tg_email(tid)
-        q = sb.table("user_usage").select("user_id").eq("email", tg_email).limit(1).execute()
-        if q.data and str(q.data[0]["user_id"]) != uid:
-            src_uid = str(q.data[0]["user_id"])
-            src = _deps["apply_reset"](_deps["get_usage"](src_uid, tg_email))
-            paid = int(src.get("paid_credits") or 0)
-            if paid > 0:
-                dst = _deps["apply_reset"](_deps["get_usage"](uid, email))
-                dst["paid_credits"] = int(dst.get("paid_credits") or 0) + paid
-                src["paid_credits"] = 0
-                _deps["save_usage"](uid, dst, 0)
-                _deps["save_usage"](src_uid, src, 0)
-                moved = paid
-                try:
-                    _deps["ledger_log"](uid, "tg_link_in", paid, dst, 0, {"from": src_uid})
-                    _deps["ledger_log"](src_uid, "tg_link_out", -paid, src, 0, {"to": uid})
-                except Exception:
-                    pass
+        r = sb.rpc("transfer_paid_credits", {"p_from": src_uid, "p_to": uid}).execute()
+        d = r.data[0] if isinstance(r.data, list) and r.data else r.data
+        moved = int((d or {}).get("moved") or 0) if isinstance(d, dict) else int(d or 0)
+        if moved > 0:
+            src = _deps["apply_reset"](_deps["get_usage"](src_uid, _tg_email(tid)))
+            dst = _deps["apply_reset"](_deps["get_usage"](uid, email))
+            try:
+                _deps["ledger_log"](uid, "tg_link_in", moved, dst, 0, {"from": src_uid})
+                _deps["ledger_log"](src_uid, "tg_link_out", -moved, src, 0, {"to": uid})
+            except Exception:
+                pass
+        return moved
     except Exception as e:
-        _warn("link-move", f"pullik varaqlarni ko'chirib bo'lmadi: {str(e)[:120]}")
+        msg = str(e).lower()
+        if "transfer_paid_credits" not in msg and "pgrst202" not in msg and "could not find" not in msg:
+            raise
+    # Zaxira: SQL funksiyasi yo'q (SUPABASE_SCHEMA.sql yangilanmagan)
+    src = _deps["apply_reset"](_deps["get_usage"](src_uid, _tg_email(tid)))
+    paid = int(src.get("paid_credits") or 0)
+    if paid <= 0:
+        return 0
+    dst = _deps["apply_reset"](_deps["get_usage"](uid, email))
+    dst["paid_credits"] = int(dst.get("paid_credits") or 0) + paid
+    if _deps["save_usage"](uid, dst, 0) is False:
+        raise RuntimeError("dst_save_failed")
+    src["paid_credits"] = 0
+    if _deps["save_usage"](src_uid, src, 0) is False:
+        dst["paid_credits"] = int(dst["paid_credits"]) - paid           # qaytarish: varaq ikki akkauntda qolmasin
+        _deps["save_usage"](uid, dst, 0)
+        raise RuntimeError("src_save_failed")
+    try:
+        _deps["ledger_log"](uid, "tg_link_in", paid, dst, 0, {"from": src_uid})
+        _deps["ledger_log"](src_uid, "tg_link_out", -paid, src, 0, {"to": uid})
+    except Exception:
+        pass
+    return paid
 
+
+def _link_rows_sync(tid: int, uid: str, email: str) -> bool:
+    sb = _sb()
     try:
         sb.table("tg_links").delete().eq("tg_id", tid).execute()
         sb.table("tg_links").delete().eq("user_id", uid).execute()
         sb.table("tg_links").insert({"tg_id": tid, "user_id": uid, "email": email}).execute()
     except Exception as e:
         _db_warn(e)
-        return {"error": "db"}
+        return False
     _uids[tid] = (uid, email)
+    return True
+
+
+async def _link_apply(tid: int, uid: str, email: str) -> dict:
+    """Telegram ID ni sayt akkauntiga bog'laydi (kod orqali ham, havola orqali ham shu yerga keladi).
+    Oldin botda sotib olingan PULLIK varaqlar tg<ID>@t.me akkauntidan sayt akkauntiga ko'chiriladi.
+    (Bepul kunlik varaqlar ko'chirilmaydi — ikki akkaunt orqali ko'paytirib bo'lmasin.)
+    Ikkala akkauntning lock'i (sayt/bot/webhook bilan umumiy) ushlanadi — to'lov yoki slayd yechish bilan poyga bo'lmaydi."""
+    if not _sb():
+        return {"error": "db"}
+    moved = 0
+    try:
+        src_uid = await asyncio.to_thread(_tg_src_uid_sync, tid, uid)
+        if src_uid:
+            a, b = sorted([src_uid, uid])
+            async with _ulock(a):
+                async with _ulock(b):
+                    moved = await asyncio.to_thread(_move_paid_sync, src_uid, uid, email, tid)
+    except Exception as e:
+        _warn("link-move", f"pullik varaqlarni ko'chirib bo'lmadi: {str(e)[:120]}")
+    if not await asyncio.to_thread(_link_rows_sync, tid, uid, email):
+        return {"error": "db"}
     pages = 0.0
     try:
         pages = moved / _page_units("fast")
@@ -2786,7 +2849,7 @@ async def _ask_count(chat_id: int, user: dict, topic: str) -> None:
     await _send(
         chat_id,
         f"✅ Mavzu: <b>{esc(shown)}</b>\n\n<b>Nechta slayd kerak?</b> Tugmani bosing (yoki «10 ta slayd» deb yozing).\n"
-        f"<i>1 slayd = 1 varaq{' (Chuqur AI — 3 varaq)' if st.get('mode') == 'deep' else ''}</i>{bal}",
+        f"<i>1 slayd = 1 varaq{f' (Chuqur AI — {_deep_mult()} Tez-varaq)' if st.get('mode') == 'deep' else ''}</i>{bal}",
         kb_count(st.get("mode", "fast")),
     )
 
@@ -3167,6 +3230,8 @@ def _linked_text(res: dict) -> str:
 
 async def _do_link(cid: int, user: dict, code: str) -> None:
     res = await asyncio.to_thread(_link_consume_sync, user, code)
+    if res.get("ok"):
+        res = await _link_apply(res["tid"], res["user_id"], res["email"])
     if res.get("ok"):
         await _send(cid, _linked_text(res), kb_main())
         pend = _state(cid).pop("ref", None)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
@@ -3637,7 +3702,7 @@ async def handle_update(data: dict) -> None:
         elif cmd == "/mode":
             st["mode"] = "deep" if st.get("mode") != "deep" else "fast"
             await _send(chat_id, f"Rejim: <b>{'🧠 Chuqur AI' if st['mode'] == 'deep' else '⚡ Tez AI'}</b>\n"
-                                 f"<i>{'Murakkab mavzular uchun, 1 slayd = 3 varaq, sekinroq.' if st['mode'] == 'deep' else 'Tez va tejamkor: 1 slayd = 1 varaq.'}</i>")
+                                 f"<i>{f'Murakkab mavzular uchun, 1 slayd = {_deep_mult()} Tez-varaq, sekinroq.' if st['mode'] == 'deep' else 'Tez va tejamkor: 1 slayd = 1 varaq.'}</i>")
         elif cmd in ("/credits", "/kredit", "/kreditlar", "/balance", "/balans"):
             await _show_balance(chat_id, user)
         elif cmd in ("/invite", "/taklif", "/referral"):
@@ -3851,12 +3916,15 @@ async def telegram_link_complete(request: Request):
         return JSONResponse({"error": "login_required"}, status_code=401)
     if me[1].endswith("@" + TG_EMAIL_DOMAIN):
         return JSONResponse({"error": "already_telegram"}, status_code=400)
-    res = await asyncio.to_thread(_link_apply_sync, ids[0], me[0], me[1])
-    if not res.get("ok"):
-        return JSONResponse({"error": res.get("error") or "link_failed"}, status_code=503)
-    _used_links[key] = time.time()
+    if key in _used_links:                    # _web_user kutilgan paytda parallel so'rov ishlatib qo'ygan bo'lishi mumkin
+        return JSONResponse({"error": "used"}, status_code=409)
+    _used_links[key] = time.time()            # ishlatishdan OLDIN band qilinadi — bir havola ikki marta ishlamaydi
     while len(_used_links) > 500:
         _used_links.popitem(last=False)
+    res = await _link_apply(ids[0], me[0], me[1])
+    if not res.get("ok"):
+        _used_links.pop(key, None)            # xato bo'lsa qayta urinish mumkin
+        return JSONResponse({"error": res.get("error") or "link_failed"}, status_code=503)
     await _send(ids[0], _linked_text(res), kb_main())
     return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
