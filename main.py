@@ -3081,6 +3081,10 @@ async def ws_chat(websocket: WebSocket):
                 except Exception:
                     raise WebSocketDisconnect()
                 if _ws_errs >= 5:                   # ketma-ket ko'p xato — ulanish yopiladi (cheksiz sikl bo'lmasin)
+                    try:
+                        await websocket.close(code=1011)
+                    except Exception:
+                        pass
                     break
                 continue
             _ws_errs = 0
