@@ -22,11 +22,21 @@
   function isAddIntent(text) { return /qo'sh|qosh|\badd\b|yana|ko'paytir|more|insert|oxiriga|keyingi/.test(norm(text)); }
   function isComplaint(text) { return /faqat|only|\bkam\b|yetm|yetarli emas|qani|ta bor|hali|to'liq emas|tugallan|bajarma|qolgan|qo'shmading|qoshmading|yana/.test(norm(text)); }
 
+  // v57: yangi loyihadagi «Sarlavha Kiriting» kabi namuna matn — bo'sh slayd hisoblanadi
+  // (avval «4 ta slayd yarat» desangiz 5 ta kutilib, «3/5 yaratildi» degan noto'g'ri xabar chiqardi)
+  var PLACEHOLDER_RE = /^(sarlavha kiriting|sarlavha|matn kiriting|click to add (title|text)|title|заголовок)$/i;
   function slideIsEmpty(s) {
     try {
       var p = JSON.parse(s.json || '{}'); var o = p.objects || [];
       if (!o.length) return true;
-      return o.every(function (x) { return !x || ((x.type === 'textbox' || x.type === 'text' || x.type === 'i-text') && !String(x.text || '').trim()); });
+      return o.every(function (x) {
+        if (!x) return true;
+        if (x.type === 'textbox' || x.type === 'text' || x.type === 'i-text') {
+          var t = String(x.text || '').trim();
+          return !t || PLACEHOLDER_RE.test(t);
+        }
+        return false;
+      });
     } catch (e) { return false; }
   }
   function isBlankDeck() {

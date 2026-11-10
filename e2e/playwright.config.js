@@ -11,10 +11,10 @@ module.exports = defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
   use: { baseURL: `http://127.0.0.1:${PORT}`, trace: 'off' },
   webServer: {
-    command: `python main.py`,
+    command: `python e2e/fake_ai_server.py`,        // haqiqiy main.py + soxta AI / rasm qidiruvi (kalit va internet kerak emas)
     cwd: '..',
     url: `http://127.0.0.1:${PORT}/healthz`,
-    env: { PORT: String(PORT), SLIDE_STUDIO_DEV_MODE: '1', SLIDE_STUDIO_HMAC_SECRET: 'e2e-' + 'x'.repeat(40) },
+    env: { PORT: String(PORT), SLIDE_STUDIO_DEV_MODE: '1', SLIDE_STUDIO_DEV_TOKEN: 'devtok', SLIDE_STUDIO_HMAC_SECRET: 'e2e-' + 'x'.repeat(40) },
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

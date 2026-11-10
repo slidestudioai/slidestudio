@@ -99,9 +99,19 @@ def test_search_batch_runs_in_parallel(monkeypatch):
     took = time.monotonic() - t0
     assert took < 1.2, took                      # ketma-ket bo'lsa 2 soniyadan oshardi
     assert all(r and r[0]["url"].endswith(f"q{i}.jpg") for i, r in enumerate(res))
+    # v57: qidiruvlar parallel, lekin foydalanuvchiga BIRMA-BIR: start1, done1, start2, done2, ...
     types = [p["type"] for _, p in ws.events]
-    assert types == ["search_start"] * 5 + ["search_done"] * 5
-    assert [p["n"] for _, p in ws.events[:5]] == [1, 2, 3, 4, 5]
+    assert types == ["search_start", "search_done"] * 5
+    assert [p["n"] for _, p in ws.events if p["type"] == "search_start"] == [1, 2, 3, 4, 5]
+
+
+def test_search_batch_reveals_one_by_one(monkeypatch):
+    monkeypatch.setattr(main, "_search_images_sync", lambda q, k, n: [{"url": "https://img.example/" + q}])
+    ws = _WS()
+    asyncio.run(main._search_batch(ws, [(f"q{i}", "photo") for i in range(4)], stagger=0.15))
+    done_t = [t for t, p in ws.events if p["type"] == "search_done"]
+    gaps = [b - a for a, b in zip(done_t, done_t[1:])]
+    assert all(g >= 0.12 for g in gaps), gaps                  # natijalar bir vaqtda «yopirilib» tushmaydi
 
 
 def test_search_batch_retries_missing_together(monkeypatch):

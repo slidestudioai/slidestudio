@@ -1,5 +1,5 @@
     const AiSearchUI = (function () {
-      let chip = null, active = 0;
+      let chip = null, active = 0, hostId = null;
 
       const SEP_EVERY = 5;
       let searchCount = 0;
@@ -10,6 +10,9 @@
       function ensure() {
         const b = host();
         if (!b) return null;
+        // v57: yangi AI xabari — hisoblagich noldan (avval oldingi xabardagi qidiruvlar soni davom etib,
+        // «5 ta qidiruv» ajratgichi birinchi qatordan keyin chiqib qolardi)
+        if (hostId !== b.id) { hostId = b.id; searchCount = 0; active = 0; }
         if (chip && chip.isConnected && chip.parentNode === b) return chip;
         chip = document.createElement('div');
         chip.className = 'ai-search-chip';

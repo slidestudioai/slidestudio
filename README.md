@@ -78,6 +78,17 @@ npx playwright install --with-deps chromium
 npm test
 ```
 
+## Yangilanganda (v57)
+- **AI slayd yaratish tuzatishlari** (Tez va Pro AI'da bir xil):
+  - «Qayta yaratish» oldingi natija ustiga qo'shardi (4 ta slayd → 7 ta). Endi AI'dan oldingi holatdan qayta boshlanadi.
+  - Xabarni tahrirlab qayta yuborishda eski holat to'liq yuklanib bo'lgach yuboriladi (avval slayd yo'qolib qolishi mumkin edi).
+  - Yangi loyihadagi «Sarlavha Kiriting» bo'sh slayd hisoblanadi: «4 ta slayd yarat» → 4 ta (avval 5 ta kutilib, «3/5 yaratildi» degan noto'g'ri xabar chiqardi).
+  - Qidiruv hisoblagichi har yangi xabarda noldan boshlanadi.
+- **Rasm qidiruvi birma-bir:** qidiruvlar baribir parallel, lekin natijalar ketma-ket chiqadi (har biri ~0.35 s).
+- **Yuklanish effektlari:** slayd yaratilayotganda kanvas ustida yengil to'lqin, chap panelda «N-slayd yaratilmoqda…» skeleti, yangi slaydlar silliq paydo bo'ladi.
+- Yuqori tugmalar ixchamroq (30px).
+- e2e testlar endi `e2e/fake_ai_server.py` (soxta AI + rasm qidiruvi) bilan AI oqimini ham tekshiradi.
+
 ## Yangilanganda (v56)
 - Pastki «Shu varoq haqida yozing» qatori, uning ustidagi tugmalar va o'ngdagi zoom tugmalari ixchamroq; AI panel torroq, yozuvi mayinroq; chap panel biroz kengroq, tugmalari chetga yopishmaydi.
 - **E'lon:** faqat ENG OXIRGI faol e'lon ko'rsatiladi (bir nechtasi yuborilib, odam ko'rmagan bo'lsa ham — faqat oxirgisi). Har bir kishiga bir marta. Saytni yangilamasa ham ~45 soniyada chiqadi.

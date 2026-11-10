@@ -235,3 +235,53 @@
   document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
   window.addEventListener('focus', check);
 })();
+
+/* v57 — AI slayd yaratayotganda jonli, chiroyli yuklanish effektlari (Tez va Pro AI'da bir xil):
+ *  - kanvas ustidan yengil «shimmer» to'lqini o'tadi (slayd chizilayotgani seziladi);
+ *  - chap panelda keyingi slayd uchun skelet: «N-slayd yaratilmoqda…»;
+ *  - yangi qo'shilgan slayd miniatyurasi silliq paydo bo'ladi.
+ */
+(function () {
+  'use strict';
+  function streaming() { try { return typeof isAiStreaming !== 'undefined' && !!isAiStreaming; } catch (e) { return false; } }
+  function buf() { try { return typeof currentAiStreamBuffer === 'string' ? currentAiStreamBuffer : ''; } catch (e) { return ''; } }
+  function nSlides() { try { return (slides && slides.length) || 0; } catch (e) { return 0; } }
+  var SLIDE_ACT = /"(?:replace_slide|insert_slide|create_slides|reset_deck)"/;
+  var building = false, lastCount = -1;
+
+  function skel(on) {
+    var sb = document.getElementById('sidebar');
+    var scroll = sb && sb.querySelector('.sidebar-slides-scroll');
+    var el = document.getElementById('ssSlideSkel');
+    if (!on || !scroll) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'ssSlideSkel';
+      el.className = 'ss-slide-skel';
+      el.innerHTML = '<div class="ss-slide-skel-box"><span class="ss-slide-skel-bar w70"></span><span class="ss-slide-skel-bar w45"></span><span class="ss-slide-skel-bar w55"></span></div><small></small>';
+    }
+    el.querySelector('small').textContent = (nSlides() + 1) + '-slayd yaratilmoqda…';
+    var add = scroll.querySelector('.btn-add-slide-bottom');
+    if (el.parentNode !== scroll || (add && el.nextElementSibling !== add && add.parentNode === scroll)) {
+      if (add && add.parentNode === scroll) scroll.insertBefore(el, add); else scroll.appendChild(el);
+    }
+  }
+
+  function tick() {
+    var on = streaming() && SLIDE_ACT.test(buf());
+    if (on !== building) {
+      building = on;
+      document.body.classList.toggle('ss-ai-building', on);
+    }
+    skel(on);
+    var n = nSlides();
+    if (lastCount >= 0 && n > lastCount && (on || streaming())) {
+      var items = document.querySelectorAll('#sidebar .slide-item');
+      for (var i = Math.max(0, items.length - (n - lastCount)); i < items.length; i++) {
+        items[i].classList.remove('ss-pop'); void items[i].offsetWidth; items[i].classList.add('ss-pop');
+      }
+    }
+    lastCount = n;
+  }
+  setInterval(tick, 250);
+})();

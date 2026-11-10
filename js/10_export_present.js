@@ -1442,7 +1442,25 @@
       if (lastUser && lastUser.parentNode) lastUser.remove();
       refreshChatMessageActions();
       trimLocalHistoryForRegenerate();
-      reSendUserPrompt(userText, restoredImgs);
+      // v57: «Qayta yaratish» — oldingi AI natijasi USTIGA emas, AI'dan oldingi holatdan qayta boshlanadi
+      // (avval «4 ta slayd yarat» qayta bosilsa slaydlar ikkilanib 8 ta bo'lib ketardi)
+      let sent = false;
+      const go = () => { if (sent) return; sent = true; reSendUserPrompt(userText, restoredImgs); };
+      try {
+        const backup = window._preAiSlidesSnapshot ? JSON.parse(window._preAiSlidesSnapshot) : null;
+        if (backup && Array.isArray(backup.slides) && backup.slides.length > 0) {
+          slides = backup.slides;
+          activeIndex = Math.min(Math.max(backup.activeIndex || 0, 0), slides.length - 1);
+          try { recalculateGlobalImageCounter(); } catch (e) {}
+          loadSlideCanvas(activeIndex, () => {
+            try { renderSidebar(); updateSlideCounterUI(); updateAllImageBadges(); } catch (e) {}
+            go();
+          });
+          setTimeout(go, 4000);
+          return;
+        }
+      } catch (e) { console.warn('Regenerate restore:', e); }
+      go();
   }
   window.regenerateLastResponse = regenerateLastResponse;
       function restoreImagesFromMessage(msgDiv) {
@@ -1616,6 +1634,16 @@ function resetChatOnLoad() {
     function submitEditedUserMessage(msgDiv, newText) {
       let restoredImgs = [];
       try { restoredImgs = restoreImagesFromMessage(msgDiv) || []; } catch (e) { restoredImgs = []; }
+      removeMessagesAfter(msgDiv);
+      msgDiv.remove();
+      refreshChatMessageActions();
+      if (typeof trimLocalHistoryForRegenerate === 'function') {
+        trimLocalHistoryForRegenerate();
+      }
+      // v57: avval eski holat kanvasga TO'LIQ yuklanadi, keyin so'rov yuboriladi. Avval yuklash tugamasdan yuborilardi —
+      // yuborishdagi saveCurrentSlideState() yarim yuklangan (bo'sh) kanvasni slaydga yozib, slayd yo'qolib qolardi.
+      let sent = false;
+      const go = () => { if (sent) return; sent = true; reSendUserPrompt(newText, restoredImgs); };
       if (window._preAiSlidesSnapshot) {
         try {
           const backup = JSON.parse(window._preAiSlidesSnapshot);
@@ -1624,22 +1652,17 @@ function resetChatOnLoad() {
             activeIndex = Math.min(Math.max(backup.activeIndex || 0, 0), slides.length - 1);
             try { recalculateGlobalImageCounter(); } catch (e) {  }
             loadSlideCanvas(activeIndex, () => {
-              renderSidebar();
-              updateSlideCounterUI();
-              updateAllImageBadges();
+              try { renderSidebar(); updateSlideCounterUI(); updateAllImageBadges(); } catch (e) {}
+              go();
             });
+            setTimeout(go, 4000);              // yuklash qotib qolsa ham so'rov yo'qolmasin
+            return;
           }
         } catch (e) {
           console.warn("Rollback failed:", e);
         }
       }
-      removeMessagesAfter(msgDiv);
-      msgDiv.remove();
-      refreshChatMessageActions();
-      if (typeof trimLocalHistoryForRegenerate === 'function') {
-        trimLocalHistoryForRegenerate();
-      }
-      reSendUserPrompt(newText, restoredImgs);
+      go();
     }
     function reSendUserPrompt(text, images) {
       const input = document.getElementById('aiSidebarInput');

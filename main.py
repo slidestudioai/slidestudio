@@ -2263,7 +2263,7 @@ GIF_SAFE_POOL = [
     "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif",
 ]
 _ANIM_WORDS = ("gif", "animation", "animated", "loop", "motion", "spinner", "particles", "globe rotating", "loading")
-SEARCH_STAGGER = 0.09          # qatorlar orasidagi kichik pauza (soniya) — «birma-bir» ko'rinish, lekin tez
+SEARCH_STAGGER = 0.35          # v57: har qator kamida shuncha turadi — «birma-bir» ko'rinish (qidiruvlar baribir parallel)
 
 
 def _tool_search_kind(query: str, kind: Any) -> str:
@@ -2348,8 +2348,9 @@ async def _client_side_search_many(websocket, jobs: List[Tuple[int, str, str]], 
 async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: bool = False, n0: int = 0,
                         per_query: int = 12, stagger: float = None) -> List[list]:
     """jobs: [(query, kind)] -> har biri uchun natijalar ro'yxati (tartib saqlanadi).
-    1) hamma qidiruv parallel; 2) bo'sh qolganlar soddaroq so'rov bilan YANA parallel; 3) GIF uchun xavfsiz zaxira.
-    WebSocket'ga search_start / search_done yuboriladi — kichik pauza bilan ketma-ket (chiroyli, «birma-bir»)."""
+    v57: HAMMA qidiruv (va topilmaganida soddaroq so'rov bilan qayta urinish) bir vaqtda fonda ishlaydi,
+    foydalanuvchiga esa natijalar BIRMA-BIR chiqadi: 1-qator «qidirilmoqda» → «topildi», keyin 2-qator va h.k.
+    Umumiy vaqt ≈ eng sekin qidiruv + n × stagger (ketma-ket qidirishdan ancha tez)."""
     if not jobs:
         return []
     stagger = SEARCH_STAGGER if stagger is None else stagger
@@ -2374,46 +2375,41 @@ async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: b
             print(f"[IMG-SEARCH] {q!r}: {type(e).__name__}")
             return []
 
-    results: List[list] = [[] for _ in jobs]
-    # 1-bosqich: brauzer qidiruvi (agar yoqilgan bo'lsa) — hammasi birdaniga
-    if client_search and websocket is not None:
-        got = await _client_side_search_many(websocket, [(i, q, k) for i, (q, k) in enumerate(jobs) if k != "video"])
-        for i, r in got.items():
-            results[i] = r
-    # server qidiruvlari fonda boshlanadi, «qidirilmoqda» qatorlari esa ketma-ket chiqadi
-    tasks = {i: asyncio.ensure_future(server_one(q, k)) for i, (q, k) in enumerate(jobs) if not results[i]}
-    for i, (q, k) in enumerate(jobs):
-        await ev({"type": "search_start", "query": q, "kind": k, "n": n0 + i + 1})
-        if stagger and i < len(jobs) - 1:
-            await asyncio.sleep(stagger)
-    if tasks:
-        done = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        for i, r in zip(tasks.keys(), done):
-            results[i] = r if isinstance(r, list) else []
-    # 2-bosqich: topilmaganlar — soddaroq so'rovlar bilan YANA bitta parallel to'plam
-    missing = [i for i, r in enumerate(results) if not r]
-    if missing:
-        retry = {i: _retry_queries(jobs[i][0], jobs[i][1]) for i in missing}
+    async def with_retry(q: str, kind: str, first: Optional[list]) -> list:
+        """Bitta so'rov: (brauzer natijasi bo'lmasa) server qidiruvi, bo'sh bo'lsa soddaroq variantlar PARALLEL."""
+        res = first or await server_one(q, kind)
+        if not res:
+            alts = _retry_queries(q, kind)
+            if alts:
+                outs = await asyncio.gather(*[server_one(a, kind) for a in alts], return_exceptions=True)
+                res = next((o for o in outs if isinstance(o, list) and o), [])
+        if not res and kind == "gif":
+            res = [{"url": u, "title": "safe", "source": "safe_pool"} for u in GIF_SAFE_POOL]
+        return res
 
-        async def first_hit(i: int) -> list:
-            alts = retry[i]
-            if not alts:
-                return []
-            outs = await asyncio.gather(*[server_one(a, jobs[i][1]) for a in alts], return_exceptions=True)
-            for o in outs:
-                if isinstance(o, list) and o:
-                    return o
-            return []
-        again = await asyncio.gather(*[first_hit(i) for i in missing], return_exceptions=True)
-        for i, r in zip(missing, again):
+    pre: Dict[int, list] = {}
+    if client_search and websocket is not None:     # brauzer qidiruvi — hammasi birdaniga so'raladi
+        pre = await _client_side_search_many(websocket, [(i, q, k) for i, (q, k) in enumerate(jobs) if k != "video"])
+    tasks = [asyncio.ensure_future(with_retry(q, k, pre.get(i))) for i, (q, k) in enumerate(jobs)]
+    results: List[list] = [[] for _ in jobs]
+    try:
+        for i, (q, k) in enumerate(jobs):
+            await ev({"type": "search_start", "query": q, "kind": k, "n": n0 + i + 1})
+            t0 = time.monotonic()
+            try:
+                r = await tasks[i]
+            except Exception:
+                r = []
             results[i] = r if isinstance(r, list) else []
-    for i, (q, k) in enumerate(jobs):
-        if k == "gif" and not results[i]:
-            results[i] = [{"url": u, "title": "safe", "source": "safe_pool"} for u in GIF_SAFE_POOL]
-    for i, (q, k) in enumerate(jobs):
-        await ev({"type": "search_done", "query": q, "kind": k, "count": len(results[i])})
-        if stagger and i < len(jobs) - 1:
-            await asyncio.sleep(stagger / 2)
+            if stagger:                                    # «birma-bir» ko'rinishi: har qator kamida stagger turadi
+                left = stagger - (time.monotonic() - t0)
+                if left > 0:
+                    await asyncio.sleep(left)
+            await ev({"type": "search_done", "query": q, "kind": k, "count": len(results[i])})
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
     return results
 
 
