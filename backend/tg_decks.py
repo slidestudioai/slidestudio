@@ -227,7 +227,107 @@ def _as_list(v: Any) -> list:
     return v if isinstance(v, list) else []
 
 
+MEDIA_TYPES = ("image", "gif", "video", "youtube")
+MEDIA_LAYOUTS = ("title", "bullets")          # media rasm o'rnida turadi — faqat rasm joyi bor maketlarda
+_YT_RE = re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|embed/|shorts/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})")
+
+
+def norm_url(u: Any) -> str:
+    """Faqat ochiq http(s) havolalar (javascript:, data: va h.k. — yo'q). Bo'sh qator = yaroqsiz."""
+    u = str(u or "").strip()
+    if not u or len(u) > 500 or any(c in u for c in ' \n\r\t"<>'):
+        return ""
+    if "://" not in u and re.match(r"^[\w-]+(\.[\w-]+)+(/\S*)?$", u):
+        u = "https://" + u                    # example.org, t.me/kanal, www.site.uz
+    p = urlparse(u)
+    if p.scheme not in ("http", "https") or not p.hostname or "." not in p.hostname:
+        return ""
+    return u
+
+
+def youtube_id(u: Any) -> str:
+    m = _YT_RE.search(str(u or ""))
+    return m.group(1) if m else ""
+
+
+def _norm_buttons(s: dict) -> List[dict]:
+    raw = s.get("buttons") or s.get("links") or s.get("button") or s.get("link") or []
+    if isinstance(raw, (dict, str)):
+        raw = [raw]
+    out = []
+    for b in _as_list(raw):
+        if isinstance(b, str):
+            b = {"url": b}
+        if not isinstance(b, dict):
+            continue
+        url = norm_url(b.get("url") or b.get("href") or b.get("link"))
+        if not url:
+            continue
+        text = clean(b.get("text") or b.get("label") or b.get("title"), 28) or (urlparse(url).hostname or "Havola").replace("www.", "")[:28]
+        out.append({"text": text, "url": url})
+    return out[:3]
+
+
+def _norm_media(s: dict) -> dict:
+    m = s.get("media")
+    if not isinstance(m, dict):
+        # qisqa yozuvlar: {"youtube": url} / {"gif": "query"} / {"video": url}
+        for k in ("youtube", "video", "gif"):
+            if s.get(k):
+                m = {"type": k, ("query" if (k == "gif" and not norm_url(s[k])) else "url"): s[k]}
+                break
+        else:
+            return {}
+    t = str(m.get("type") or m.get("kind") or "").strip().lower()
+    url = norm_url(m.get("url") or m.get("src"))
+    q = clean(m.get("query"), 60)
+    if t not in MEDIA_TYPES:
+        t = "youtube" if youtube_id(url) else ("gif" if url.lower().split("?")[0].endswith(".gif") else ("image" if url else ""))
+    if t == "youtube" or (t == "video" and youtube_id(url)):
+        vid = youtube_id(url)
+        return {"type": "youtube", "id": vid, "url": f"https://www.youtube.com/watch?v={vid}"} if vid else {}
+    if t == "video":
+        return {"type": "video", "url": url} if url else {}
+    if t == "gif":
+        if url:
+            return {"type": "gif", "url": url}
+        return {"type": "gif", "query": q} if q else {}
+    if t == "image" and url:
+        return {"type": "image", "url": url}
+    return {}
+
+
+def media_key(s: dict) -> str:
+    """Slayd uchun yuklanadigan rasm kaliti (images lug'ati shu kalit bilan to'ldiriladi)."""
+    m = s.get("media") or {}
+    t = m.get("type")
+    if t == "youtube":
+        return "yt:" + m["id"]
+    if t == "video":
+        return "vid:" + m["url"]
+    if t == "gif":
+        return ("gif:" + m["url"]) if m.get("url") else ("gifq:" + m.get("query", ""))
+    if t == "image":
+        return "url:" + m["url"]
+    return s.get("image") or ""
+
+
 def normalize_slide(s: Any) -> Optional[dict]:
+    out = _normalize_slide_core(s)
+    if out is None:
+        return None
+    btns = _norm_buttons(s)
+    if btns:
+        out["buttons"] = btns
+    if out["layout"] in MEDIA_LAYOUTS:
+        med = _norm_media(s)
+        if med:
+            out["media"] = med
+            out["image"] = ""
+    return out
+
+
+def _normalize_slide_core(s: Any) -> Optional[dict]:
     if not isinstance(s, dict):
         return None
     lay = str(s.get("layout") or "").strip().lower()
@@ -409,8 +509,11 @@ class Scene:
     def oval(self, x, y, w, h, fill):
         self.items.append(dict(t="oval", x=x, y=y, w=w, h=h, fill=fill))
 
-    def image(self, x, y, w, h, data, r=0):
-        self.items.append(dict(t="img", x=x, y=y, w=w, h=h, data=data, r=r))
+    def image(self, x, y, w, h, data, r=0, link="", anim=None, embed=None):
+        self.items.append(dict(t="img", x=x, y=y, w=w, h=h, data=data, r=r, link=link, anim=anim, embed=embed))
+
+    def button(self, x, y, w, h, text, url, fill, color):
+        self.items.append(dict(t="btn", x=x, y=y, w=w, h=h, text=text, url=url, fill=fill, color=color))
 
     def text(self, x, y, w, h, text, size, color, bold=False, italic=False, align="l", anchor="t", lines=None):
         size = int(round(size))
@@ -621,10 +724,12 @@ def _heading(sc: Scene, th: dict, title: str, width: float) -> None:
     sc.rect(56, 128, 64, 5, th["accent"], r=2)
 
 
-def _dark_slide(sc: Scene, th: dict, title: str, subtitle: str, img: Optional[bytes], kicker: str) -> None:
+def _dark_slide(sc: Scene, th: dict, title: str, subtitle: str, img: Optional[bytes], kicker: str, media: bool = False) -> float:
     dark, prim, acc = th["dark"], th["primary"], th["accent"]
-    text_w_ = 500 if img else 700
-    if img:
+    text_w_ = 500 if (img or media) else 700
+    if media:
+        sc.rect(0, 0, W, H, dark)
+    elif img:
         sc.rect(0, 0, W, H, dark)
         sc.image(580, 0, 380, 540, img, 0)
         sc.rect(572, 0, 8, 540, acc)
@@ -638,9 +743,59 @@ def _dark_slide(sc: Scene, th: dict, title: str, subtitle: str, img: Optional[by
     size, lines = fit(title, text_w_, 190, 54, 28, bold=True)
     sc.text(64, 196, text_w_, 190, title, size, "#FFFFFF", bold=True, lines=lines)
     used = len(lines) * size * LH
+    end = 196 + used
     if subtitle:
         ssz, slines = fit(subtitle, text_w_, 110, 22, 14)
         sc.text(64, 196 + used + 14, text_w_, 110, subtitle, ssz, mix("#FFFFFF", dark, 0.28), lines=slines)
+        end += 14 + len(slines) * ssz * LH
+    return end
+
+
+def _is_gif(data: Optional[bytes]) -> bool:
+    return bool(data) and data[:6] in (b"GIF87a", b"GIF89a")
+
+
+def _media_image(sc: Scene, s: dict, raw: Optional[bytes], x: float, y: float, w: float, h: float, r: float, th: dict) -> bool:
+    """Rasm joyiga media (rasm / GIF / video / YouTube) qo'yadi. Hech narsa chizilmasa False."""
+    m = s.get("media") or {}
+    t = m.get("type")
+    img = cover_jpeg(raw, w, h) if raw else None
+    link = m.get("url", "") if t in ("youtube", "video", "image", "gif") and m.get("url") else ""
+    embed = {"kind": "youtube", "id": m["id"]} if t == "youtube" else ({"kind": "video", "url": m["url"]} if t == "video" else None)
+    if img:
+        sc.image(x, y, w, h, img, r, link=link, anim=raw if (t == "gif" and _is_gif(raw)) else None, embed=embed)
+    elif t in ("youtube", "video"):
+        sc.rect(x, y, w, h, mix(th["dark"], th["primary"], 0.35), r=r)          # muqova topilmadi — chiroyli o'rinbosar
+        if link:
+            sc.items[-1]["link"] = link
+        if embed:
+            sc.items[-1]["embed"] = embed
+    else:
+        return False
+    if t in ("youtube", "video"):
+        d = min(84, w * 0.3, h * 0.3)
+        cx, cy = x + w / 2, y + h / 2
+        sc.oval(cx - d / 2, cy - d / 2, d, d, "#E11D48" if t == "youtube" else th["accent"])
+        sc.text(cx - d / 2 + d * 0.06, cy - d / 2, d, d, "\u25B6", int(d * 0.42), "#FFFFFF", align="c", anchor="m", lines=["\u25B6"])
+    return True
+
+
+def _buttons_row(sc: Scene, th: dict, btns: List[dict], x: float, y: float, max_w: float, h: float = 40,
+                 size: int = 16, align: str = "l", dark: bool = False) -> None:
+    """Bosiladigan tugmalar (PPTX/PDF/HTML da havola)."""
+    if not btns:
+        return
+    gap = 12
+    ws = [min(260.0, text_w(b["text"], size, True) + size * 2.4) for b in btns]
+    while sum(ws) + gap * (len(ws) - 1) > max_w and len(ws) > 1:
+        ws.pop()
+    total = sum(ws) + gap * (len(ws) - 1)
+    cx = x + (max_w - total if align == "r" else 0)
+    for k, (b, bw) in enumerate(zip(btns, ws)):
+        fill = th["accent"] if k == 0 else (mix(th["dark"], "#FFFFFF", 0.18) if dark else th["primary"])
+        label = _short(b["text"], size, bw - size * 1.6, True)
+        sc.button(cx, y, bw, h, label, b["url"], fill, "#FFFFFF")
+        cx += bw + gap
 
 
 def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: str = "uz") -> List[Scene]:
@@ -656,15 +811,31 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
         raw_img = images.get(i)
         if lay in ("title", "closing"):
             sc = Scene(th["dark"])
-            img = cover_jpeg(raw_img, 380, 540) if (raw_img and lay == "title") else None
-            _dark_slide(sc, th, s.get("title") or deck_title, s.get("subtitle", ""), img, "SLIDE STUDIO AI" if lay == "title" else "")
+            has_media = bool(s.get("media")) and lay == "title"
+            img = cover_jpeg(raw_img, 380, 540) if (raw_img and lay == "title" and not has_media) else None
+            if has_media and (raw_img or s["media"]["type"] in ("youtube", "video")):
+                img = b"media"                               # matn torroq joylashsin; rasmni _media_image qo'yadi
+            end_y = _dark_slide(sc, th, s.get("title") or deck_title, s.get("subtitle", ""), None if img == b"media" else img,
+                                "SLIDE STUDIO AI" if lay == "title" else "", media=img == b"media")
+            if img == b"media":
+                _media_image(sc, s, raw_img, 580, 0, 380, 540, 0, th)
+                sc.rect(572, 0, 8, 540, th["accent"])
+            if s.get("buttons"):
+                _buttons_row(sc, th, s["buttons"], 64, min(470, max(420, end_y + 22)), (500 if img else 700) - 10, 42, 17, dark=True)
         elif lay == "bullets":
             sc = Scene(th["bg"])
             _topbar(sc, th)
-            img = cover_jpeg(raw_img, 304, 330) if raw_img else None
+            btns = s.get("buttons") or []
+            area = 270 if btns else 330                         # tugmalar uchun pastda joy
+            if s.get("media"):
+                img = b"media" if (raw_img or s["media"]["type"] in ("youtube", "video")) else None
+            else:
+                img = cover_jpeg(raw_img, 304, 330) if raw_img else None
             body_w = 512 if img else 848
             _heading(sc, th, s["title"], body_w if img else 848)
-            if img:
+            if img == b"media":
+                _media_image(sc, s, raw_img, 600, 150, 304, area, 18, th)
+            elif img:
                 sc.image(600, 150, 304, 330, img, 18)
             blocks = None
             top_size = 30 if (len(s["bullets"]) <= 3 and not img) else 26
@@ -672,7 +843,7 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
                 tmp = [wrap(b, size, body_w - 28) for b in s["bullets"]]
                 gap = 14 if size >= 20 else 10
                 h = sum(len(l) * size * LH for l in tmp) + gap * (len(tmp) - 1)
-                if h <= 330:
+                if h <= area:
                     blocks = (size, tmp, gap)
                     break
             if blocks is None:
@@ -680,13 +851,15 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
                 blocks = (size, [wrap(b, size, body_w - 28) for b in s["bullets"]], 8)
             size, tmp, gap = blocks
             total_h = sum(len(l) * size * LH for l in tmp) + gap * (len(tmp) - 1)
-            y = 152 + (max(0.0, 326 - total_h) / 2 if total_h < 260 else 0)
+            y = 152 + (max(0.0, (area - 4) - total_h) / 2 if total_h < area - 70 else 0)
             for b, lines in zip(s["bullets"], tmp):
                 hh = len(lines) * size * LH
                 d = max(8, round(size * 0.4))
                 sc.oval(56, y + (size * LH - d) / 2, d, d, th["accent"])
                 sc.text(56 + 28, y, body_w - 28, hh, b, size, th["text"], lines=lines)
                 y += hh + gap
+            if btns:
+                _buttons_row(sc, th, btns, 56, 438, 848, 40, 16)
             _footer(sc, th, deck_title, idx, total)
         elif lay == "cards":
             sc = Scene(th["bg"])
@@ -776,6 +949,11 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
             _footer(sc, th, deck_title, idx, total)
         else:  # pragma: no cover
             sc = Scene(th["bg"])
+        if s.get("buttons") and lay not in ("title", "closing", "bullets"):
+            for it in sc.items:                              # pastki sarlavha tugmalar bilan ustma-ust tushmasin
+                if it["t"] == "text" and it["x"] == 56 and it["y"] == 502:
+                    it["w"], it["lines"] = 250, [_short(deck_title, 12, 250)]
+            _buttons_row(sc, th, s["buttons"], 320, 492, 470, 32, 13, align="r")
         sc.notes = s.get("notes", "")
         sc.transition = s.get("transition") or deck.get("transition") or "fade"
         scenes.append(sc)
@@ -844,6 +1022,8 @@ def render_pdf(scenes: List[Scene], title: str) -> bytes:
                         c.roundRect(x, y, w, h, r, stroke=1 if line else 0, fill=1)
                     else:
                         c.rect(x, y, w, h, stroke=1 if line else 0, fill=1)
+                    if it.get("link"):
+                        c.linkURL(it["link"], (x, y, x + w, y + h), relative=0)
             elif t == "img":
                 x, w, h = it["x"], it["w"], it["h"]
                 y = H - it["y"] - h
@@ -854,6 +1034,18 @@ def render_pdf(scenes: List[Scene], title: str) -> bytes:
                     c.clipPath(p, stroke=0, fill=0)
                 c.drawImage(ImageReader(io.BytesIO(it["data"])), x, y, w, h)
                 c.restoreState()
+                if it.get("link"):
+                    c.linkURL(it["link"], (x, y, x + w, y + h), relative=0)
+            elif t == "btn":
+                x, w, h = it["x"], it["w"], it["h"]
+                y = H - it["y"] - h
+                c.setFillColor(HexColor(it["fill"]))
+                c.roundRect(x, y, w, h, h / 2, stroke=0, fill=1)
+                size = max(10, int(h * 0.4))
+                c.setFont(f["b"], size)
+                c.setFillColor(HexColor(it["color"]))
+                c.drawCentredString(x + w / 2, y + h / 2 - size * 0.35, it["text"])
+                c.linkURL(it["url"], (x, y, x + w, y + h), relative=0)
             elif t == "text":
                 size = it["size"]
                 font = f["b"] if it["bold"] else (f["i"] if it["italic"] else f["r"])
@@ -1043,6 +1235,28 @@ def _pptx_chart(slide, it: dict, E: int, rgb) -> None:
             pass
 
 
+def _pptx_picture(slide, it: dict, Emu, x: int, y: int, w: int, h: int):
+    """Rasm. GIF bo'lsa — asl animatsiyali GIF qo'yiladi (PowerPoint uni harakatda ko'rsatadi), «cover» kesish bilan."""
+    anim = it.get("anim")
+    if not anim:
+        return slide.shapes.add_picture(io.BytesIO(it["data"]), Emu(x), Emu(y), Emu(w), Emu(h))
+    pic = slide.shapes.add_picture(io.BytesIO(anim), Emu(x), Emu(y), Emu(w), Emu(h))
+    try:
+        from PIL import Image
+        iw, ih = Image.open(io.BytesIO(anim)).size
+        want = it["w"] / max(1.0, it["h"])
+        have = iw / max(1, ih)
+        if have > want:                     # juda keng — yonlaridan kesiladi
+            cut = (1 - want / have) / 2
+            pic.crop_left = pic.crop_right = cut
+        elif have < want:
+            cut = (1 - have / want) / 2
+            pic.crop_top = pic.crop_bottom = cut
+    except Exception:
+        pass
+    return pic
+
+
 def render_pptx(scenes: List[Scene], title: str) -> bytes:
     from pptx import Presentation
     from pptx.dml.color import RGBColor
@@ -1087,6 +1301,11 @@ def render_pptx(scenes: List[Scene], title: str) -> bytes:
                     shp.line.width = Pt(it.get("lw", 1))
                 else:
                     shp.line.fill.background()
+                if it.get("link"):
+                    try:
+                        shp.click_action.hyperlink.address = it["link"]
+                    except Exception:
+                        pass
                 try:
                     shp.shadow.inherit = False
                     st_el = shp._element.find(qn("p:style"))
@@ -1098,8 +1317,35 @@ def render_pptx(scenes: List[Scene], title: str) -> bytes:
                 _pptx_table(slide, it, E, rgb)
             elif t == "chart":
                 _pptx_chart(slide, it, E, rgb)
+            elif t == "btn":
+                shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Emu(x), Emu(y), Emu(w), Emu(h))
+                shp.adjustments[0] = 0.5
+                shp.fill.solid()
+                shp.fill.fore_color.rgb = rgb(it["fill"])
+                shp.line.fill.background()
+                try:
+                    st_el = shp._element.find(qn("p:style"))
+                    if st_el is not None:
+                        shp._element.remove(st_el)
+                except Exception:
+                    pass
+                tf = shp.text_frame
+                tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                p = tf.paragraphs[0]
+                p.alignment = PP_ALIGN.CENTER
+                r = p.add_run()
+                r.text = it["text"]
+                r.font.size = Pt(max(10, int(it["h"] * 0.4)))
+                r.font.bold = True
+                r.font.name = "Arial"
+                r.font.color.rgb = rgb(it["color"])
+                try:
+                    shp.click_action.hyperlink.address = it["url"]
+                except Exception:
+                    pass
             elif t == "img":
-                pic = slide.shapes.add_picture(io.BytesIO(it["data"]), Emu(x), Emu(y), Emu(w), Emu(h))
+                pic = _pptx_picture(slide, it, Emu, x, y, w, h)
                 if it.get("r"):
                     try:
                         pic.auto_shape_type = MSO_SHAPE.ROUNDED_RECTANGLE
@@ -1112,6 +1358,11 @@ def render_pptx(scenes: List[Scene], title: str) -> bytes:
                         gd = etree.SubElement(av, qn("a:gd"))
                         gd.set("name", "adj")
                         gd.set("fmla", "val %d" % int(min(0.5, it["r"] / max(1.0, min(it["w"], it["h"]))) * 100000))
+                    except Exception:
+                        pass
+                if it.get("link"):
+                    try:
+                        pic.click_action.hyperlink.address = it["link"]
                     except Exception:
                         pass
             elif t == "text":
@@ -1210,11 +1461,22 @@ document.getElementById('fs').onclick=function(e){{e.stopPropagation();fs()}};
 var x0=null;
 addEventListener('touchstart',function(e){{document.body.classList.add('touch');x0=e.touches[0].clientX}},{{passive:true}});
 addEventListener('touchend',function(e){{if(x0===null)return;var dx=e.changedTouches[0].clientX-x0;x0=null;if(Math.abs(dx)>40){{dx<0?next():prev()}}}},{{passive:true}});
-document.getElementById('view').addEventListener('click',function(e){{if(e.clientX>innerWidth*0.35)next();else prev()}});
+document.getElementById('view').addEventListener('click',function(e){{if(e.target.closest&&e.target.closest('a,iframe,video'))return;if(e.clientX>innerWidth*0.35)next();else prev()}});
 var h=parseInt((location.hash||'').slice(1),10);show(isNaN(h)?0:h-1);
 }})();
 </script></body></html>
 """.replace("{{", "{").replace("}}", "}")
+
+
+def _html_embed(it: dict, style: str) -> str:
+    """HTML namoyishda YouTube / video haqiqiy pleer bo'lib ochiladi (PPTX/PDF da — muqova + havola)."""
+    emb = it.get("embed") or {}
+    if emb.get("kind") == "youtube" and re.fullmatch(r"[A-Za-z0-9_-]{11}", emb.get("id") or ""):
+        return (f'<iframe src="https://www.youtube.com/embed/{emb["id"]}?rel=0" style="{style}border:0" '
+                'allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')
+    if emb.get("kind") == "video" and norm_url(emb.get("url")):
+        return f'<video src="{_html.escape(emb["url"], quote=True)}" style="{style}object-fit:cover;background:#000" controls playsinline preload="metadata"></video>'
+    return ""
 
 
 def render_html(scenes: List[Scene], title: str, lang: str = "uz", pptx: Optional[bytes] = None) -> bytes:
@@ -1250,13 +1512,29 @@ def render_html(scenes: List[Scene], title: str, lang: str = "uz", pptx: Optiona
                     st += f'border-radius:{it["r"]}px;'
                 if it.get("line"):
                     st += f'border:{it.get("lw", 1)}px solid {it["line"]};'
-                out.append(f'<div style="{st}"></div>')
+                emb = _html_embed(it, pos)
+                out.append(emb or f'<div style="{st}"></div>')
+            elif t == "btn":
+                st = (pos + f'background:{it["fill"]};color:{it["color"]};border-radius:{it["h"] / 2:.0f}px;display:flex;align-items:center;'
+                      f'justify-content:center;font-weight:700;font-size:{max(10, int(it["h"] * 0.4))}px;text-decoration:none;'
+                      'box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer')
+                out.append(f'<a class="btn" href="{e(it["url"], quote=True)}" target="_blank" rel="noopener" style="{st}">{e(it["text"])}</a>')
             elif t == "oval":
                 out.append(f'<div style="{pos}background:{it["fill"]};border-radius:50%"></div>')
             elif t == "img":
-                b64 = base64.b64encode(it["data"]).decode("ascii")
                 rad = f'border-radius:{it["r"]}px;' if it.get("r") else ""
-                out.append(f'<img alt="" src="data:image/jpeg;base64,{b64}" style="{pos}{rad}">')
+                emb = _html_embed(it, pos + rad)
+                if emb:
+                    out.append(emb)
+                    continue
+                if it.get("anim"):
+                    src = "data:image/gif;base64," + base64.b64encode(it["anim"]).decode("ascii")       # HTML'da GIF harakatlanadi
+                else:
+                    src = "data:image/jpeg;base64," + base64.b64encode(it["data"]).decode("ascii")
+                tag = f'<img alt="" src="{src}" style="{pos}{rad}">'
+                if it.get("link"):
+                    tag = f'<a href="{e(it["link"], quote=True)}" target="_blank" rel="noopener" style="{pos}">{tag.replace(pos, "left:0;top:0;width:100%;height:100%;")}</a>'
+                out.append(tag)
             elif t == "text":
                 jc = "center" if it["anchor"] == "m" else "flex-start"
                 st = (pos + f'justify-content:{jc};font-size:{it["size"]}px;line-height:{it["size"] * LH:.1f}px;color:{it["color"]};'
@@ -1480,6 +1758,40 @@ def download_image(url: str, timeout: float = 8.0) -> Optional[bytes]:
 
 
 _IMG_URL_CACHE: "OrderedDict[str, str]" = OrderedDict()   # query -> tanlangan rasm manzili (faqat qisqa matn, fayl emas)
+
+
+def _find_gif(query: str) -> Optional[bytes]:
+    try:
+        from backend.image_search import search_images
+        res = search_images(query, "gif", 8) or []
+    except Exception:
+        return None
+    for r in res[:4]:
+        data = download_image((r or {}).get("url") or "")
+        if _is_gif(data):
+            return data
+    return None
+
+
+def fetch_media(key: str) -> Optional[bytes]:
+    """media_key() bo'yicha bayt (sinxron, thread ichida). Topilmasa None — slayd rasmsiz / o'rinbosar bilan chiqadi."""
+    if not key:
+        return None
+    if key.startswith("yt:"):
+        vid = key[3:]
+        for name in ("maxresdefault", "hqdefault"):
+            data = download_image(f"https://i.ytimg.com/vi/{vid}/{name}.jpg")
+            if data and cover_jpeg(data, 100, 100, scale=1.0) is not None:
+                return data
+        return None
+    if key.startswith("vid:"):
+        return None                                   # video muqovasi yo'q — chiroyli o'rinbosar chiziladi
+    if key.startswith("url:") or key.startswith("gif:"):
+        data = download_image(key.split(":", 1)[1])
+        return data if (data and cover_jpeg(data, 100, 100, scale=1.0) is not None) else None
+    if key.startswith("gifq:"):
+        return _find_gif(key[5:])
+    return find_image(key)
 
 
 def find_image(query: str) -> Optional[bytes]:

@@ -705,7 +705,11 @@ def _dispatch(op: str, body: Dict[str, Any], actor: str):
     if op == "ads":
         sb = _sb()
         try:
-            rows = sb.table("ads").select("id,title,body,media_type,link_url,button_text,placement,active,weight,starts_at,ends_at,impressions,clicks,created_at,media_url").order("id", desc=True).execute().data or []
+            _cols = "id,title,body,media_type,link_url,button_text,placement,active,weight,starts_at,ends_at,impressions,clicks,created_at,media_url"
+            try:
+                rows = sb.table("ads").select(_cols + ",kind").order("id", desc=True).execute().data or []
+            except Exception:
+                rows = sb.table("ads").select(_cols).order("id", desc=True).execute().data or []
         except Exception:
             raise AdminError("ads jadvali yo'q — SUPABASE_SCHEMA.sql ni ishga tushiring", 409)
         for r in rows:       # ro'yxatda og'ir base64 yubormaymiz
@@ -728,12 +732,19 @@ def _dispatch(op: str, body: Dict[str, Any], actor: str):
         row, err = ads.clean_ad(raw)
         if err:
             raise AdminError(err)
-        try:
+        def _write(rw):
             if aid:
-                sb.table("ads").update(row).eq("id", int(aid)).execute()
-            else:
-                r = sb.table("ads").insert(row).execute().data
-                aid = r[0]["id"] if r else None
+                sb.table("ads").update(rw).eq("id", int(aid)).execute()
+                return aid
+            r = sb.table("ads").insert(rw).execute().data
+            return r[0]["id"] if r else None
+        try:
+            try:
+                aid = _write(row)
+            except Exception as e0:
+                if "kind" not in str(e0).lower() or row.get("kind") != "ad":
+                    raise
+                aid = _write({k: v for k, v in row.items() if k != "kind"})     # eski baza: oddiy reklama baribir saqlansin
         except Exception as e:
             raise AdminError("Saqlanmadi: " + str(e)[:140] + " (SUPABASE_SCHEMA.sql ishga tushirilganmi?)", 502)
         ads.invalidate()

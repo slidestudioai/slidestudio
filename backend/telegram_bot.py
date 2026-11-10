@@ -1284,12 +1284,13 @@ async def _admin_ads(cid: int, mid: Optional[int], adm, user: dict) -> None:
         on = bool(r.get("active")) and left != "⌛ tugagan"
         where = {"bot": "🤖 bot", "site": "🌐 sayt"}.get(r.get("placement"), "🤖+🌐")
         title = (r.get("title") or r.get("body") or ("🖼 media" if r.get("media_type") != "none" else "—")).strip().replace("\n", " ")[:28]
-        lines.append(f"\n{'🟢' if on else '⚪️'} <b>{_i}.</b> {esc(title)}\n   {where} · {left} · 👁 {r.get('impressions') or 0} · 🖱 {r.get('clicks') or 0}")
+        kind_tag = "📣 e'lon" if str(r.get("kind") or "ad") == "notice" else "📢 reklama"
+        lines.append(f"\n{'🟢' if on else '⚪️'} <b>{_i}.</b> {esc(title)}\n   {kind_tag} · {where} · {left} · 👁 {r.get('impressions') or 0} · 🖱 {r.get('clicks') or 0}")
         kb.append([_btn(f"👁 {_i}", f"a:ad:v:{r['id']}"),
                    _btn((f"⏹ To'xtatish {_i}" if on else f"▶️ Yoqish {_i}"), f"a:ad:t:{r['id']}"),
                    _btn(f"🗑 Botdan ham o'chirish {_i}", f"a:ad:d:{r['id']}")])
         kb.append([_btn(f"📤 Hozir hammaga {_i}", f"a:ad:p:{r['id']}"), _btn(f"🔁 Joyi {_i}", f"a:ad:pl:{r['id']}")])
-    kb.append([_btn("➕ Yangi reklama", "a:ad:new")])
+    kb.append([_btn("➕ Yangi reklama", "a:ad:new"), _btn("📣 Yangi e'lon (reklamasiz)", "a:ad:newn")])
     kb.append(_HOME)
     await _show(cid, mid, "\n".join(lines), _akb(kb))
 
@@ -1667,9 +1668,10 @@ async def _push_ad_all(cid: int, aid: int, silent_if_none: bool = False) -> int:
     from backend import ads as _ads
     try:
         row = await asyncio.to_thread(_ads.get_row, aid)
-        tids = await asyncio.to_thread(adm._audience, "free")
+        is_notice = _ads.kind_of(row) == "notice"
+        tids = await asyncio.to_thread(adm._audience, "all" if is_notice else "free")      # e'lon — hammaga (VIP ham)
     except Exception:
-        row, tids = None, []
+        row, tids, is_notice = None, [], False
     if not row or not tids:
         if not silent_if_none:
             await _send(cid, "⚠️ Reklama yoki qabul qiluvchi topilmadi.", _akb([[_btn("📢 Reklamalar", "a:ads")]]))
@@ -1683,7 +1685,8 @@ async def _push_ad_all(cid: int, aid: int, silent_if_none: bool = False) -> int:
         bad_ids: list = []
         for tid in tids:
             try:
-                if await _deliver_ad(int(tid), pub["title"], pub["body"], pub["media_type"], pub["media_url"], link, pub["button_text"], ad_id=int(aid)):
+                if await _deliver_ad(int(tid), pub["title"], pub["body"], pub["media_type"], pub["media_url"], link, pub["button_text"],
+                                     label=not is_notice, ad_id=int(aid)):
                     ok += 1; good_ids.append(int(tid))
                 else:
                     bad += 1; bad_ids.append(int(tid))
@@ -1748,7 +1751,9 @@ async def _wiz_step(cid: int, mid: Optional[int], step: str) -> None:
     _adm_disk_save(cid, a)
     if step == "media":
         a["await"] = "ad_media"
-        await _show(cid, mid, "➕ <b>Yangi reklama</b> · 1/5\n\n📸 <b>Rasm</b> yoki 🎬 <b>video</b> yuboring.\n<i>Faqat matnli reklama bo'lsa — «Mediasiz» ni bosing.</i>",
+        head = ("📣 <b>Yangi e'lon</b> (reklamasiz) · 1/5\n<i>«Reklama» yozuvi bo'lmaydi; saytda popup bo'lib chiqadi, botda hammaga (VIP ham) boradi.</i>"
+                if ad.get("kind") == "notice" else "➕ <b>Yangi reklama</b> · 1/5")
+        await _show(cid, mid, head + "\n\n📸 <b>Rasm</b> yoki 🎬 <b>video</b> yuboring.\n<i>Faqat matnli bo'lsa — «Mediasiz» ni bosing.</i>",
                     _wiz_nav([[_btn("⏭ Mediasiz", "a:w:nomedia")]]))
     elif step == "text":
         a["await"] = "ad_text"
@@ -1782,7 +1787,7 @@ async def _wiz_step(cid: int, mid: Optional[int], step: str) -> None:
 async def _wiz_preview(cid: int) -> None:
     ad = (_state(cid).get("adm") or {}).get("ad") or {}
     await _deliver_ad(cid, ad.get("title", ""), ad.get("body", ""), ad.get("media_type", "none"), ad.get("media_url", ""),
-                      ad.get("link_url", ""), ad.get("button_text", "Batafsil"), ttl=90)
+                      ad.get("link_url", ""), ad.get("button_text", "Batafsil"), label=ad.get("kind") != "notice", ttl=90)
 
 
 async def _wiz_save(cid: int, mid: Optional[int], user: dict, adm) -> None:
@@ -1795,7 +1800,7 @@ async def _wiz_save(cid: int, mid: Optional[int], user: dict, adm) -> None:
         return                                 # ikki marta bosilsa — ikkita reklama bo'lib ketmasin
     _a["saving"] = True
     ends = datetime.now(timezone.utc) + timedelta(hours=float(ad.get("hours") or 24))
-    raw = {k: ad.get(k) for k in ("title", "body", "media_type", "media_url", "link_url", "button_text", "placement")}
+    raw = {k: ad.get(k) for k in ("title", "body", "media_type", "media_url", "link_url", "button_text", "placement", "kind")}
     raw.update(active=True, weight=1, ends_at=ends.isoformat())
     try:
         res = await asyncio.to_thread(adm._dispatch, "ad_save", {"ad": raw}, f"tg:{int(user['id'])}")
@@ -1813,7 +1818,7 @@ async def _wiz_save(cid: int, mid: Optional[int], user: dict, adm) -> None:
         n_sent = await _push_ad_all(cid, new_id, silent_if_none=True)
     where = "🌐 saytda" if ad.get("placement") == "site" else ("🤖 botda" if ad.get("placement") == "bot" else "🤖 botda va 🌐 saytda")
     sent_line = (f"\n📤 Botga <b>{n_sent}</b> ta foydalanuvchiga yuborilmoqda…" if n_sent else ("\n⚠️ Botda qabul qiluvchi topilmadi." if to_bot else ""))
-    await _show(cid, mid, f"✅ <b>Reklama joylandi</b> ({where})\n⏰ {_hours_text(ad.get('hours') or 24)} davomida ko'rsatiladi, keyin o'zi tugaydi.{sent_line}",
+    await _show(cid, mid, f"✅ <b>{'E' + chr(39) + 'lon' if ad.get('kind') == 'notice' else 'Reklama'} joylandi</b> ({where})\n⏰ {_hours_text(ad.get('hours') or 24)} davomida ko'rsatiladi, keyin o'zi tugaydi.{sent_line}",
                 _akb([[_btn("📢 Reklamalar", "a:ads")], _HOME]))
 
 
@@ -1979,8 +1984,9 @@ async def _admin_cb(cid: int, mid: Optional[int], user: dict, data: str) -> None
     elif cmd == "ad":
         sub = parts[2] if len(parts) > 2 else ""
         aid = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
-        if sub == "new":
-            st["adm"] = {"ad": {"media_type": "none", "media_url": "", "title": "", "body": "", "link_url": "", "button_text": "Batafsil", "placement": "both", "hours": 24}}
+        if sub in ("new", "newn"):
+            st["adm"] = {"ad": {"media_type": "none", "media_url": "", "title": "", "body": "", "link_url": "", "button_text": "Batafsil",
+                                "placement": "both", "hours": 24, "kind": "notice" if sub == "newn" else "ad"}}
             await _wiz_step(cid, mid, "media")
         elif sub == "t" and aid:
             rows = (await asyncio.to_thread(adm._dispatch, "ads", {}, actor)).get("ads", [])
@@ -2012,10 +2018,12 @@ async def _admin_cb(cid: int, mid: Optional[int], user: dict, data: str) -> None
                 _warn("ad", f"joy o'zgarmadi: {type(e).__name__}")
             await _admin_ads(cid, mid, adm, user)
         elif sub == "p" and aid:
-            n = len(await asyncio.to_thread(adm._audience, "free"))
+            from backend import ads as _ads
+            _notice = _ads.kind_of(await asyncio.to_thread(_ads.get_row, aid, False)) == "notice"
             n_all = len(await asyncio.to_thread(adm._audience, "all"))
+            n = n_all if _notice else len(await asyncio.to_thread(adm._audience, "free"))
             note = "\n\n⚠️ Botda hozircha boshqa foydalanuvchi yo'q ko'rinadi — reklama faqat sizga boradi." if n_all <= 1 else ""
-            await _show(cid, mid, f"📤 Reklama hozir <b>{n}</b> ta foydalanuvchiga yuboriladi (botda jami {n_all} ta; VIP/adminlar kirmaydi).{note}\nDavom etamizmi?",
+            await _show(cid, mid, f"📤 Reklama hozir <b>{n}</b> ta foydalanuvchiga yuboriladi (botda jami {n_all} ta{"" if _notice else "; VIP/adminlar kirmaydi"}).{note}\nDavom etamizmi?",
                         _akb([[_btn("✅ Yuborish", f"a:ad:pp:{aid}"), _btn("↩️ Yo'q", "a:ads")]]))
         elif sub == "r" and aid:
             rep = _AD_REPORTS.get(aid)
@@ -2054,7 +2062,8 @@ async def _admin_cb(cid: int, mid: Optional[int], user: dict, data: str) -> None
                 m = str(row.get("media_url") or "")
                 media = (_ads.media_path(row) if row.get("media_type") != "none" else "")
                 await _deliver_ad(cid, row.get("title", ""), row.get("body", ""), row.get("media_type", "none"), media,
-                                  row.get("link_url", ""), row.get("button_text", "Batafsil"), ad_id=int(aid), ttl=90)   # ad_id: reklama o'chirilsa, ko'rib chiqish nusxasi ham chatdan olinadi
+                                  row.get("link_url", ""), row.get("button_text", "Batafsil"), label=_ads.kind_of(row) != "notice",
+                                  ad_id=int(aid), ttl=90)   # ad_id: reklama o'chirilsa, ko'rib chiqish nusxasi ham chatdan olinadi
     elif cmd == "w":
         a = st.get("adm") or {}
         if not a.get("ad"):
@@ -2197,6 +2206,12 @@ RULES
 - "notes": 1-2 sentences of speaker notes (same language as the slides).
 - No emoji, no markdown symbols (**, #) inside text.
 - Pick the theme that fits the topic, or the colour the user asked for (blue=ocean, purple=violet, green=forest, orange=sunset, pink/red=rose, black/gray=slate, turquoise=teal).
+OPTIONAL INTERACTIVE FIELDS (any slide; use ONLY when the user asks for it):
+- "buttons":[{"text":"max 24 chars","url":"https://..."}]  — up to 3 clickable buttons / links. Use ONLY URLs the user wrote (or official well-known sites like https://www.wikipedia.org). Never invent URLs.
+- "media" (only on "title" and "bullets" slides, replaces the photo):
+    {"type":"gif","query":"2-4 word english query"}   — animated GIF (found automatically)
+    {"type":"gif","url":"https://...gif"} · {"type":"image","url":"https://..."} · {"type":"youtube","url":"https://youtu.be/..."} · {"type":"video","url":"https://...mp4"}
+  YouTube / video URLs must come from the user. In PPTX the GIF is animated and the YouTube cover is clickable; in HTML YouTube and video play inside the slide.
 """
 
 EDIT_SYSTEM = """You are Slide Studio AI, the editor of an existing slide deck. Return ONLY one valid JSON object (json), no markdown fences.
@@ -2215,9 +2230,17 @@ Decide the intent:
    Only if nearly EVERY slide must change (translate the whole deck, rewrite everything) you may return "deck" (the COMPLETE updated deck) instead of "ops".
 2) "new_topic" — the message is clearly a NEW presentation topic unrelated to the current deck.   Return {"intent":"new_topic"}
 3) "chat" — a question or small talk about the deck, not requesting a change.   Return {"intent":"chat","reply":"helpful answer, max 4 sentences"}
-SLIDE SCHEMA (field "layout"): title/closing: title, subtitle · bullets: title, bullets[3-5], image · cards: title, cards[{heading,text}] (2-4) · stats: title, stats[{value,label}] (2-4) · quote: text, author · table: title, rows[[cells]] (first row = header, 2-8 rows, 2-5 columns) · chart: title, chart(bar|line|pie|doughnut), labels[], series[{name,values[]}]
+SLIDE SCHEMA (field "layout"): title/closing: title, subtitle · bullets: title, bullets[3-5], image, media · cards: title, cards[{heading,text}] (2-4) · stats: title, stats[{value,label}] (2-4) · quote: text, author · table: title, rows[[cells]] (first row = header, 2-8 rows, 2-5 columns) · chart: title, chart(bar|line|pie|doughnut), labels[], series[{name,values[]}]
  - To add a table / chart / statistics use "insert" or "replace" with these layouts. Numbers must be real or approximate, never invented.
  - "image" is a short ENGLISH photo search query or "". Keep the language of the deck unless asked to translate. No emoji, no markdown symbols. Reply in the user's language.
+ - Any slide may also have "buttons" and (title/bullets) "media" — see below. To add a button/link/GIF/YouTube/video to slide N use "replace" with the COMPLETE slide including the new field; keep all other fields unchanged.
+
+OPTIONAL INTERACTIVE FIELDS (any slide; use ONLY when the user asks for it):
+- "buttons":[{"text":"max 24 chars","url":"https://..."}]  — up to 3 clickable buttons / links. Use ONLY URLs the user wrote (or official well-known sites like https://www.wikipedia.org). Never invent URLs.
+- "media" (only on "title" and "bullets" slides, replaces the photo):
+    {"type":"gif","query":"2-4 word english query"}   — animated GIF (found automatically)
+    {"type":"gif","url":"https://...gif"} · {"type":"image","url":"https://..."} · {"type":"youtube","url":"https://youtu.be/..."} · {"type":"video","url":"https://...mp4"}
+  YouTube / video URLs must come from the user. In PPTX the GIF is animated and the YouTube cover is clickable; in HTML YouTube and video play inside the slide.
 """
 
 _NUM_A = re.compile(r"(\d{1,2})\s*[-–]?\s*(?:chi|nchi|inchi|-chi)?\s*(?:slayd\w*|slaid\w*|slide\w*|слайд\w*|varaq\w*|sahifa\w*|page\w*)", re.I)
@@ -2403,17 +2426,17 @@ async def _fetch_images(deck: dict, have: Dict[str, bytes], enabled: bool) -> Di
         return out
     queries: List[str] = []
     for s in deck["slides"]:
-        q = s.get("image") or ""
-        if q and s["layout"] in ("title", "bullets") and q not in out and q not in queries:
+        q = decks.media_key(s)               # v55: oddiy rasm so'rovi, rasm/GIF havolasi, GIF so'rovi yoki YouTube muqovasi
+        if q and s["layout"] in ("title", "bullets") and q not in out and q not in queries and not q.startswith("vid:"):
             queries.append(q)
-    queries = queries[:6]
+    queries = queries[:8]
     if not queries:
         return out
-    sem = asyncio.Semaphore(3)
+    sem = asyncio.Semaphore(6)               # v55: hammasi deyarli bir vaqtda (avval 3 tadan)
 
     async def one(q: str):
         async with sem:
-            return q, await asyncio.to_thread(decks.find_image, q)
+            return q, await asyncio.to_thread(decks.fetch_media, q)
 
     tasks = [asyncio.create_task(one(q)) for q in queries]
     done, pending = await asyncio.wait(tasks, timeout=28)
@@ -2464,7 +2487,12 @@ async def _ensure_image_queries(deck: dict, topic: str) -> int:
 
 
 def _img_index(deck: dict, imgs: Dict[str, bytes]) -> Dict[int, bytes]:
-    return {i: imgs[s["image"]] for i, s in enumerate(deck["slides"]) if s.get("image") and s["image"] in imgs}
+    out = {}
+    for i, s in enumerate(deck["slides"]):
+        k = decks.media_key(s)
+        if k and k in imgs:
+            out[i] = imgs[k]
+    return out
 
 
 def _theme_label(deck: dict) -> str:
@@ -2676,7 +2704,7 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         msg_id = (sent or {}).get("message_id") if isinstance(sent, dict) else None
         await tg("sendChatAction", chat_id=chat_id, action="typing")
         async with _AiSlot():
-            data, tokens = await _ai_json(EDIT_SYSTEM, _edit_prompt(deck, text), mode)
+            data, tokens = await _ai_json(EDIT_SYSTEM, _edit_prompt(deck, text) + _account_context(usage, email, user), mode)
         data = data if isinstance(data, dict) else {}
         intent = str(data.get("intent") or "").lower()
         if intent == "new_topic":
@@ -3495,6 +3523,7 @@ Decide what the message is:
 1) The user wants a presentation / names a topic to make slides about  -> {"intent":"slides","topic":"the request, cleaned, in the user's language","count":N or 0}
 2) A question, greeting or small talk that does NOT ask for slides      -> {"intent":"chat","reply":"helpful answer in the user's language, plain text, max 6 sentences"}
 Questions (who / what / why / how / "?") are "chat" unless they ask to make slides. A bare noun phrase topic ("Solar energy") is "slides".
+If the user asks about their balance / pages / limit, answer as "chat" using the [ACCOUNT] data (exact numbers). If they ask for more slides than the balance allows, set "count" to what the balance allows.
 Reply in the user's language (Uzbek by default). No markdown, no emoji."""
 SLIDE_WORD_RE = re.compile(r"slayd|slaid|slide|taqdimot|prezentatsi|presentation|презентац|слайд|powerpoint|pptx", re.I)
 
@@ -3521,7 +3550,7 @@ async def _run_new(chat_id: int, user: dict, text: str) -> None:
             return
         await tg("sendChatAction", chat_id=chat_id, action="typing")
         async with _AiSlot():
-            data, tokens = await _ai_json(NEW_SYSTEM, text, "fast")
+            data, tokens = await _ai_json(NEW_SYSTEM, text + _account_context(usage, email, user), "fast")
         data = data if isinstance(data, dict) else {}
         intent = str(data.get("intent") or "").lower()
         if intent == "chat" and decks.clean(data.get("reply"), 900):
@@ -3552,6 +3581,7 @@ async def _run_new(chat_id: int, user: dict, text: str) -> None:
 
 CHAT_SYSTEM = ("You are Slide Studio AI, a friendly and concise assistant inside a Telegram bot that makes presentations. "
                "Answer the user's question or message helpfully in the SAME language the user writes (Uzbek by default), max 6 short sentences, plain text, no markdown. "
+               "If the user asks about their balance, pages or limit, answer with the exact numbers from [ACCOUNT]. "
                "Do NOT create or edit slides. Return ONLY one JSON object: {\"reply\":\"your answer\"}")
 
 
@@ -3581,7 +3611,7 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
             await _edit(chat_id, msg_id, _no_credit_text(mode, usage), _kb_buy())
             return
         async with _gen_sem:
-            data, tokens = await _ai_json(CHAT_SYSTEM, text[:1500], mode)
+            data, tokens = await _ai_json(CHAT_SYSTEM, text[:1500] + _account_context(usage, email, user), mode)
         usage2, _ch = await _charge(uid, email, 0, tokens, mode, {"src": "telegram", "kind": "chat"})
         reply = decks.clean((data or {}).get("reply") if isinstance(data, dict) else "", 1500) or "Tushunmadim, qayta yozing."
         await _edit(chat_id, msg_id, f"💬 {esc(reply)}{_balance_footer(usage2, mode, email, user)}", kb_start())
@@ -3635,6 +3665,28 @@ def _balance_footer(usage: Optional[dict], mode: str, email: str, user: dict) ->
         if usage.get("unlimited") or _deps["total_credits"](usage) >= 10 ** 8:
             return "\n\n<i>♾ Varaqlar: cheksiz</i>"
         return f"\n\n<i>💳 Qoldi: {_fmt_pages(_pages_left(usage, mode))} varaq</i>"
+    except Exception:
+        return ""
+
+
+def _account_context(usage: Optional[dict], email: str, user: dict) -> str:
+    """v55: AI foydalanuvchi balansini BILSIN («balansim qancha?» / ko'p slayd so'rasa — yetadiganini aytadi)."""
+    try:
+        if not usage:
+            return ""
+        if email == _tg_email(int(user["id"])) and not _is_admin(user):
+            return ("\n\n[ACCOUNT] Google account NOT linked yet — the balance is hidden. If the user asks about balance, tell them to "
+                    "press «⚙️ Sozlamalar» → «Google ulash» first.")
+        if usage.get("unlimited") or _deps["total_credits"](usage) >= 10 ** 8:
+            return "\n\n[ACCOUNT] Balance: UNLIMITED pages."
+        fast, deep = _pages_left(usage, "fast"), _pages_left(usage, "deep")
+        p = _deps["usage_payload"](usage)
+        wait = _fmt_wait(p.get("next_reset_in_seconds")) if p.get("window_started") else ""
+        daily = ((p.get("modes") or {}).get("fast") or {}).get("free_daily_pages", 0)
+        return (f"\n\n[ACCOUNT — real data, use it] Balance: {_fmt_pages(fast)} pages in Fast AI mode "
+                f"(= {_fmt_pages(deep)} pages in Deep AI mode). 1 slide costs 1 page (Deep AI: {_deep_mult()} pages). "
+                f"Free daily pages: {daily}" + (f", next free refill in {wait}" if wait else "") + ". "
+                "Extra pages: «💳 Balans» → «Varaq sotib olish». Never offer more slides than the balance allows.")
     except Exception:
         return ""
 
