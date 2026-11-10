@@ -119,3 +119,18 @@
 
 /* ---------- Telegram to'liq ekran: chelka / Telegram tugmalari ostida qolmasin ---------- */
 body.tg-inset { padding-top: var(--tg-inset-top, 0px); padding-bottom: var(--tg-inset-bottom, 0px); box-sizing: border-box; }
+
+/* ---------- v54.1: akkaunt holatiga qarab yuqori panel (kompyuter + telefon) ---------- */
+body.ss-auth-out #ssQuota,
+body.ss-auth-out #ssQuotaPop { display: none !important; }
+body.ss-auth-in #googleLoginBtn { display: none !important; }
+body.ss-auth-out #googleLoginBtn {
+  display: inline-flex !important;
+  background: #0b57d0 !important;
+  border: 1px solid #0b57d0 !important;
+  color: #fff !important;
+}
+body.ss-auth-out #googleLoginBtn .material-symbols-outlined { color: #fff !important; }
+body.ss-auth-out #googleLoginBtn:hover { background: #0a4cb8 !important; }
+/* Telegram ichida Google kirish yo'q (33_v43_telegram.js) — u yerda tugma yashirin qoladi */
+html.in-telegram body #googleLoginBtn { display: none !important; }

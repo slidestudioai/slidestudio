@@ -125,3 +125,31 @@
     });
   } catch (e) {}
 })();
+
+/* v54.1 — Yuqori panel: akkaunt holatiga qarab
+ *  - kirmagan: balans (#ssQuota) YASHIRIN, «Kirish» tugmasi ko'rinadi;
+ *  - kirgan:   balans ko'rinadi, «Kirish» tugmasi YASHIRIN (akkaunt chap paneldagi profil kartasida).
+ *  Holat bir nechta joyda (auth, monitoring, sidebar) inline style bilan o'zgartirilardi va bir-biriga zid edi —
+ *  endi yagona body klassi (ss-auth-in / ss-auth-out) va v54.css dagi !important qoidasi hal qiladi.
+ */
+(function () {
+  'use strict';
+  function loggedIn() {
+    try { return typeof supabaseToken !== 'undefined' && !!supabaseToken && supabaseToken !== 'dev-token' && !!currentUserEmail; }
+    catch (e) { return false; }
+  }
+  var last = null;
+  function sync() {
+    if (!document.body) return;
+    var li = loggedIn();
+    if (li === last) return;
+    last = li;
+    document.body.classList.toggle('ss-auth-in', li);
+    document.body.classList.toggle('ss-auth-out', !li);
+    try { if (typeof window.scheduleFitCanvas === 'function') window.scheduleFitCanvas(); } catch (e) {}
+  }
+  window.ssSyncAuthHeader = sync;
+  sync();
+  document.addEventListener('DOMContentLoaded', sync);
+  setInterval(sync, 800);           // kirish/chiqish ko'p joydan bo'ladi — arzon tekshiruv (faqat o'zgarganda DOM'ga tegadi)
+})();

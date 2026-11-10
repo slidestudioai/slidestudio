@@ -66,3 +66,17 @@ test('yuqori panel tugmalari bir xil balandlikda', async ({ page }) => {
   expect(hs.length).toBeGreaterThan(2);
   expect(new Set(hs).size).toBe(1);
 });
+
+test('yuqori panel: kirmagan — balans yo\'q, «Kirish» bor; kirgan — balans bor, «Kirish» yo\'q', async ({ page }) => {
+  for (const vp of [{ width: 1600, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(vp);
+    await openEditor(page);
+    await expect(page.locator('#googleLoginBtn')).toBeVisible();
+    await expect(page.locator('#ssQuota')).toBeHidden();
+    await page.evaluate(() => { supabaseToken = 'fake-token'; currentUserEmail = 'test@example.com'; window.ssSyncAuthHeader(); });
+    await expect(page.locator('#googleLoginBtn')).toBeHidden();
+    await expect(page.locator('#ssQuota')).toBeVisible();
+    await page.evaluate(() => { supabaseToken = 'dev-token'; currentUserEmail = ''; window.ssSyncAuthHeader(); });
+    await expect(page.locator('#ssQuota')).toBeHidden();
+  }
+});
