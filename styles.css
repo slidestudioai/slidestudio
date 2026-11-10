@@ -179,11 +179,11 @@
     .font-size-btn:hover { background: #d3e3fd; }
     .tb-input-num { border: none; width: 36px; text-align: center; font-size: 12px; outline: none; -moz-appearance: textfield; }
     .workspace { display: flex; flex: 1; position: relative; overflow: hidden; width: 100%; height: 100%; min-width: 0; }
-    .sidebar { width: 230px; background: #ffffff; border-right: 1px solid #dadce0; display: flex; flex-direction: column; padding: 0; gap: 0; overflow: hidden; flex-shrink: 0; z-index: 100; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.3s ease; }
-    .sidebar-slides-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px 10px 8px 10px; display: flex; flex-direction: column; gap: 8px; -webkit-overflow-scrolling: touch; }
-    .sidebar-user-section { flex-shrink: 0; margin-top: 0 !important; padding: 8px 10px 6px !important; border-top: 1px solid #e5e7eb; background: #fff; position: sticky; bottom: 0; z-index: 5; }
-    .sidebar.collapsed { margin-left: -230px; }
-    .slide-item { display: flex; align-items: center; gap: 6px; cursor: pointer; border-radius: 6px; padding: 4px; transition: background 0.15s; border: 2px solid transparent; position: relative; }
+    .sidebar { width: 220px; background: #ffffff; border-right: 1px solid #dadce0; display: flex; flex-direction: column; padding: 0; gap: 0; overflow: hidden; flex-shrink: 0; z-index: 100; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), margin-left 0.3s ease; }
+    .sidebar-slides-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 8px 8px 6px 8px; display: flex; flex-direction: column; gap: 6px; -webkit-overflow-scrolling: touch; }
+    .sidebar-user-section { flex-shrink: 0; margin-top: 0 !important; padding: 8px 8px 6px !important; border-top: 1px solid #e5e7eb; background: #fff; position: sticky; bottom: 0; z-index: 5; }
+    .sidebar.collapsed { margin-left: -220px; }
+    .slide-item { display: flex; align-items: center; gap: 5px; cursor: pointer; border-radius: 6px; padding: 3px; transition: background 0.15s; border: 2px solid transparent; position: relative; overflow: visible; }
     .slide-item.dragging { opacity: 0.4; }
     .slide-item.drag-over { border-top: 2px solid #0b57d0; }
     .slide-num { font-size: 11px; color: #5f6368; width: 14px; text-align: right; flex-shrink: 0; }
@@ -195,8 +195,9 @@
     .slide-thumb .img-nums { display: none !important; }
     .slide-more-btn { position: absolute; top: 4px; right: 4px; background: rgba(255,255,255,0.85); backdrop-filter: blur(4px); border: 1px solid #dadce0; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10; }
     .slide-more-btn span { font-size: 14px; color: #3c4043; }
-    .btn-add-slide-bottom { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 8px; background: #ffffff; border: 1px dashed #0b57d0; color: #0b57d0; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; margin-top: 4px; margin-bottom: 8px; flex-shrink: 0; white-space: nowrap; line-height: 1.25; }
+    .btn-add-slide-bottom { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 6px; background: #ffffff; border: 1px dashed #0b57d0; color: #0b57d0; border-radius: 8px; font-size: 12.5px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; margin-top: 2px; margin-bottom: 6px; flex-shrink: 0; white-space: nowrap; line-height: 1.2; }
     .btn-add-slide-bottom:hover { background: #e8f0fe; border-style: solid; }
+    .btn-add-slide-bottom .material-symbols-outlined { font-size: 18px; }
     .editor-container { flex: 1; min-height: 0; min-width: 0; background: #f1f3f4; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; position: relative; overflow: hidden; padding: 0 10px 10px 10px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1; }
     .sticky-slide-counter { z-index: 60; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(8px); border: 1px solid #dadce0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-radius: 20px; padding: 4px 16px; margin-top: 8px; font-size: 12px; font-weight: 600; color: #3c4043; display: flex; align-items: center; gap: 8px; flex-shrink: 0; align-self: center; }
     .canvas-wrapper { flex: 1 1 0; min-height: 0; min-width: 0; display: flex; justify-content: flex-start; align-items: flex-start; width: 100%; max-width: 100%; position: relative; overflow: hidden; overflow-x: hidden; background: #f1f3f4; }
@@ -624,10 +625,10 @@
     @media screen and (min-width: 1400px) {
       .sidebar { width: 230px; }
       .sidebar.collapsed { margin-left: -230px; }
-      .slide-thumb { height: 104px; }
-      .ai-sidebar.open { width: 400px; }
+      .slide-thumb { height: 100px; }
+      .ai-sidebar.open { width: 360px; }
       .bottom-controls-wrapper { max-width: 760px; }
-      .editor-container { padding: 0 16px 16px 16px; }
+      .editor-container { padding: 0 12px 12px 12px; }
     }
 
     @supports (padding: env(safe-area-inset-bottom)) {
@@ -1250,12 +1251,12 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
 }
 
 /* v46: sidebar — «Rasmni tozalash» va «Bot haqida» */
-.btn-reset-canvas, .btn-about-bot { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 8px; border-radius: 8px; font-size: 12.5px; font-weight: 500; cursor: pointer; transition: all .2s ease; flex-shrink: 0; user-select: none; -webkit-tap-highlight-color: transparent; white-space: nowrap; line-height: 1.25; text-align: center; }
+.btn-reset-canvas, .btn-about-bot { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 6px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all .2s ease; flex-shrink: 0; user-select: none; -webkit-tap-highlight-color: transparent; white-space: nowrap; line-height: 1.2; text-align: center; }
 .btn-reset-canvas { background: #fff; border: 1px dashed #d93025; color: #d93025; margin-bottom: 2px; }
 .btn-reset-canvas:hover { background: #fce8e6; border-style: solid; }
-.btn-about-bot { background: #f1f3f4; border: 1px solid transparent; color: #3c4043; margin-bottom: 8px; }
+.btn-about-bot { background: #f1f3f4; border: 1px solid transparent; color: #3c4043; margin-bottom: 6px; }
 .btn-about-bot:hover { background: #e8eaed; }
-.btn-reset-canvas .material-symbols-outlined, .btn-about-bot .material-symbols-outlined { font-size: 18px; flex-shrink: 0; }
+.btn-reset-canvas .material-symbols-outlined, .btn-about-bot .material-symbols-outlined { font-size: 17px; flex-shrink: 0; }
 
 /* v50: noutbuk / o‘rtacha monitorlarda interfeys ixchamroq (zoom SIZ — layout buzilmaydi) */
 @media screen and (max-width: 1680px) and (min-width: 769px) {
@@ -1278,14 +1279,14 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
   .ai-sidebar-header { padding: 8px 10px; }
   .ai-sidebar-header h4 { font-size: 12.5px; }
   .ai-sidebar-footer { padding: 6px 9px; }
-  .ai-sidebar-input-box { min-height: 40px; }
-  .ai-sidebar-input-box textarea { min-height: 40px; padding: 10px 4px; font-size: 13px; }
+  .ai-sidebar-input-box { min-height: 38px; }
+  .ai-sidebar-input-box textarea { min-height: 38px; padding: 9px 4px; font-size: 12.5px; }
   .editor-container { padding: 0 6px 6px 6px; }
   .sticky-slide-counter { margin-top: 4px; padding: 3px 12px; font-size: 11px; }
   .sidebar-user-section { padding: 8px 8px !important; }
-  .btn-add-slide-bottom { padding: 8px 6px; font-size: 12.5px; margin-bottom: 6px; }
-  .btn-reset-canvas, .btn-about-bot { padding: 8px 6px; font-size: 12px; }
-  .slide-thumb { height: 90px; }
+  .btn-add-slide-bottom { padding: 6px 5px; font-size: 12px; margin-bottom: 4px; }
+  .btn-reset-canvas, .btn-about-bot { padding: 6px 5px; font-size: 11.5px; }
+  .slide-thumb { height: 88px; }
 }
 
 @media screen and (max-width: 1366px) and (min-width: 769px) {
@@ -1296,7 +1297,7 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
   .toolbar-container { margin: 2px 4px; }
   .toolbar-container .tb-btn { width: 26px; height: 26px; }
   .editor-container { padding: 0 4px 4px 4px; }
-  .btn-add-slide-bottom { font-size: 12px; padding: 7px 5px; }
-  .btn-reset-canvas, .btn-about-bot { font-size: 11.5px; padding: 7px 5px; }
-  .slide-thumb { height: 86px; }
+  .btn-add-slide-bottom { font-size: 11.5px; padding: 6px 4px; }
+  .btn-reset-canvas, .btn-about-bot { font-size: 11px; padding: 6px 4px; }
+  .slide-thumb { height: 84px; }
 }
