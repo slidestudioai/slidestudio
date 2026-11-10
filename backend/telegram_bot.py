@@ -557,6 +557,14 @@ def _page_units(mode: str) -> int:
     return int(_deps["MODES"][mode if mode in _deps["MODES"] else "fast"]["page"])
 
 
+def _deep_mult() -> int:
+    """1 Chuqur-varaq necha Tez-varaqqa teng (narx backend/monitoring.py MODES dan; matnga qotirib yozilmaydi)."""
+    try:
+        return max(1, _page_units("deep") // _page_units("fast"))
+    except Exception:
+        return 2
+
+
 def _pages_left(usage: dict, mode: str) -> float:
     return _deps["total_credits"](usage) / _page_units(mode)
 
@@ -649,12 +657,18 @@ async def _credits_text(user: dict) -> str:
 
 async def _charge(uid: str, email: str, pages: int, tokens: int, mode: str, details: dict) -> Tuple[dict, int]:
     """Slaydlar uchun yechadi (pages=0 bo'lsa — oddiy chat narxi). (usage, yechilgan_birlik)."""
+    def _fn(u):
+        u = _deps["apply_reset"](u)
+        u["total_tokens"] = (u.get("total_tokens") or 0) + tokens
+        u["daily_tokens"] = (u.get("daily_tokens") or 0) + tokens
+        u, ch, rs = _deps["charge"](u, int(pages), 0, mode)
+        return u, (ch, rs)
     async with _ulock(uid):
-        usage = await asyncio.to_thread(_usage_now_sync, uid, email)
-        usage["total_tokens"] = (usage.get("total_tokens") or 0) + tokens
-        usage["daily_tokens"] = (usage.get("daily_tokens") or 0) + tokens
-        usage, charged, reason = _deps["charge"](usage, int(pages), 0, mode)
-        await asyncio.to_thread(_deps["save_usage"], uid, usage, 0)
+        if _deps.get("update_atomic"):          # v53: boshqa server nusxasi / webhook bilan to'qnashuvda qayta hisoblaydi
+            usage, (charged, reason) = await asyncio.to_thread(_deps["update_atomic"], uid, email, _fn)
+        else:
+            usage, (charged, reason) = _fn(await asyncio.to_thread(_usage_now_sync, uid, email))
+            await asyncio.to_thread(_deps["save_usage"], uid, usage, 0)
         if int(charged) > 0:
             await asyncio.to_thread(_deps["ledger_log"], uid, "tg_" + str(reason), -int(charged), usage, 0, details)
         return usage, int(charged)
@@ -2835,7 +2849,7 @@ async def _ask_count(chat_id: int, user: dict, topic: str) -> None:
     await _send(
         chat_id,
         f"✅ Mavzu: <b>{esc(shown)}</b>\n\n<b>Nechta slayd kerak?</b> Tugmani bosing (yoki «10 ta slayd» deb yozing).\n"
-        f"<i>1 slayd = 1 varaq{' (Chuqur AI — 3 varaq)' if st.get('mode') == 'deep' else ''}</i>{bal}",
+        f"<i>1 slayd = 1 varaq{f' (Chuqur AI — {_deep_mult()} Tez-varaq)' if st.get('mode') == 'deep' else ''}</i>{bal}",
         kb_count(st.get("mode", "fast")),
     )
 
@@ -3688,7 +3702,7 @@ async def handle_update(data: dict) -> None:
         elif cmd == "/mode":
             st["mode"] = "deep" if st.get("mode") != "deep" else "fast"
             await _send(chat_id, f"Rejim: <b>{'🧠 Chuqur AI' if st['mode'] == 'deep' else '⚡ Tez AI'}</b>\n"
-                                 f"<i>{'Murakkab mavzular uchun, 1 slayd = 3 varaq, sekinroq.' if st['mode'] == 'deep' else 'Tez va tejamkor: 1 slayd = 1 varaq.'}</i>")
+                                 f"<i>{f'Murakkab mavzular uchun, 1 slayd = {_deep_mult()} Tez-varaq, sekinroq.' if st['mode'] == 'deep' else 'Tez va tejamkor: 1 slayd = 1 varaq.'}</i>")
         elif cmd in ("/credits", "/kredit", "/kreditlar", "/balance", "/balans"):
             await _show_balance(chat_id, user)
         elif cmd in ("/invite", "/taklif", "/referral"):

@@ -58,6 +58,7 @@ try:
         FREE_DAILY_UNITS,
         PACK_UNITS,
         UNIT,
+        DEEP_MULT,
         MODES,
         can_afford,
         mode_for_model,
@@ -236,7 +237,7 @@ def _wants_images(raw: str) -> bool:
     return bool(_IMG_INTENT_RE.search(t))
 
 
-async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: Any = None) -> str:
+async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: Any = None, stats: Optional[dict] = None) -> str:
     """Chuqur AI (deepseek-reasoner) tool chaqira olmaydi — shuning uchun rasmlarni OLDINDAN topib, tayyor URL ro'yxatini beramiz.
     Kichik tez model inglizcha so'rovlarni yozadi, qidiruv parallel ishlaydi. Xatoda bo'sh matn (oqim buzilmaydi)."""
     if not _search_images_sync:
@@ -262,6 +263,8 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     qs = [str(q).strip()[:60] for q in qs if str(q).strip()][:max_q]
     if not qs:
         return ""
+    if stats is not None:
+        stats["searches"] = len(qs)                 # v53: bu qidiruvlar ham varaq hisobiga kiradi (avval bepul edi)
     for n, q in enumerate(qs, 1):
         await _ev({"type": "search_start", "query": q, "kind": "photo", "n": n})
     res = await asyncio.gather(*[asyncio.wait_for(asyncio.to_thread(_search_images_sync, q, "photo", 8), timeout=25) for q in qs], return_exceptions=True)
@@ -505,7 +508,7 @@ except Exception as _sc_err:
         secret = _stable_hmac_secret().encode()
         return _hmac.new(secret, (uid or "anon").encode(), hashlib.sha256).hexdigest()[:32]
 
-MODEL_COST_MULT = {"deepseek-chat": 1, "deepseek-reasoner": 3}   # (eski nom; faqat ma'lumot) Chuqur varaq = 3 Tez-varaq. Narx — backend/monitoring.py MODES
+MODEL_COST_MULT = {"deepseek-chat": 1, "deepseek-reasoner": DEEP_MULT}   # (faqat ma'lumot) Chuqur varaq = DEEP_MULT (2) Tez-varaq. Narx — backend/monitoring.py MODES
 server_paused = threading.Event()
 _user_locks: Dict[str, asyncio.Lock] = {}
 _user_locks_guard = threading.Lock()   # v52-fix: clear()/create tugmachasiz holat (race) oldini oladi
@@ -584,7 +587,12 @@ def is_blocked(key: str) -> bool:
         s = active_sessions.get(key)
         return bool(s and s.get("blocked"))
 
-def _get_or_create_user_usage_raw(user_id: str, email: str) -> dict:
+def _cas_version(u: dict, free: Any, paid: Any) -> dict:
+    """v53: bazadagi joriy qiymatlar (optimistic lock). save_user_credits faqat shu qiymatlar o'zgarmagan bo'lsa yozadi."""
+    u["_v_free"], u["_v_paid"] = int(free or 0), int(paid or 0)
+    return u
+
+def _get_or_create_user_usage_raw(user_id: str, email: str, _retry: int = 2) -> dict:
     now_iso = datetime.now(timezone.utc).isoformat()
     default = normalize_user_row({
         "user_id": user_id, "email": email or "",
@@ -623,12 +631,22 @@ def _get_or_create_user_usage_raw(user_id: str, email: str) -> dict:
                         u["daily_tokens"] = 0
                 except Exception:
                     pass
+            db_free, db_paid = res.data[0].get("free_credits"), res.data[0].get("paid_credits")
             if patch:
                 try:
-                    supabase.table("user_usage").update(patch).eq("user_id", user_id).execute()
+                    q = supabase.table("user_usage").update(patch).eq("user_id", user_id)
+                    if "free_credits" in patch and db_free is not None:
+                        q = q.eq("free_credits", db_free)        # v53: parallel yozuvni bosib ketmasin
+                    w = q.execute()
+                    if "free_credits" in patch and db_free is not None and not w.data:
+                        if _retry > 0:                            # boshqa jarayon shu payt yozdi — qayta o'qiymiz
+                            return _get_or_create_user_usage_raw(user_id, email, _retry - 1)
+                    elif "free_credits" in patch:
+                        db_free = patch["free_credits"]
                 except Exception as e:
                     print(f"[USAGE RESET WRITE] {e}")
-            return u
+            return _cas_version(u, db_free if db_free is not None else u["free_credits"],
+                                db_paid if db_paid is not None else u["paid_credits"])
         safe_email = email if (email and email.strip()) else f"user_{str(user_id)[:8]}@slidestudio.local"
         new_u = {
             "user_id": user_id, "email": safe_email,
@@ -655,7 +673,7 @@ def _get_or_create_user_usage_raw(user_id: str, email: str) -> dict:
             except Exception as e2:
                 print(f"[USAGE INSERT2] {e2}")
             new_u = legacy
-        return normalize_user_row(new_u)
+        return _cas_version(normalize_user_row(new_u), new_u.get("free_credits"), new_u.get("paid_credits"))
     except Exception as e:
         print(f"[USAGE] {e}")
         return default
@@ -669,10 +687,16 @@ def get_or_create_user_usage(user_id: str, email: str) -> dict:
         u["vip"] = False
     return u
 
-def save_user_credits(user_id: str, user: dict, tokens_add: int = 0):
-    """free/paid/prompt/last_reset + tokens yozish."""
+def save_user_credits(user_id: str, user: dict, tokens_add: int = 0, cas: bool = True) -> Optional[bool]:
+    """free/paid/prompt/last_reset + tokens yozish.
+    v53: OPTIMISTIC LOCK — `user` bazadan o'qilganda (get_or_create_user_usage) free/paid qiymatlari eslab qolinadi;
+    yozishda baza shu qiymatlarda bo'lsagina yoziladi. Shu orada boshqa jarayon/server nusxasi (to'lov webhook'i,
+    bot, ikkinchi instance) balansni o'zgartirgan bo'lsa — False qaytadi va chaqiruvchi qayta o'qib hisoblaydi
+    (qarang update_usage_atomic). True = yozildi, False = to'qnashuv/xato, None = baza yo'q (dev)."""
     if not supabase or not user_id or str(user_id).startswith(("dev-", "anon-", "guest-")):
-        return
+        return None
+    vf, vp = user.get("_v_free"), user.get("_v_paid")
+    user_ref = user                                         # chaqiruvchining dict'i (versiya shu yerda yangilanadi)
     user = normalize_user_row(user)
     patch = {
         "total_tokens": (user.get("total_tokens") or 0) + max(0, tokens_add),
@@ -684,12 +708,23 @@ def save_user_credits(user_id: str, user: dict, tokens_add: int = 0):
         "slide_credits": int(user.get("free_credits") or 0) + int(user.get("paid_credits") or 0),
         "last_active": datetime.now(timezone.utc).isoformat(),
     }
+    use_cas = cas and vf is not None and vp is not None
+
+    def _q(p):
+        q = supabase.table("user_usage").update(p).eq("user_id", user_id)
+        if use_cas:
+            q = q.eq("free_credits", int(vf)).eq("paid_credits", int(vp))
+        return q.execute()
     try:
         # v33: search_count ustuni bo'lmasa ham saqlash buzilmasligi uchun avval ustun bilan, bo'lmasa ustunsiz yozamiz
         try:
-            supabase.table("user_usage").update({**patch, "search_count": int(user.get("search_count") or 0)}).eq("user_id", user_id).execute()
+            res = _q({**patch, "search_count": int(user.get("search_count") or 0)})
         except Exception:
-            supabase.table("user_usage").update(patch).eq("user_id", user_id).execute()
+            res = _q(patch)
+        if use_cas and not res.data:
+            return False                                   # to'qnashuv: boshqa yozuv bor edi
+        _cas_version(user_ref, patch["free_credits"], patch["paid_credits"])   # keyingi yozuv uchun yangi versiya
+        return True
     except Exception as e:
 
         print(f"[SAVE CREDITS] {e}")
@@ -697,26 +732,45 @@ def save_user_credits(user_id: str, user: dict, tokens_add: int = 0):
             supabase.table("user_usage").update({
                 "total_tokens": patch["total_tokens"],
                 "daily_tokens": patch["daily_tokens"],
-                "slide_credits": patch["slide_credits"],
                 "last_active": patch["last_active"],
             }).eq("user_id", user_id).execute()
         except Exception as e2:
             print(f"[SAVE CREDITS2] {e2}")
+        return False
+
+def update_usage_atomic(user_id: str, email: str, fn, retries: int = 5):
+    """v53: balansni xavfsiz o'zgartirish: o'qi -> fn(usage) -> (yangi_usage, natija) -> CAS bilan yoz.
+    To'qnashuvda qaytadan o'qib hisoblanadi (fn SOF bo'lishi shart: faqat dict'ni o'zgartirsin).
+    Natija: (yozilgan_usage, natija)."""
+    u2, out = None, None
+    for attempt in range(max(1, retries)):
+        u = get_or_create_user_usage(user_id, email)
+        u2, out = fn(dict(u))
+        for k in ("_v_free", "_v_paid"):
+            if k in u:
+                u2[k] = u[k]
+        ok = save_user_credits(user_id, u2, 0, cas=attempt < retries - 1)
+        if ok is not False:
+            return u2, out
+        print(f"[USAGE CAS] to'qnashuv user={str(user_id)[:8]} urinish={attempt + 1}")
+    return u2, out
 
 def update_user_tokens(user_id: str, tokens: int, credits_delta: int = 0):
     """Legacy wrapper — yangi tizimda save_user_credits + charge_for_ai_turn ishlatiladi."""
     if not supabase or not user_id or str(user_id).startswith(("dev-", "anon-", "guest-")):
         return
-    try:
-        u = get_or_create_user_usage(user_id, "")
+    from backend.monitoring import deduct_credits
+
+    def _apply(u):
         u["total_tokens"] = (u.get("total_tokens") or 0) + max(0, tokens)
         u["daily_tokens"] = (u.get("daily_tokens") or 0) + max(0, tokens)
         if credits_delta < 0:
-            from backend.monitoring import deduct_credits
             u = deduct_credits(u, -credits_delta)
         elif credits_delta > 0:
             u = add_paid_credits(u, credits_delta)
-        save_user_credits(user_id, u, 0)
+        return u, None
+    try:
+        update_usage_atomic(user_id, "", _apply)
     except Exception as e:
         print(f"[TOKEN UPD] {e}")
 
@@ -975,6 +1029,7 @@ try:
         apply_reset=apply_24h_reset,
         charge=charge_for_ai_turn,
         save_usage=save_user_credits,
+        update_atomic=update_usage_atomic,         # v53: o'qi-hisobla-yoz (optimistic lock, qayta urinish bilan)
         user_lock=lambda uid: _user_lock(uid),     # v52: bot, sayt va webhook uchun yagona lock
         ledger_log=lambda *a, **k: ledger_log(*a, **k),   # v44.1: ledger_log pastroqda e'lon qilingan -> kech bog'lanadi (NameError tuzatildi)
         total_credits=lambda u: (10 ** 9 if is_unlimited(u) else total_credits(u)),   # v47: cheksiz/VIP uchun bot hech qachon "varaq tugadi" demaydi
@@ -1693,6 +1748,25 @@ async def ads_click(ad_id: int, s: str = "site"):
     asyncio.get_running_loop().run_in_executor(None, ads_mod.bump, int(ad_id), "click")
     return RedirectResponse(link, status_code=302, headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
 
+def _parse_range(header: str, n: int):
+    """HTTP Range (bitta oraliq). None = Range yo'q / tushunarsiz (to'liq fayl), "invalid" = 416, aks holda (a, b)."""
+    m = _re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", header or "")
+    if not m or not (m.group(1) or m.group(2)):
+        return None
+    if n <= 0:
+        return "invalid"
+    if m.group(1):
+        a = int(m.group(1))
+        b = min(int(m.group(2)), n - 1) if m.group(2) else n - 1
+    else:                                   # "bytes=-500" — oxirgi 500 bayt
+        suffix = int(m.group(2))
+        if suffix == 0:
+            return "invalid"
+        a, b = max(0, n - suffix), n - 1
+    if a >= n or a > b:
+        return "invalid"
+    return a, b
+
 @app.get("/api/ads/media/{ad_id}")
 async def ads_media(ad_id: int, request: Request):
     row = await asyncio.to_thread(ads_mod.get_row, ad_id)
@@ -1701,19 +1775,19 @@ async def ads_media(ad_id: int, request: Request):
     u = str(row.get("media_url") or "")
     hdr = {"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes"}
     if u.startswith("tg:"):
+        if tgbot is None:                    # v53: bot o'chiq — 500 emas, 404
+            raise HTTPException(404, "Fayl topilmadi")
         got = await tgbot.fetch_ad_file(u[3:])
         if not got:
             raise HTTPException(404, "Fayl topilmadi")
         data, mime = got
-        rng = request.headers.get("range", "")
-        m = _re.match(r"bytes=(\d*)-(\d*)", rng)
-        if m and (m.group(1) or m.group(2)):
-            n = len(data)
-            a = int(m.group(1)) if m.group(1) else max(0, n - int(m.group(2)))
-            b = int(m.group(2)) if (m.group(1) and m.group(2)) else n - 1
-            a, b = min(a, n - 1), min(b, n - 1)
+        rng = _parse_range(request.headers.get("range", ""), len(data))
+        if rng == "invalid":
+            return Response(status_code=416, headers={**hdr, "Content-Range": f"bytes */{len(data)}"})
+        if rng:
+            a, b = rng
             return Response(content=data[a:b + 1], status_code=206, media_type=mime,
-                            headers={**hdr, "Content-Range": f"bytes {a}-{b}/{n}"})
+                            headers={**hdr, "Content-Range": f"bytes {a}-{b}/{len(data)}"})
         return Response(content=data, media_type=mime, headers=hdr)
     dec = ads_mod.decode_data_url(u)
     if not dec:
@@ -1752,17 +1826,62 @@ class _SafeRedirect(urllib.request.HTTPRedirectHandler):
             raise urllib.error.URLError("redirect rad etildi")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
-_SAFE_OPENER = urllib.request.build_opener(_SafeRedirect())
+def _ip_is_public(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(str(ip_str).split("%")[0])
+    except ValueError:
+        return False
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified)
 
 def _is_public_host(host: str) -> bool:
     try:
         for info in socket.getaddrinfo(host, None):
-            ip = ipaddress.ip_address(info[4][0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            if not _ip_is_public(info[4][0]):
                 return False
         return True
     except Exception:
         return False
+
+# v53: DNS rebinding himoyasi. _is_public_host() nomni tekshiradi, lekin urllib ulanishda nomni QAYTA so'raydi —
+# shu orada DNS ichki IP qaytarsa (127.0.0.1, 169.254.169.254 ...) tekshiruv aylanib o'tilardi.
+# Endi ulanish o'rnatilgach soketning HAQIQIY manzili tekshiriladi. Proksi orqali ulanishda (tunnel) tekshirilmaydi.
+import http.client as _http_client
+
+def _check_peer(conn) -> None:
+    try:
+        ip = conn.sock.getpeername()[0]
+    except Exception:
+        return
+    if not _ip_is_public(ip):
+        try:
+            conn.sock.close()
+        except Exception:
+            pass
+        raise urllib.error.URLError("ichki tarmoq manziliga ulanish rad etildi")
+
+class _SafeHTTPConnection(_http_client.HTTPConnection):
+    def connect(self):
+        super().connect()
+        _check_peer(self)
+
+class _SafeHTTPSConnection(_http_client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        if not getattr(self, "_tunnel_host", None):
+            _check_peer(self)
+
+class _SafeHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_http_client.HTTPConnection if req.has_proxy() else _SafeHTTPConnection, req)
+
+class _SafeHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_SafeHTTPSConnection, req, context=self._context)
+
+_SAFE_OPENER = urllib.request.build_opener(_SafeRedirect(), _SafeHTTPHandler(), _SafeHTTPSHandler())
 
 def _sniff_image_mime(data: bytes, fallback: str = "") -> str:
     """Magic-bytes asosida MIME. GIF har doim image/gif — animatsiya yo'qolmasin."""
@@ -1859,11 +1978,22 @@ _HOST_LAST: Dict[str, float] = {}
 _HOST_LOCK = threading.Lock()
 
 
+_HOST_MAX = 500           # v53: har yangi domen uchun yozuv qo'shilardi va hech qachon o'chmasdi (xotira sekin o'sardi)
+_HOST_IDLE = 300.0        # shu vaqt ichida so'rov bo'lmagan domen o'chiriladi (fetch + qayta urinishlar < 90 s)
+
+def _prune_hosts_locked(now: float) -> None:
+    """_HOST_LOCK ushlab turilganda chaqiriladi: uzoq ishlatilmagan domenlarni olib tashlaydi."""
+    for h in [h for h, t in _HOST_LAST.items() if now - t > _HOST_IDLE]:
+        _HOST_LAST.pop(h, None)
+        _HOST_SEM.pop(h, None)
+
 def _host_slot(host: str):
     """Bir xostga bir vaqtda ko'pi bilan 3 ta so'rov va so'rovlar orasida >= 0.2 s (429 ni oldini oladi)."""
     with _HOST_LOCK:
         sem = _HOST_SEM.get(host)
         if sem is None:
+            if len(_HOST_SEM) > _HOST_MAX:
+                _prune_hosts_locked(time.time())
             sem = threading.Semaphore(3)
             _HOST_SEM[host] = sem
     sem.acquire()
@@ -2084,7 +2214,7 @@ def _fetch_json_sync(url: str, headers: Optional[Dict[str, str]] = None) -> dict
         hdrs.update(headers)
     req = urllib.request.Request(url, headers=hdrs)
     try:
-        with urllib.request.urlopen(req, timeout=12) as r:
+        with _SAFE_OPENER.open(req, timeout=12) as r:        # v53: redirect / DNS rebinding orqali ichki tarmoqqa o'tmaydi
             raw = r.read(4 * 1024 * 1024)
         return {"data": json.loads(raw.decode("utf-8", "replace"))}
     except Exception as e:
@@ -2164,6 +2294,7 @@ try:
         "user_lock": _user_lock,
         "get_or_create_user_usage": get_or_create_user_usage,
         "save_user_credits": save_user_credits,
+        "update_usage_atomic": update_usage_atomic,
         "add_paid_credits": add_paid_credits,
         "notify": (lambda uid, text: tgbot.notify_user(uid, text)) if tgbot is not None else None,
     })
@@ -2442,6 +2573,16 @@ async def ws_chat(websocket: WebSocket):
                         "code": "LIMIT_EXCEEDED",
                         "message": f"Limit tugadi.{_alt} 24 soat kuting, ${CHECKOUT_PRICE_USD:.2f} ga {pack_pages()} Tez-varaq ({pack_units() // MODES['deep']['page']} Chuqur-varaq) sotib oling.",
                         **payload,
+                    })
+                    continue
+                if mode == "generate" and not is_unlimited(usage) and bal_units < MODES[bill_mode]["page"]:
+                    # v53: reja bo'yicha slayd yaratish (1 so'rov = 1 slayd = 1 varaq). Avval faqat 1 ta savol-javobga
+                    # yetadigan balans tekshirilardi va 0.25 varaq bilan TO'LIQ slayd olinardi (yechim balansdan oshmaydi).
+                    await websocket.send_json({
+                        "type": "error",
+                        "code": "LIMIT_EXCEEDED",
+                        "message": f"Limit tugadi: yangi slayd uchun kamida 1 varaq kerak. 24 soat kuting yoki ${CHECKOUT_PRICE_USD:.2f} ga {pack_pages()} Tez-varaq sotib oling.",
+                        **usage_payload(usage),
                     })
                     continue
                 bal = bal_units // MODES[bill_mode]["page"]       # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
@@ -2756,6 +2897,7 @@ async def ws_chat(websocket: WebSocket):
 
                     client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
                     async with _ds_slot(websocket):
+                        _pre_stats: Dict[str, int] = {}
                         tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
                         if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
                             try:
@@ -2765,13 +2907,13 @@ async def ws_chat(websocket: WebSocket):
                                     _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
                                     _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                                 if _want:
-                                    _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket)
+                                    _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket, _pre_stats)
                                     if _extra:
                                         messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
                             except Exception as _pe:
                                 print(f"[DEEP-IMG] {type(_pe).__name__}: {str(_pe)[:80]}")
                         msgs = messages
-                        n_searches = 0
+                        n_searches = int(_pre_stats.get("searches") or 0)
                         _dsml_retried = False
                         agg_in = agg_out = agg_tot = 0
                         # v29: qidiruvdan oldin yozilgan matn (PART A) O'CHIRILMAYDI va qayta yozdirilmaydi
@@ -3022,16 +3164,18 @@ async def ws_chat(websocket: WebSocket):
                     print(f"[MONITORING] cost calc: {_me}")
                 pages_charged, charge_reason = 0, "none"
                 try:
+                    try:
+                        _n_search_turn = int(n_searches)
+                    except Exception:
+                        _n_search_turn = 0
+
+                    def _charge_fn(u, _t=tot, _p=int(pages_from_actions), _n=_n_search_turn, _m=mode_for_model(model)):
+                        u["total_tokens"] = (u.get("total_tokens") or 0) + _t
+                        u["daily_tokens"] = (u.get("daily_tokens") or 0) + _t
+                        u, ch, rs = charge_for_ai_turn(u, _p, _n, _m)
+                        return u, (ch, rs)
                     async with _user_lock(uid):
-                        usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
-                        usage["total_tokens"] = (usage.get("total_tokens") or 0) + tot
-                        usage["daily_tokens"] = (usage.get("daily_tokens") or 0) + tot
-                        try:
-                            _n_search_turn = int(n_searches)
-                        except Exception:
-                            _n_search_turn = 0
-                        usage, pages_charged, charge_reason = charge_for_ai_turn(usage, int(pages_from_actions), _n_search_turn, mode_for_model(model))
-                        await asyncio.to_thread(save_user_credits, uid, usage, 0)
+                        usage, (pages_charged, charge_reason) = await asyncio.to_thread(update_usage_atomic, uid, email, _charge_fn)
                         if int(pages_charged) > 0:
                             await asyncio.to_thread(
                                 ledger_log, uid, str(charge_reason), -int(pages_charged), usage, _n_search_turn,

@@ -3,12 +3,12 @@ Slide Studio — Monitoring / Billing  (v38 — yagona kredit hisobi)
 
 YAGONA HISOB: balans "birlik" (unit) larda, butun sonlarda saqlanadi — yaxlitlash xatosi YO'Q.
     1 Tez-varaq  = 20 birlik        (Tez/arzon AI)
-    1 Chuqur-varaq = 60 birlik       (Chuqur AI = 3 Tez-varaq)
+    1 Chuqur-varaq = 40 birlik       (Chuqur AI = 2 Tez-varaq, DEEP_MULT)
 
                           TEZ AI              CHUQUR AI
-  1 ta slayd ........      20 (1 varaq)        60 (1 varaq)
-  1 ta savol-javob ...      5  (4 ta = 1)       15 (4 ta = 1)
-  1 ta qidiruv ......       4  (5 ta = 1)       15 (4 ta = 1)
+  1 ta slayd ........      20 (1 varaq)        40 (1 varaq)
+  1 ta savol-javob ...      5  (4 ta = 1)       10 (4 ta = 1)
+  1 ta qidiruv ......       4  (5 ta = 1)       10 (4 ta = 1)
 
   Bepul (kuniga): 200 birlik  = 10 Tez-varaq  = 5 Chuqur-varaq
   Pullik ($1.58): 2000 birlik = 100 Tez-varaq = 50 Chuqur-varaq
