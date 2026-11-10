@@ -1495,6 +1495,48 @@ def _find_user_by_email(email: str) -> str:
         print(f"[LEMON WEBHOOK] email qidiruv xatosi: {e}")
     return ""
 
+def _int_or(v: Any, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+def _refunded_pages(order_id: str) -> int:
+    """Shu buyurtma bo'yicha avval olingan (refund) varaqlar yig'indisi."""
+    if not supabase or not order_id:
+        return 0
+    try:
+        rows = supabase.table("payment_events").select("pages").like("order_id", f"refund-{order_id}%").execute().data or []
+        return sum(_int_or(r.get("pages"), 0) for r in rows)
+    except Exception as e:
+        print(f"[LEMON WEBHOOK] refund tarixini o'qib bo'lmadi: {str(e)[:120]}")
+        raise
+
+_unmatched_notified: "OrderedDict[str, float]" = OrderedDict()
+
+async def _report_unmatched_payment(order_id: str, event_name: str, email: str, attrs: dict) -> None:
+    """Egasi topilmagan to'lov: log + admin_audit + adminlarga Telegram (bir buyurtma uchun bir marta)."""
+    print(f"[LEMON WEBHOOK] ⚠️ user_id topilmadi! order={order_id} email={email} — qo'lda kredit bering.")
+    if order_id in _unmatched_notified:
+        return
+    _unmatched_notified[order_id] = time.time()
+    while len(_unmatched_notified) > 500:
+        _unmatched_notified.popitem(last=False)
+    details = {"order": order_id, "event": event_name, "email": email,
+               "total": attrs.get("total"), "test_mode": attrs.get("test_mode")}
+    try:
+        await asyncio.to_thread(admin_core.audit, "lemon-webhook", "payment_unmatched", order_id, details)
+    except Exception:
+        pass
+    if tgbot is not None:
+        text = (f"⚠️ To'lov egasi topilmadi\nBuyurtma: {order_id}\nEmail: {email or '—'}\n"
+                f"Hodisa: {event_name}\nVaraqlarni qo'lda bering (admin panel).")
+        for tid in list(admin_core.admin_tg_ids()):
+            try:
+                await tgbot.admin_send(int(tid), text)
+            except Exception:
+                pass
+
 @app.post("/api/payment/lemon-webhook")
 @app.post("/webhook/lemonsqueezy")          # muqobil manzil: dashboard'da shu yozilgan bo'lsa ham ishlaydi
 async def lemon_webhook(request: Request):
@@ -1539,18 +1581,38 @@ async def lemon_webhook(request: Request):
         qty = 1
     pages = pack_pages() * qty
 
+    if not order_id:
+        # order_id siz idempotentlik (qayta yuborilganda 2 marta hisoblamaslik) kafolatlanmaydi
+        print(f"[LEMON WEBHOOK] ⚠️ order_id yo'q ({event_name}) — rad etildi.")
+        return JSONResponse({"error": "missing order id"}, status_code=400)
+
     user_id = str(((meta.get("custom_data") or {}).get("user_id")) or "").strip()
     if not user_id or user_id == "unknown":
-        user_id = _find_user_by_email(str(attrs.get("user_email") or "").strip())
+        user_id = await asyncio.to_thread(_find_user_by_email, str(attrs.get("user_email") or "").strip())
     if not user_id:
-        print(f"[LEMON WEBHOOK] ⚠️ user_id topilmadi! order={order_id} email={attrs.get('user_email')} — qo'lda kredit bering.")
-        return {"ok": False, "error": "no user_id"}
+        # v53: 200 qaytarilsa Lemon qayta yubormaydi va to'lov JIMGINA yo'qolardi.
+        # Endi: admin_audit ga yoziladi, adminlarga Telegram xabari, 500 -> Lemon qayta yuboradi
+        # (shu orada foydalanuvchi ro'yxatdan o'tsa, email bo'yicha topiladi).
+        await _report_unmatched_payment(order_id, event_name, str(attrs.get("user_email") or ""), attrs)
+        return JSONResponse({"error": "user not found"}, status_code=500)
 
     if event_name == "order_created" and attrs.get("status") not in ("paid", None):
         return {"ok": True, "ignored": f"status={attrs.get('status')}"}
 
-    key = f"{'refund' if event_name == 'order_refunded' else 'order'}-{order_id or secrets.token_hex(6)}"
     sign = -1 if event_name == "order_refunded" else 1
+    if sign > 0:
+        key = f"order-{order_id}"
+    else:
+        # v53: qisman refund — faqat qaytarilgan ulushga mos varaq olinadi (avval butun paket olinardi).
+        # Lemon har refundda JAMI qaytarilgan summani yuboradi -> kalit summaga bog'liq, avvalgi refundlar ayiriladi.
+        refunded = _int_or(attrs.get("refunded_amount"), 0)
+        total = _int_or(attrs.get("total"), 0)
+        target = pages if (refunded <= 0 or total <= 0 or refunded >= total) else (pages * refunded) // total
+        already = await asyncio.to_thread(_refunded_pages, order_id)
+        pages = max(0, target - already)
+        if pages <= 0:
+            return {"ok": True, "duplicate": True}
+        key = f"refund-{order_id}-{refunded}" if refunded > 0 else f"refund-{order_id}"
     try:
         async with _user_lock(user_id):       # bot/sayt bilan BIR XIL lock (qarang tgbot.configure(user_lock=...))
             u = await asyncio.to_thread(get_or_create_user_usage, user_id, str(attrs.get("user_email") or ""))   # qator borligiga ishonch
