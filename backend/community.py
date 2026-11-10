@@ -31,6 +31,7 @@ POST_COOLDOWN_SEC = 8
 
 _last_post_at: Dict[str, float] = {}
 _mem_codes: Dict[str, str] = {}
+api: Dict[str, Any] = {}          # register_community to'ldiradi: api["claim"], api["stats"] — Telegram bot ham shundan foydalanadi
 
 def _json(data: dict, status: int = 200):
     return JSONResponse(data, status_code=status)
@@ -47,6 +48,7 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
     get_usage = ctx["get_or_create_user_usage"]
     save_credits = ctx["save_user_credits"]
     add_paid = ctx["add_paid_credits"]
+    notify = ctx.get("notify")          # async (user_id, html_text) — taklif qilgan odamga Telegram xabari
 
     def auth(token: str):
         sb = get_sb()
@@ -71,22 +73,18 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
     def no_db():
         return _json({"error": "Server bazasi ulanmagan (Supabase)."}, 503)
 
-    @app.get("/api/referral/me")
-    async def referral_me(token: str = ""):
+    async def stats(uid: str) -> Dict[str, Any]:
+        """{'code','invited','bonus_total','bonus_per_friend'} yoki {'error','status'}."""
         sb = get_sb()
         if not sb:
-            return no_db()
-        user = await asyncio.to_thread(auth, token)
-        if not user:
-            return _json({"error": "Avval tizimga kiring"}, 401)
-        uid = str(user.id)
+            return {"error": "Server bazasi ulanmagan (Supabase).", "status": 503}
         code = _make_code(uid)
         try:
             await asyncio.to_thread(
                 lambda: sb.table("referral_codes").upsert({"user_id": uid, "code": code}, on_conflict="user_id").execute())
         except Exception as e:
             print(f"[REFERRAL] referral_codes xato: {str(e)[:150]}")
-            return _json({"error": "Taklif jadvallari yaratilmagan (README dagi SQL ni ishga tushiring)."}, 503)
+            return {"error": "Taklif jadvallari yaratilmagan (SUPABASE_SCHEMA.sql ni ishga tushiring).", "status": 503}
         invited, bonus = 0, 0
         try:
             res = await asyncio.to_thread(
@@ -98,58 +96,61 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             pass
         return {"code": code, "invited": invited, "bonus_total": bonus, "bonus_per_friend": REFERRAL_BONUS_PAGES}
 
-    @app.post("/api/referral/claim")
-    async def referral_claim(payload: Dict[str, Any]):
+    async def do_claim(invitee: str, created: Any, code: str) -> Dict[str, Any]:
+        """Taklif bonusini hisoblaydi (taklif qilgan odamga +REFERRAL_BONUS_PAGES). {'ok':True} yoki {'ok':False,'error':...}."""
         sb = get_sb()
         if not sb:
-            return no_db()
-        user = await asyncio.to_thread(auth, str(payload.get("token") or ""))
-        if not user:
-            return _json({"error": "Avval tizimga kiring"}, 401)
-        code = str(payload.get("code") or "").strip().upper()
+            return {"error": "Server bazasi ulanmagan (Supabase).", "status": 503}
+        code = str(code or "").strip().upper()
         if not re.fullmatch(r"[A-Z0-9]{6,12}", code):
-            return _json({"ok": False, "error": "Havola noto'g'ri"}, 400)
-        invitee = str(user.id)
-
+            return {"ok": False, "error": "Havola noto'g'ri", "status": 400}
+        invitee = str(invitee)
         try:
-            created = getattr(user, "created_at", None)
+            if created is None:
+                r = await asyncio.to_thread(lambda: sb.auth.admin.get_user_by_id(invitee))
+                created = getattr(getattr(r, "user", None), "created_at", None)
             if isinstance(created, str):
                 created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if created and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
             if created and datetime.now(timezone.utc) - created > timedelta(days=NEW_ACCOUNT_WINDOW_DAYS):
-                return _json({"ok": False, "error": "Bonus faqat yangi akkaunt ochganlar uchun"})
+                return {"ok": False, "error": "Bonus faqat yangi akkaunt ochganlar uchun"}
         except Exception:
             pass
-
         try:
             res = await asyncio.to_thread(
                 lambda: sb.table("referral_codes").select("user_id").eq("code", code).limit(1).execute())
             if not res.data:
-                return _json({"ok": False, "error": "Havola topilmadi"})
+                return {"ok": False, "error": "Havola topilmadi"}
             inviter = str(res.data[0]["user_id"])
         except Exception as e:
             print(f"[REFERRAL] code lookup: {str(e)[:150]}")
-            return _json({"error": "Taklif jadvallari yaratilmagan"}, 503)
+            return {"error": "Taklif jadvallari yaratilmagan", "status": 503}
         if inviter == invitee:
-            return _json({"ok": False, "error": "O'zingizning havolangiz"})
-
+            return {"ok": False, "error": "O'zingizning havolangiz"}
+        try:        # bir kishi faqat bir marta taklif orqali hisoblanadi (bazadagi PK dan tashqari ikkinchi himoya)
+            ex = await asyncio.to_thread(
+                lambda: sb.table("referrals").select("invitee_id").eq("invitee_id", invitee).limit(1).execute())
+            if ex.data:
+                return {"ok": False, "error": "Siz allaqachon taklif orqali kirgansiz"}
+        except Exception:
+            pass
         try:
             cnt = await asyncio.to_thread(
                 lambda: sb.table("referrals").select("invitee_id", count="exact").eq("inviter_id", inviter).execute())
             if (getattr(cnt, "count", None) or len(cnt.data or [])) >= MAX_REWARDED_REFERRALS:
-                return _json({"ok": False, "error": "Taklif qiluvchi bonus chegarasiga yetgan"})
+                return {"ok": False, "error": "Taklif qiluvchi bonus chegarasiga yetgan"}
         except Exception:
             pass
-
         try:
             await asyncio.to_thread(lambda: sb.table("referrals").insert(
                 {"invitee_id": invitee, "inviter_id": inviter, "code": code, "pages": REFERRAL_BONUS_PAGES}).execute())
         except Exception as e:
             m = str(e).lower()
             if "duplicate" in m or "23505" in m or "unique" in m:
-                return _json({"ok": False, "error": "Siz allaqachon taklif orqali kirgansiz"})
+                return {"ok": False, "error": "Siz allaqachon taklif orqali kirgansiz"}
             print(f"[REFERRAL] insert: {str(e)[:150]}")
-            return _json({"error": "Taklif jadvallari yaratilmagan"}, 503)
-
+            return {"error": "Taklif jadvallari yaratilmagan", "status": 503}
         try:
             async with user_lock(inviter):
                 u = await asyncio.to_thread(get_usage, inviter, "")
@@ -157,14 +158,43 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
                 await asyncio.to_thread(save_credits, inviter, u, 0)
             print(f"[REFERRAL] +{REFERRAL_BONUS_PAGES} varaq → {inviter} (taklif: {invitee})")
         except Exception as e:
-
             try:
                 await asyncio.to_thread(lambda: sb.table("referrals").delete().eq("invitee_id", invitee).execute())
             except Exception:
                 pass
             print(f"[REFERRAL] kredit xato: {e}")
-            return _json({"error": "Bonusni yozib bo'lmadi"}, 500)
-        return {"ok": True}
+            return {"error": "Bonusni yozib bo'lmadi", "status": 500}
+        if notify:                      # taklif qilgan odamga Telegramda darhol xabar
+            try:
+                asyncio.get_running_loop().create_task(notify(
+                    inviter, f"🎁 <b>Do'stingiz sizning havolangiz orqali qo'shildi!</b>\n+{REFERRAL_BONUS_PAGES} varaq balansingizga qo'shildi."))
+            except Exception:
+                pass
+        return {"ok": True, "inviter": inviter, "pages": REFERRAL_BONUS_PAGES}
+
+    api["claim"] = do_claim
+    api["stats"] = stats
+
+    @app.get("/api/referral/me")
+    async def referral_me(token: str = ""):
+        if not get_sb():
+            return no_db()
+        user = await asyncio.to_thread(auth, token)
+        if not user:
+            return _json({"error": "Avval tizimga kiring"}, 401)
+        r = await stats(str(user.id))
+        return _json(r, r.pop("status", 200)) if "error" in r else r
+
+    @app.post("/api/referral/claim")
+    async def referral_claim(payload: Dict[str, Any]):
+        if not get_sb():
+            return no_db()
+        user = await asyncio.to_thread(auth, str(payload.get("token") or ""))
+        if not user:
+            return _json({"error": "Avval tizimga kiring"}, 401)
+        r = await do_claim(str(user.id), getattr(user, "created_at", None), str(payload.get("code") or ""))
+        st = r.pop("status", 200)
+        return _json(r, st) if st != 200 else r
 
     def _shape(row: dict, likes_map: Dict[str, int], liked: set, me: Optional[str]) -> dict:
         return {

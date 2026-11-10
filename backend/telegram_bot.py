@@ -159,8 +159,9 @@ BTN_MY = "📂 Mening slaydlarim"
 BTN_BAL = "💳 Balans"
 BTN_SITE = "🌐 Saytga o'tish"
 BTN_SET = "⚙️ Sozlamalar"
+BTN_INV = "🎁 Do'st taklif qilish"
 BTN_ABOUT = "ℹ️ Yordam"
-MENU = {BTN_NEW: "new", BTN_MY: "my", BTN_BAL: "bal", BTN_SITE: "site", BTN_SET: "set", BTN_ABOUT: "about",
+MENU = {BTN_NEW: "new", BTN_MY: "my", BTN_BAL: "bal", BTN_SITE: "site", BTN_SET: "set", BTN_ABOUT: "about", BTN_INV: "inv",
         # eski klaviaturalar foydalanuvchilarda turgan bo'lishi mumkin (Pro tugmasi endi balansga olib boradi):
         "👑 Pro": "bal", "🎨 Yangi slayd": "new", "📂 Slaydlarim": "my", "📂 Slaydlarim / Tozalash": "my", "💳 Balans / To'ldirish": "bal", "ℹ️ Bot haqida": "about"}
 LINE = "━━━━━━━━━━━━━━━━━━"
@@ -172,12 +173,14 @@ HELP = (
     "2. Tayyor bo'lgach <b>PPTX / PDF / HTML</b> tugmalaridan birini bosing — fayl yuboriladi.\n"
     "3. O'zgartirish uchun <b>✏️ Tahrirlash</b> ni bosing va yozing: <i>«3-slaydni qisqartir»</i>.\n"
     "4. Eski slaydlaringiz — <b>📂 Slaydlarim</b> da.\n"
-    "5. 1 slayd = 1 varaq. Varaq tugasa — «💳 Balans» orqali sotib oling.\n\n"
+    "5. 1 slayd = 1 varaq. Varaq tugasa — «💳 Balans» orqali sotib oling.\n"
+    "6. <b>🎁 Do'st taklif qilish</b> — har bir do'st uchun +15 varaq.\n\n"
     "<b>Buyruqlar</b>\n"
     "/new — yangi slayd\n"
     "/my — slaydlarim\n"
     "/credits — balans\n"
     "/buy — varaq sotib olish\n"
+    "/invite — do'st taklif qilish\n"
     "/settings — Google akkaunt\n"
     "/id — Telegram ID"
 )
@@ -205,7 +208,7 @@ def kb_reply() -> dict:
     """Doimiy pastki menyu: 2 ustunli, tartibli (v47)."""
     last = [{"text": "🚀 Muharrir", "web_app": {"url": _app_url()}}] if _https() else [{"text": BTN_SITE}]
     return {
-        "keyboard": [[{"text": BTN_NEW}, {"text": BTN_MY}], [{"text": BTN_BAL}, {"text": BTN_SET}], [{"text": BTN_ABOUT}] + last],
+        "keyboard": [[{"text": BTN_NEW}, {"text": BTN_MY}], [{"text": BTN_BAL}, {"text": BTN_SET}], [{"text": BTN_INV}, {"text": BTN_ABOUT}], last],
         "resize_keyboard": True, "is_persistent": True, "input_field_placeholder": "Slayd mavzusini yozing…",
     }
 
@@ -3055,10 +3058,87 @@ async def _do_link(cid: int, user: dict, code: str) -> None:
     res = await asyncio.to_thread(_link_consume_sync, user, code)
     if res.get("ok"):
         await _send(cid, _linked_text(res), kb_main())
+        pend = _state(cid).pop("ref", None)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
+        if pend:
+            await _claim_ref(cid, user, pend, quiet=True)
     elif res.get("error") == "db":
         await _send(cid, "⚙️ Ulashni hozir bajarib bo'lmadi (baza sozlanmagan). Keyinroq urinib ko'ring.")
     else:
         await _send(cid, "❌ Kod noto'g'ri yoki eskirgan (10 daqiqa yashaydi). Saytda «Telegram botni ulash» ni bosib yangi kod oling.")
+
+
+def _ref_api() -> dict:
+    try:
+        from backend import community
+        return community.api
+    except Exception:
+        return {}
+
+
+_REF_RE = re.compile(r"^[A-Za-z0-9]{6,12}$")
+
+
+async def _show_invite(cid: int, user: dict) -> None:
+    api = _ref_api()
+    if not api.get("stats"):
+        await _send(cid, "⚙️ Taklif tizimi hozircha mavjud emas.", kb_main())
+        return
+    try:
+        uid, email = await _ensure_uid(user)
+    except Exception:
+        await _send(cid, "⚠️ Akkauntni ochib bo'lmadi. Birozdan keyin urinib ko'ring.")
+        return
+    if email.endswith("@" + TG_EMAIL_DOMAIN) and not _is_admin(user):
+        await _send(cid, "🎁 <b>Do'st taklif qilish</b>\n" + LINK_FIRST, {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
+        return
+    r = await api["stats"](uid)
+    if r.get("error"):
+        await _send(cid, "⚙️ Taklif tizimi hozir ishlamayapti. Keyinroq urinib ko'ring.", kb_main())
+        return
+    code = r["code"]
+    uname = await _bot_username()
+    bot_link = f"https://t.me/{uname}?start=ref_{code}" if uname else f"{SITE_URL}/?ref={code}"
+    site_link = f"{SITE_URL}/?ref={code}"
+    per = r.get("bonus_per_friend", 15)
+    text = (f"🎁 <b>Do'st taklif qiling — har biri uchun +{per} varaq</b>\n"
+            f"Do'stingiz havolangiz orqali kirib Google akkaunt ulasa, balansingizga {per} ta pullik varaq qo'shiladi.\n\n"
+            f"🤖 Bot havolasi:\n<code>{esc(bot_link)}</code>\n\n🌐 Sayt havolasi:\n<code>{esc(site_link)}</code>\n\n"
+            f"👥 Taklif qilinganlar: <b>{r.get('invited', 0)}</b> · 🎉 Olingan bonus: <b>+{r.get('bonus_total', 0)}</b> varaq")
+    share = f"https://t.me/share/url?url={quote(bot_link, safe='')}&text={quote('Slide Studio — AI bilan slayd yarating. Mening havolam orqali kiring:', safe='')}"
+    await _send(cid, text, {"inline_keyboard": [[{"text": "📤 Do'stga yuborish", "url": share}], [_btn("💳 Balans", "bal")]]})
+
+
+async def _claim_ref(cid: int, user: dict, code: str, quiet: bool = False) -> None:
+    api = _ref_api()
+    if not api.get("claim") or not _REF_RE.match(code or ""):
+        return
+    try:
+        uid, _email = await _ensure_uid(user)
+        r = await api["claim"](uid, None, code)
+    except Exception as e:
+        _warn("ref", f"taklif xatosi: {str(e)[:100]}")
+        return
+    if r.get("ok"):
+        await _send(cid, "🎉 Taklif qabul qilindi! Sizni taklif qilgan do'stingizga bonus varaqlar berildi. Xush kelibsiz!")
+    elif not quiet and r.get("error"):
+        await _send(cid, f"ℹ️ {esc(r['error'])}")
+
+
+async def _handle_ref_start(cid: int, user: dict, code: str) -> None:
+    st = _state(cid)
+    code = (code or "").strip().upper()
+    if not _REF_RE.match(code):
+        return
+    try:
+        _uid, email = await _ensure_uid(user)
+    except Exception:
+        return
+    if email.endswith("@" + TG_EMAIL_DOMAIN) and not _is_admin(user):
+        st["ref"] = code               # Google ulangach (yoki shu paytda) bonus hisoblanadi
+        await _send(cid, "🎁 Do'stingiz sizni taklif qildi!\nBonus hisoblanishi uchun avval <b>Google akkauntni ulang</b>.",
+                    {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
+        return
+    await _claim_ref(cid, user, code)
 
 
 async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> None:
@@ -3101,6 +3181,8 @@ async def _menu_action(cid: int, user: dict, action: str) -> None:
         await _show_settings(cid, user)
     elif action == "about":
         await _send(cid, ABOUT, kb_main())
+    elif action == "inv":
+        await _show_invite(cid, user)
 
 
 async def _handle_callback(cb: dict) -> None:
@@ -3117,6 +3199,8 @@ async def _handle_callback(cb: dict) -> None:
         return
     if data in ("credits", "bal"):
         await _show_balance(cid, user)
+    elif data == "inv":
+        await _show_invite(cid, user)
     elif data == "buy":
         await _do_buy(cid, user, "pack")
     elif data in ("pro", "buypro"):                      # eski xabarlardagi Pro tugmalari
@@ -3421,6 +3505,8 @@ async def handle_update(data: dict) -> None:
             st["ui"] = None
             if arg.lower().startswith("link_"):               # saytdagi «Telegram» tugmasidan: t.me/bot?start=link_KOD
                 await _do_link(chat_id, user, arg[5:])
+            elif arg.lower().startswith("ref_"):              # do'st havolasi: t.me/bot?start=ref_KOD
+                await _handle_ref_start(chat_id, user, arg[4:])
             await _send_welcome(chat_id, user)
         elif cmd == "/help":
             await _send(chat_id, HELP, kb_reply())
@@ -3436,6 +3522,8 @@ async def handle_update(data: dict) -> None:
                                  f"<i>{'Murakkab mavzular uchun, 1 slayd = 3 varaq, sekinroq.' if st['mode'] == 'deep' else 'Tez va tejamkor: 1 slayd = 1 varaq.'}</i>")
         elif cmd in ("/credits", "/kredit", "/kreditlar", "/balance", "/balans"):
             await _show_balance(chat_id, user)
+        elif cmd in ("/invite", "/taklif", "/referral"):
+            await _show_invite(chat_id, user)
         elif cmd == "/buy":
             await _do_buy(chat_id, user, "pack")
         elif cmd == "/pro":
@@ -3725,6 +3813,7 @@ async def _set_commands() -> None:
         {"command": "my", "description": "Slaydlarim"},
         {"command": "clear", "description": "Slaydlarimni tozalash"},
         {"command": "credits", "description": "Balans"},
+        {"command": "invite", "description": "Do'st taklif qilish (+15 varaq)"},
         {"command": "link", "description": "Google akkauntni ulash"},
         {"command": "settings", "description": "Sozlamalar"},
         {"command": "mode", "description": "Tez ⚡ / Chuqur 🧠 AI"},

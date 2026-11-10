@@ -1916,6 +1916,7 @@ try:
         "get_or_create_user_usage": get_or_create_user_usage,
         "save_user_credits": save_user_credits,
         "add_paid_credits": add_paid_credits,
+        "notify": (lambda uid, text: tgbot.notify_user(uid, text)) if tgbot is not None else None,
     })
 except Exception as _cm_err:
     print(f"[COMMUNITY] yuklanmadi: {_cm_err}")
