@@ -26,7 +26,7 @@ def _env_int(name, default):
     except (TypeError, ValueError):
         return default
 
-DEEPSEEK_CONCURRENCY = _env_int("DEEPSEEK_CONCURRENCY", 2000)
+DEEPSEEK_CONCURRENCY = _env_int("DEEPSEEK_CONCURRENCY", 40)
 MAX_WS = _env_int("MAX_WS", 2000)
 REDIS_URL = _env("REDIS_URL", "SLIDE_STUDIO_REDIS_URL", default="")
 import secrets as _secrets

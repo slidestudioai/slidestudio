@@ -463,7 +463,8 @@ except Exception as _sc_err:
     print(f"[SCALING] local fallback: {_sc_err}")
     active_sessions: Dict[str, dict] = {}
     sessions_lock = threading.Lock()
-    _conc = int(os.environ.get("DEEPSEEK_CONCURRENCY", "2000") or "2000")
+    _conc = int(os.environ.get("DEEPSEEK_CONCURRENCY", "40") or "40")
+    DEEPSEEK_CONCURRENCY = _conc
     GEMINI_SEMAPHORE = asyncio.Semaphore(max(1, _conc))
     MAX_WS = int(os.environ.get("MAX_WS", "2000") or "2000")
     def hash_user_id(uid: str) -> str:
@@ -840,6 +841,19 @@ _RL_RULES = (            # (path prefix, limit per 60s per IP)
 )
 _RL_EXEMPT = ("/api/payment/lemon-webhook", "/webhook/lemonsqueezy")
 
+def _client_ip(request) -> str:
+    """v52: Render/Cloudflare ortida request.client.host = proxy IP (hamma foydalanuvchi BITTA IP bo'lib qolardi va
+    limit hammaga birdan tegardi). Haqiqiy IP: CF-Connecting-IP / True-Client-IP / X-Forwarded-For[0]."""
+    h = request.headers
+    for name in ("cf-connecting-ip", "true-client-ip"):
+        v = (h.get(name) or "").strip()
+        if v:
+            return v[:64]
+    xff = (h.get("x-forwarded-for") or "").split(",")[0].strip()
+    if xff:
+        return xff[:64]
+    return request.client.host if request.client else "?"
+
 def _rate_limited(ip: str, path: str) -> bool:
     if path.startswith(_RL_EXEMPT):
         return False
@@ -867,7 +881,7 @@ def _rate_limited(ip: str, path: str) -> bool:
 @app.middleware("http")
 async def _security_middleware(request: Request, call_next):
     path = request.url.path
-    ip = (request.client.host if request.client else "?")
+    ip = _client_ip(request)
     if path.startswith("/api/") and _rate_limited(ip, path):
         return JSONResponse({"error": "Juda ko'p so'rov. Biroz kuting."}, status_code=429, headers={"Retry-After": "30"})
     resp = await call_next(request)
@@ -881,7 +895,9 @@ async def _security_middleware(request: Request, call_next):
         h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     # v52: JS/CSS. index.html ichidagi ?v=<hash> fayl o'zgarganda AVTOMATIK o'zgaradi (qarang _render_index),
     # shuning uchun ?v= li fayl abadiy keshlansa bo'ladi; ?v= siz so'rov har safar tekshiriladi (ETag -> 304).
-    if path.startswith("/js/") or path.endswith((".css", ".png", ".ico", ".woff2", ".js")):
+    if path.startswith("/static/"):
+        h["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    elif path.startswith("/js/") or path.endswith((".css", ".png", ".ico", ".woff2", ".js")):
         if path.endswith((".png", ".ico", ".woff2")):
             h.setdefault("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
         elif request.query_params.get("v"):
@@ -910,6 +926,7 @@ try:
         apply_reset=apply_24h_reset,
         charge=charge_for_ai_turn,
         save_usage=save_user_credits,
+        user_lock=lambda uid: _user_lock(uid),     # v52: bot, sayt va webhook uchun yagona lock
         ledger_log=lambda *a, **k: ledger_log(*a, **k),   # v44.1: ledger_log pastroqda e'lon qilingan -> kech bog'lanadi (NameError tuzatildi)
         total_credits=lambda u: (10 ** 9 if is_unlimited(u) else total_credits(u)),   # v47: cheksiz/VIP uchun bot hech qachon "varaq tugadi" demaydi
         MODES=MODES,
@@ -1106,20 +1123,47 @@ def public_config():
                   for k, v in MODES.items()},
     }
 
-@app.post("/api/import/pdf")
-async def import_pdf(request: Request):
-    """PDF -> tahrirlanadigan slaydlar (shakl, rasm, matn alohida obyekt). Fayl saqlanmaydi."""
+# ---- v52: yuklash cheklovlari (hajm + format). Fayl RAMga TO'LIQ o'qilishidan OLDIN tekshiriladi ----
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024          # 10 MB
+_PDF_SEM = asyncio.Semaphore(2)              # PDF konvertatsiya CPU og'ir — bir vaqtda 2 ta
+_IMG_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpeg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
+ALLOWED_IMAGE_MIME = ("image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif")
+
+async def _read_body_limited(request: Request, limit: int = MAX_UPLOAD_BYTES) -> bytes:
+    """Content-Length va haqiqiy oqim bo'yicha limit: 10 MB dan oshsa 413 (xotira to'lib ketmaydi)."""
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > limit:
+        raise HTTPException(status_code=413, detail=f"Fayl {limit // (1024 * 1024)} MB dan oshmasin")
+    buf = bytearray()
     try:
-        data = await request.body()
+        async for chunk in request.stream():
+            buf += chunk
+            if len(buf) > limit:
+                raise HTTPException(status_code=413, detail=f"Fayl {limit // (1024 * 1024)} MB dan oshmasin")
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(status_code=400, detail="Fayl o'qilmadi")
-    if not data or len(data) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="PDF 15 MB dan oshmasin")
+    return bytes(buf)
+
+def _is_image_bytes(b: bytes) -> bool:
+    return any(b.startswith(m) for m, _ in _IMG_MAGIC) or (b[:4] == b"RIFF" and b[8:12] == b"WEBP")
+
+@app.post("/api/import/pdf")
+async def import_pdf(request: Request):
+    """PDF -> tahrirlanadigan slaydlar (shakl, rasm, matn alohida obyekt). Fayl saqlanmaydi. Maks 10 MB."""
+    ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype and ctype not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(status_code=415, detail="Faqat PDF fayl qabul qilinadi")
+    data = await _read_body_limited(request)
+    if not data:
+        raise HTTPException(status_code=400, detail="Fayl bo'sh")
     if not data.startswith(b"%PDF"):
         raise HTTPException(status_code=400, detail="Bu PDF emas")
     try:
         from backend import pdf_import
-        res = await asyncio.to_thread(pdf_import.convert, data)
+        async with _PDF_SEM:
+            res = await asyncio.to_thread(pdf_import.convert, data)
     except ImportError:
         raise HTTPException(status_code=501, detail="PDF import serverda o'rnatilmagan")
     except Exception as e:
@@ -1133,13 +1177,17 @@ async def analyze_images(payload: Dict[str, Any]):
     images = payload.get("images") if isinstance(payload, dict) else []
     if not isinstance(images, list):
         raise HTTPException(status_code=400, detail="images list is required")
+    if len(images) > 30:
+        raise HTTPException(status_code=413, detail="Bir so'rovda 30 tadan ko'p rasm yuborib bo'lmaydi")
     results = []
     for item in images:
         if not isinstance(item, dict):
             continue
         number = item.get("number")
         src = item.get("src") or ""
-        if not src.startswith("data:image/"):
+        if isinstance(src, str) and src.startswith("data:") and len(src) > int(MAX_UPLOAD_BYTES * 1.4):     # base64 ~ 1.33x
+            raise HTTPException(status_code=413, detail="Rasm 10 MB dan oshmasin")
+        if not isinstance(src, str) or not src.lower().startswith(tuple("data:" + m + ";" for m in ALLOWED_IMAGE_MIME)):
             results.append({"number": number, "description": "Rasm ma'lumoti mavjud emas."})
             continue
         image_desc = "Rasm tarkibiy qismlari va asosiy ob'ektlari aniqlanmoqda."
@@ -1362,34 +1410,30 @@ async def _checkout_for_bot(user_id: str, email: str = "", return_url: str = "",
         return {"url": data["checkout_url"], "pages": data.get("pages"), "days": data.get("days"), "price": data.get("price_usd"), "product": product}
     return {"error": data.get("error") or "checkout_error", "hint": data.get("hint") or data.get("detail") or ""}
 
-_processed_orders: set = set()
+_processed_orders: set = set()          # faqat DEV (Supabase yo'q) rejimi uchun
 
-def _claim_order(key: str, user_id: str, pages: int) -> bool:
-    """True → birinchi marta. Supabase da `payment_events(order_id text primary key, user_id text,
-    pages int, created_at timestamptz default now())` jadvali bo'lsa — qayta ishga tushganda ham himoya qiladi."""
-    if key in _processed_orders:
-        return False
-    if supabase:
-        try:
-            supabase.table("payment_events").insert(
-                {"order_id": key, "user_id": str(user_id), "pages": int(pages)}
-            ).execute()
-        except Exception as e:
-            m = str(e).lower()
-            if "duplicate" in m or "23505" in m or "unique" in m:
-                _processed_orders.add(key)
-                return False
-            print(f"[LEMON WEBHOOK] payment_events jadvali yo'q/xato ({str(e)[:100]}) — faqat xotirada himoya.")
-    _processed_orders.add(key)
-    return True
-
-def _release_order(key: str):
-    _processed_orders.discard(key)
-    if supabase:
-        try:
-            supabase.table("payment_events").delete().eq("order_id", key).execute()
-        except Exception:
-            pass
+def _apply_payment_sync(key: str, user_id: str, pages: int, sign: int, event_name: str) -> dict:
+    """ATOMIK + IDEMPOTENT: SQL funksiyasi public.apply_payment (SUPABASE_SCHEMA.sql, 10-bo'lim) bitta tranzaksiyada
+    payment_events ga yozadi va balansni yangilaydi. Funksiya yo'q/xato bo'lsa — istisno ko'tariladi (webhook 500 qaytaradi,
+    Lemon qayta yuboradi). Xotiraga tushib qolmaydi: restartdan keyin ham ikki marta hisoblanmaydi."""
+    if not supabase:
+        if os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() != "1":
+            raise RuntimeError("supabase_unavailable")
+        if key in _processed_orders:
+            return {"duplicate": True}
+        _processed_orders.add(key)
+        u = get_or_create_user_usage(user_id, "")
+        u = remove_paid_credits(u, pages) if sign < 0 else add_paid_credits(u, pages)
+        save_user_credits(user_id, u, 0)
+        return {"duplicate": False}
+    r = supabase.rpc("apply_payment", {
+        "p_key": key, "p_user_id": str(user_id), "p_pages": int(pages),
+        "p_units": int(pages) * UNIT, "p_sign": int(sign), "p_event": event_name,
+    }).execute()
+    data = r.data
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return data if isinstance(data, dict) else {}
 
 def _find_user_by_email(email: str) -> str:
     if not supabase or not email:
@@ -1457,29 +1501,28 @@ async def lemon_webhook(request: Request):
         return {"ok": True, "ignored": f"status={attrs.get('status')}"}
 
     key = f"{'refund' if event_name == 'order_refunded' else 'order'}-{order_id or secrets.token_hex(6)}"
-    if not _claim_order(key, user_id, pages):
-        return {"ok": True, "duplicate": True}
+    sign = -1 if event_name == "order_refunded" else 1
     try:
-        async with _user_lock(user_id):
+        async with _user_lock(user_id):       # bot/sayt bilan BIR XIL lock (qarang tgbot.configure(user_lock=...))
+            u = await asyncio.to_thread(get_or_create_user_usage, user_id, str(attrs.get("user_email") or ""))   # qator borligiga ishonch
+            res = await asyncio.to_thread(_apply_payment_sync, key, user_id, pages, sign, event_name)
+            if res.get("duplicate"):
+                return {"ok": True, "duplicate": True}
             u = await asyncio.to_thread(get_or_create_user_usage, user_id, str(attrs.get("user_email") or ""))
-            if event_name == "order_refunded":
-                u = remove_paid_credits(u, pages)
-            else:
-                u = add_paid_credits(u, pages)
-            await asyncio.to_thread(save_user_credits, user_id, u, 0)
             await asyncio.to_thread(
-                ledger_log, user_id, "refund" if event_name == "order_refunded" else "purchase",
-                -pages * UNIT if event_name == "order_refunded" else pages * UNIT, u, 0, {"order": order_id})
-        print(f"[LEMON WEBHOOK] {event_name}: {'-' if event_name == 'order_refunded' else '+'}{pages} → {user_id} (test={attrs.get('test_mode')})")
-        try:   # v45: Telegram foydalanuvchisiga darhol xabar (balans bazada allaqachon yangilangan)
-            asyncio.create_task(tgbot.notify_purchase(str(user_id), pages, event_name == "order_refunded"))
+                ledger_log, user_id, "refund" if sign < 0 else "purchase",
+                sign * pages * UNIT, u, 0, {"order": order_id})
+        print(f"[LEMON WEBHOOK] {event_name}: {'-' if sign < 0 else '+'}{pages} -> {user_id} (test={attrs.get('test_mode')})")
+        try:   # Telegram foydalanuvchisiga darhol xabar (balans bazada allaqachon yangilangan)
+            if tgbot is not None:
+                asyncio.create_task(tgbot.notify_purchase(str(user_id), pages, sign < 0))
         except Exception:
             pass
         return {"ok": True, "user_id": user_id, "paid_credits": u.get("paid_credits"), "pages": pages}
     except Exception as e:
-        _release_order(key)
-        print(f"[LEMON WEBHOOK] xato: {e}")
-        return JSONResponse({"error": str(e)[:200]}, status_code=500)
+        # 5xx -> Lemon Squeezy webhookni qayta yuboradi (idempotent, shuning uchun xavfsiz)
+        print(f"[LEMON WEBHOOK] xato: {type(e).__name__}: {str(e)[:200]}")
+        return JSONResponse({"error": "temporary_error"}, status_code=500)
 
 # ---------------------------------------------------------------------------------------------
 # v47: REKLAMA (sayt chap paneli + bot), ADMIN kirish punkti
@@ -2066,6 +2109,96 @@ def _ws_origin_ok(ws: WebSocket) -> bool:
         return False
     return o_host == host or org in _ALLOWED_ORIGINS
 
+# ---------------------------------------------------------------------------------------------
+# v52: DeepSeek — BITTA umumiy AsyncOpenAI (httpx connection pool: TLS qayta qo'lsiz) + navbat (queue)
+#   DEEPSEEK_CONCURRENCY  — bir vaqtda DeepSeek'ga ketadigan so'rovlar (standart 40; avval 2000 = navbat yo'q edi)
+#   DS_QUEUE_TIMEOUT      — navbatda maksimal kutish (s); oshsa foydalanuvchiga "band" deyiladi, varaq yechilmaydi
+# ---------------------------------------------------------------------------------------------
+try:
+    DS_QUEUE_TIMEOUT = max(5.0, float(os.environ.get("DS_QUEUE_TIMEOUT", "90")))
+except ValueError:
+    DS_QUEUE_TIMEOUT = 90.0
+_ds_client_cache: Dict[str, Any] = {"sig": None, "client": None}
+_ds_waiting = 0
+
+def _deepseek_client(api_key: str, base_url: str):
+    import httpx
+    sig = (api_key, base_url)
+    if _ds_client_cache["sig"] != sig or _ds_client_cache["client"] is None:
+        _ds_client_cache["sig"] = sig
+        _ds_client_cache["client"] = AsyncOpenAI(
+            api_key=api_key, base_url=base_url, timeout=600.0, max_retries=2,
+            http_client=httpx.AsyncClient(
+                timeout=httpx.Timeout(600.0, connect=10.0),
+                limits=httpx.Limits(max_connections=max(20, DEEPSEEK_CONCURRENCY * 2 if DEEPSEEK_CONCURRENCY < 500 else 200),
+                                    max_keepalive_connections=40, keepalive_expiry=60),
+            ),
+        )
+    return _ds_client_cache["client"]
+
+class _DsBusy(Exception):
+    pass
+
+class _ds_slot:
+    """`async with _ds_slot(ws):` — GEMINI_SEMAPHORE (DEEPSEEK_CONCURRENCY) navbati; to'lib ketsa foydalanuvchiga o'rni aytiladi."""
+    def __init__(self, ws):
+        self.ws = ws
+        self.held = False
+    async def __aenter__(self):
+        global _ds_waiting
+        if GEMINI_SEMAPHORE.locked():
+            _ds_waiting += 1
+            try:
+                try:
+                    await self.ws.send_json({"type": "queue", "position": _ds_waiting,
+                                             "message": f"Navbatdasiz ({_ds_waiting}). Biroz kuting…"})
+                except Exception:
+                    pass
+                await asyncio.wait_for(GEMINI_SEMAPHORE.acquire(), timeout=DS_QUEUE_TIMEOUT)
+            except asyncio.TimeoutError:
+                raise _DsBusy("503 overloaded: queue timeout")
+            finally:
+                _ds_waiting = max(0, _ds_waiting - 1)
+        else:
+            await GEMINI_SEMAPHORE.acquire()
+        self.held = True
+        return self
+    async def __aexit__(self, *a):
+        if self.held:
+            GEMINI_SEMAPHORE.release()
+            self.held = False
+
+# ---- foydalanuvchi bo'yicha limit (WebSocket HTTP middleware'dan o'tmaydi, shuning uchun alohida) ----
+def _env_i(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+WS_RPM_PLAN = _env_i("WS_RPM_PLAN", 5)          # yangi deck rejasi (mode=plan): 1 daqiqada 5 ta
+WS_RPM_GENERATE = _env_i("WS_RPM_GENERATE", 40)  # reja bo'yicha slayd-slayd yaratish (1 deck = N so'rov)
+WS_RPM_CHAT = _env_i("WS_RPM_CHAT", 15)          # oddiy chat/tahrirlash
+_UWIN: Dict[str, list] = {}
+
+def _user_rate_hit(uid: str, kind: str) -> int:
+    """0 = ruxsat; >0 = necha soniyadan keyin qayta urinish mumkin."""
+    lim = {"plan": WS_RPM_PLAN, "generate": WS_RPM_GENERATE}.get(kind, WS_RPM_CHAT)
+    now = time.time()
+    key = f"{uid}|{kind}"
+    arr = [t for t in _UWIN.get(key, ()) if now - t < 60]
+    if len(arr) >= lim:
+        _UWIN[key] = arr
+        return max(1, int(60 - (now - arr[0])) + 1)
+    arr.append(now)
+    _UWIN[key] = arr
+    if len(_UWIN) > 20000:
+        for k in list(_UWIN.keys())[:5000]:
+            _UWIN.pop(k, None)
+    return 0
+
+# ---- token -> foydalanuvchi keshi (har xabarda Supabase Auth'ga HTTP so'rov ketmasin) ----
+_TOK_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+TOK_TTL = 60.0
+
 @app.websocket("/ws/chat")
 async def ws_chat(websocket: WebSocket):
     global ws_count
@@ -2118,17 +2251,31 @@ async def ws_chat(websocket: WebSocket):
                                                "message": "AI bilan yozishish uchun tizimga kiring."})
                     continue
                 try:
-                    user_res = await asyncio.to_thread(supabase.auth.get_user, token)
-                    if not user_res or not user_res.user:
-                        await websocket.send_json({"type": "error", "code": "invalid_token",
-                                                   "message": "Sessiya tugagan. Qayta kiring."})
-                        continue
-                    uid = user_res.user.id
-                    email = user_res.user.email or ""
+                    _tk = hash_user_id(token)
+                    _hit = _TOK_CACHE.get(_tk)
+                    if _hit and time.time() - _hit[2] < TOK_TTL:
+                        uid, email = _hit[0], _hit[1]
+                    else:
+                        user_res = await asyncio.to_thread(supabase.auth.get_user, token)
+                        if not user_res or not user_res.user:
+                            _TOK_CACHE.pop(_tk, None)
+                            await websocket.send_json({"type": "error", "code": "invalid_token",
+                                                       "message": "Sessiya tugagan. Qayta kiring."})
+                            continue
+                        uid = user_res.user.id
+                        email = user_res.user.email or ""
+                        _TOK_CACHE[_tk] = (uid, email, time.time())
+                        while len(_TOK_CACHE) > 5000:
+                            _TOK_CACHE.popitem(last=False)
                 except Exception as e:
                     await websocket.send_json({"type": "error", "code": "invalid_token",
                                                "message": "Kirishni tekshirib bo'lmadi. Qayta kiring."})
                     continue
+            _wait = _user_rate_hit(str(uid), "plan" if mode == "plan" else ("generate" if mode == "generate" else "chat"))
+            if _wait:
+                await websocket.send_json({"type": "error", "code": "RATE_LIMITED", "retry_after": _wait,
+                                           "message": f"Juda tez-tez so'rov yuboryapsiz. {_wait} soniyadan keyin qayta urinib ko'ring."})
+                continue
             usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
             if usage.get("blocked"):
                 await websocket.send_json({"type": "error", "message": "Akkaunt bloklangan."})
@@ -2462,12 +2609,8 @@ async def ws_chat(websocket: WebSocket):
             client_gone = False
             try:
 
-                client = AsyncOpenAI(
-                    api_key=api_key,
-                    base_url=config.get("deepseek_base_url") or "https://api.deepseek.com",
-                    timeout=600.0,
-                )
-                async with GEMINI_SEMAPHORE:
+                client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
+                async with _ds_slot(websocket):
                     tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan"
                     if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
                         try:
@@ -2691,11 +2834,6 @@ async def ws_chat(websocket: WebSocket):
                         client_gone = True
                     except Exception as e:
                         stream_err = e
-                    finally:
-                        try:
-                            await client.close()
-                        except Exception:
-                            pass
             except WebSocketDisconnect:
                 client_gone = True
             except Exception as e:

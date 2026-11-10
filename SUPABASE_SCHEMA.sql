@@ -282,3 +282,99 @@ grant execute on function public.ad_bump(bigint, text) to service_role;
 -- Eski bazada qolgan 300 (=15 varaq) boshlang'ich qiymatni 200 (=10 varaq) ga tuzatish (xavfsiz, qayta ishga tushirsa bo'ladi)
 alter table public.user_usage alter column free_credits  set default 200;
 alter table public.user_usage alter column slide_credits set default 200;
+
+
+-- ============================================================================
+-- 10) v52: ATOMIK to'lov (Lemon Squeezy webhook) — idempotent + tranzaksiya
+--     Bitta SQL tranzaksiyada: payment_events ga yozadi VA balansni oshiradi/kamaytiradi.
+--     Webhook 2 marta (yoki bir vaqtda 2 ta nusxada) kelsa ham balans FAQAT BIR MARTA o'zgaradi.
+--     p_sign = +1 (order_created) | -1 (order_refunded). p_units = varaq * 20.
+-- ============================================================================
+alter table public.payment_events add column if not exists event_name text;
+alter table public.payment_events add column if not exists units      int;
+
+create or replace function public.apply_payment(
+  p_key text, p_user_id text, p_pages int, p_units int, p_sign int, p_event text default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_inserted int;
+  v_paid     int;
+  v_free     int;
+begin
+  if p_sign not in (1, -1) or p_units < 0 then
+    raise exception 'bad arguments';
+  end if;
+
+  insert into public.payment_events (order_id, user_id, pages, units, event_name)
+  values (p_key, p_user_id, p_pages, p_units, p_event)
+  on conflict (order_id) do nothing;
+  get diagnostics v_inserted = row_count;
+
+  if v_inserted = 0 then
+    return jsonb_build_object('duplicate', true);
+  end if;
+
+  -- qator qulflanadi (FOR UPDATE ichida UPDATE) — bir vaqtdagi boshqa yozuvlar kutadi
+  update public.user_usage
+     set paid_credits  = greatest(0, paid_credits + p_sign * p_units),
+         slide_credits = free_credits + greatest(0, paid_credits + p_sign * p_units),
+         last_active   = now()
+   where user_id = p_user_id
+   returning paid_credits, free_credits into v_paid, v_free;
+
+  if not found then
+    -- foydalanuvchi qatori yo'q: yozuvni bekor qilamiz (webhook qayta uriniladi / qo'lda ko'rib chiqiladi)
+    raise exception 'user_not_found';
+  end if;
+
+  return jsonb_build_object('duplicate', false, 'paid_credits', v_paid, 'free_credits', v_free);
+end;
+$$;
+
+revoke all on function public.apply_payment(text, text, int, int, int, text) from public, anon, authenticated;
+grant execute on function public.apply_payment(text, text, int, int, int, text) to service_role;
+
+
+-- ============================================================================
+-- 11) v52: Xavfsizlik — brauzer (anon/authenticated) public jadvallarga HECH QACHON to'g'ridan-to'g'ri tegmasin.
+--     Frontend Supabase'dan faqat AUTH uchun foydalanadi; barcha ma'lumot server (service_role) orqali o'tadi.
+--     RLS (yuqorida) + jadval huquqlarini ham olib tashlaymiz (ikki qavat himoya).
+-- ============================================================================
+revoke all on all tables    in schema public from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
+revoke all on all functions in schema public from anon, authenticated;
+alter default privileges in schema public revoke all on tables    from anon, authenticated;
+alter default privileges in schema public revoke all on functions from anon, authenticated;
+grant usage on schema public to service_role;
+grant all on all tables    in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+grant execute on all functions in schema public to service_role;
+
+
+-- ============================================================================
+-- 12) v52: Supabase Storage — foydalanuvchi fayllari (ixtiyoriy; hozir kod fayllarni SAQLAMAYDI, RAMda ishlaydi)
+--     Bucket yopiq (private), maks 10 MB, faqat PDF/PNG/JPG/WEBP/GIF.
+--     Har kim faqat o'z papkasiga ( <auth.uid()>/fayl ) yoza va o'qiy oladi.
+-- ============================================================================
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('user-uploads', 'user-uploads', false, 10485760,
+        array['application/pdf','image/png','image/jpeg','image/webp','image/gif'])
+on conflict (id) do update
+   set public = false,
+       file_size_limit = 10485760,
+       allowed_mime_types = array['application/pdf','image/png','image/jpeg','image/webp','image/gif'];
+
+drop policy if exists "uploads_owner_select" on storage.objects;
+drop policy if exists "uploads_owner_insert" on storage.objects;
+drop policy if exists "uploads_owner_delete" on storage.objects;
+
+create policy "uploads_owner_select" on storage.objects for select to authenticated
+  using (bucket_id = 'user-uploads' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "uploads_owner_insert" on storage.objects for insert to authenticated
+  with check (bucket_id = 'user-uploads' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "uploads_owner_delete" on storage.objects for delete to authenticated
+  using (bucket_id = 'user-uploads' and (storage.foldername(name))[1] = auth.uid()::text);

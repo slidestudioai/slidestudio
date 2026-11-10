@@ -529,6 +529,11 @@ _ulocks: Dict[str, asyncio.Lock] = {}
 
 
 def _ulock(uid: str) -> asyncio.Lock:
+    """v52: sayt (WebSocket), Lemon webhook va bot BIR XIL lock'dan foydalanadi — aks holda to'lov krediti bot yozuvi bilan
+    ustma-ust yozilib ketardi (read-modify-write poygasi)."""
+    shared = _deps.get("user_lock")
+    if shared:
+        return shared(str(uid))
     lk = _ulocks.get(uid)
     if lk is None:
         if len(_ulocks) > 3000:
