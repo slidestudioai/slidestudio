@@ -23,7 +23,7 @@
       var j = String(s.json || ''), n = j.length, h = n;
       var step = Math.max(1, Math.floor(n / 400));
       for (var i = 0; i < n; i += step) h = ((h * 31) + j.charCodeAt(i)) | 0;
-      parts.push(n + ':' + h);
+      parts.push(n + ':' + h + ':' + (s.transition || '') + ':' + (s.transDur || 0) + ':' + (s.transAuto || 0));
     });
     return parts.join('|');
   }
@@ -70,7 +70,7 @@
     var sprites = {};
     try { if (window.ssBuildSprites) sprites = await window.ssBuildSprites(parsed); } catch (e) {  }
     window.__ssPresData = {
-      project: { title: (typeof projectTitle === 'string' ? projectTitle : ''), slides: list.map(function (s) { return { json: s.json, transition: s.transition || '' }; }) },
+      project: { title: (typeof projectTitle === 'string' ? projectTitle : ''), slides: list.map(function (s) { return { json: s.json, transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 }; }) },
       slides: parsed, sprites: sprites
     };
     var anim = ''; try { var ae = $('ssAnimStyle'); if (ae) anim = (ae.textContent || '').replace(/<\/style/gi, ''); } catch (e) {  }

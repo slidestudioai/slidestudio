@@ -219,6 +219,18 @@ _NO_TOOLS_NOTE = ("\n\n[MUHIM — BU REJIMDA TOOL YO'Q]\nSizda hech qanday tool/
                   "U bo'lim bo'lmasa — rasm elementi qo'shmang. Javobni darhol yozing: qisqa PART A matn + bitta ```json blok.")
 _NO_IMG_RE = _re.compile(r"rasmsiz|rasm\s*(?:kerak\s*emas|qo'?yma|siz)|without\s+images?|no\s+images?|без\s+(?:картин|изображ|фото)", _re.I)
 _IMG_CTX_RE = _re.compile(r"slayd|slide|taqdimot|rasm|image|photo|foto|fon\b|banner|презент|слайд|изображ|картин", _re.I)
+_IMG_INTENT_RE = _re.compile(r"rasm|surat|image|photo|picture|foto|fon\b|banner|illyustr|gif|video|изображ|картин|фото|"
+                             r"(?:yarat|tuz|qil|qo'?sh|ochib\s*ber|tayyorla|generate|create|make|build|добав|созда)\w*\s+.{0,40}?(?:slayd|slide|taqdimot|prezentats|презент|слайд)|"
+                             r"(?:slayd|slide|taqdimot|prezentats|презент|слайд)\w*\s+.{0,40}?(?:yarat|tuz|qo'?sh|tayyorla|generate|create|make|добав|созда)|"
+                             r"mavzu\w*\s+(?:bo'?yicha|haqida|ustida)", _re.I)
+_SMALLTALK_RE = _re.compile(r"^\s*(?:salom|assalom\w*|hi|hello|hey|rahmat|raxmat|ok|okay|yaxshi|nima\s+deding|nima\s+dedi\w*|tushund\w*|qalay\w*|thanks?|привет|спасибо)\W*$", _re.I)
+
+def _wants_images(raw: str) -> bool:
+    """Faqat foydalanuvchining O'Z matni asosida: salomlashuv/oddiy savolga rasm qidirilmaydi."""
+    t = (raw or "").strip()
+    if len(t) < 4 or _SMALLTALK_RE.match(t):
+        return False
+    return bool(_IMG_INTENT_RE.search(t))
 
 
 async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: Any = None) -> str:
@@ -234,7 +246,6 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
             except Exception:
                 pass
     _first = "mavzuga mos rasmlar"
-    await _ev({"type": "search_start", "query": _first, "kind": "photo", "n": 0})      # darhol: foydalanuvchi qidiruv boshlanganini ko'radi
     try:
         r = await asyncio.wait_for(client.chat.completions.create(
             model="deepseek-chat", temperature=0, max_tokens=160, response_format={"type": "json_object"},
@@ -244,10 +255,8 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
         qs = json.loads(r.choices[0].message.content or "{}").get("queries") or []
     except Exception as e:
         print(f"[DEEP-IMG] so'rov yozilmadi: {type(e).__name__}")
-        await _ev({"type": "search_done", "query": _first, "kind": "photo", "count": 0})
         return ""
     qs = [str(q).strip()[:60] for q in qs if str(q).strip()][:max_q]
-    await _ev({"type": "search_done", "query": _first, "kind": "photo", "count": len(qs)})
     if not qs:
         return ""
     for n, q in enumerate(qs, 1):
@@ -2611,13 +2620,13 @@ async def ws_chat(websocket: WebSocket):
 
                 client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
                 async with _ds_slot(websocket):
-                    tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan"
+                    tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
                     if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
                         try:
-                            _ctx, _want = user_content or "", bool(_IMG_CTX_RE.search(user_content or ""))
+                            _ctx, _want = user_content or "", _wants_images(prompt or "")
                             if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
                                 _cur = plan_slides[int(plan_index)] or {}
-                                _want = bool(_cur.get("has_image"))
+                                _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
                                 _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                             if _want:
                                 _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket)

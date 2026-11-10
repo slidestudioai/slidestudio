@@ -35,7 +35,7 @@
     if (!D) { try { sprites = JSON.parse($('sprite-data').textContent) || {}; } catch (e) {  } }
     var slides = D ? D.slides : project.slides.map(function (s) { try { return JSON.parse(s.json || '{}'); } catch (e) { return {}; } });
     var stage = $('stage'), counter = $('counter'), app = $('app');
-    var idx = 0, current = null, dir = 'next', navToken = 0, textFixList = [];
+    var idx = 0, current = null, dir = 'next', navToken = 0, autoTimer = null, textFixList = [];
 
     // ---------- yirik data: URL larni blob: ga aylantirish (xotira va tezlik) ----------
     function prepareBlobs() {
@@ -464,14 +464,35 @@
       if (old) { var vs = old.querySelectorAll('video'); for (var k = 0; k < vs.length; k++) { try { vs[k].pause(); } catch (e) {  } } }
       textFixList = [];
       var s = buildSlide(idx);
-      var trn = '';
-      try { trn = String((project.slides[idx] || {}).transition || ''); } catch (e) {  }
-      if (trn === 'none') { /* effektsiz */ }
-      else if (trn) { s.classList.add('tr-' + trn); }                       // butun varaq ochilish effekti (fade/zoom/flip/up/blur)
-      else if (!instant) s.classList.add(dir === 'prev' ? 'pres-anim-prev' : 'pres-anim-next');
+      var ps = {};
+      try { ps = project.slides[idx] || {}; } catch (e) {  }
+      var trn = String(ps.transition || '');
+      var tdur = parseFloat(ps.transDur); if (!(tdur > 0)) tdur = trn ? 0.7 : 0.34; tdur = Math.max(0.2, Math.min(5, tdur));
+      var effName = (trn && trn !== 'none') ? trn : '';
+      if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+      if (trn === 'none' || (instant && !effName)) { /* effektsiz */ }
+      else if (effName) {
+        s.classList.add('tr-' + effName, 'tr-run');
+        s.style.setProperty('--trd', tdur + 's');
+        if (old) {                                    // eski slayd ham chiqib ketadi (push/zoom/flip/fade), yoki ostida qoladi (cover/wipe)
+          old.classList.add('tr-old', 'tr-out-' + effName);
+          old.style.setProperty('--trd', tdur + 's');
+        }
+      }
+      else { s.classList.add(dir === 'prev' ? 'pres-anim-prev' : 'pres-anim-next'); }
       stage.appendChild(s);
       current = s;
-      if (old) { try { old.parentNode.removeChild(old); } catch (e) {  } }
+      if (old) {
+        var keep = (effName && !instant) ? Math.round(tdur * 1000) + 90 : 0;
+        if (keep) { setTimeout(function () { try { if (old.parentNode) old.parentNode.removeChild(old); } catch (e) {  } }, keep); }
+        else { try { old.parentNode.removeChild(old); } catch (e) {  } }
+      }
+      // PowerPoint «After: 00:05» — avtomatik keyingi slayd (oxirgi slaydda to'xtaydi)
+      var adv = parseFloat(ps.transAuto);
+      if (adv > 0 && idx < slides.length - 1) {
+        var myTok = token;
+        autoTimer = setTimeout(function () { if (myTok === navToken && !(document.hidden)) go(idx + 1); }, Math.round((adv + (effName ? tdur : 0)) * 1000));
+      }
       fixTextOffsets();
       updateUi();
       return token;
@@ -599,6 +620,7 @@
       prev: function () { go(idx - 1); },
       restart: function (n) { go(n || 0, true); quietUntil = Date.now() + 1500; uiOn(3500); },       // namoyish boshida tugmalar ko'rinib turadi, keyin yashirinadi
       pause: function () {
+        if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
         if (current) { var vs = current.querySelectorAll('video'); for (var k = 0; k < vs.length; k++) { try { vs[k].pause(); } catch (e) {  } } if (current.parentNode) current.parentNode.removeChild(current); current = null; }
         stage.innerHTML = '';
       },
@@ -637,14 +659,9 @@
     '@keyframes presSlidePrev{from{transform:translateX(-6%) scale(.985);opacity:0}to{transform:translateX(0) scale(1);opacity:1}}',
     '.pres-anim-next{animation:presSlideNext .34s cubic-bezier(.22,.61,.36,1)}',
     '.pres-anim-prev{animation:presSlidePrev .34s cubic-bezier(.22,.61,.36,1)}',
-    '@keyframes trFade{from{opacity:0}to{opacity:1}}',
-    '@keyframes trZoom{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:scale(1)}}',
-    '@keyframes trFlip{from{opacity:0;transform:perspective(1200px) rotateY(75deg)}to{opacity:1;transform:perspective(1200px) rotateY(0)}}',
-    '@keyframes trUp{from{opacity:0;transform:translateY(14%)}to{opacity:1;transform:translateY(0)}}',
-    '@keyframes trBlur{from{opacity:0;filter:blur(18px)}to{opacity:1;filter:blur(0)}}',
-    '.tr-fade{animation:trFade .7s ease both}.tr-zoom{animation:trZoom .65s cubic-bezier(.22,.61,.36,1) both}.tr-flip{animation:trFlip .8s cubic-bezier(.22,.61,.36,1) both}',
-    '.tr-up{animation:trUp .6s cubic-bezier(.22,.61,.36,1) both}.tr-blur{animation:trBlur .7s ease both}',
-    '@media (prefers-reduced-motion:reduce){.pres-anim-next,.pres-anim-prev,.tr-fade,.tr-zoom,.tr-flip,.tr-up,.tr-blur{animation:none}}',
+    (window.SS_TR ? window.SS_TR.css('.tr-', '.tr-out-') : ''),
+    '.slide.tr-run{position:absolute;inset:0;z-index:2}.slide.tr-old{position:absolute;inset:0;z-index:1;pointer-events:none}',
+    '@media (prefers-reduced-motion:reduce){.pres-anim-next,.pres-anim-prev{animation:none}}',
     '#controls{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(20,20,20,.85);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-radius:30px;padding:6px 14px;display:flex;align-items:center;gap:10px;color:#fff;z-index:50;border:1px solid rgba(255,255,255,.2);transition:opacity .35s ease,transform .35s ease}',
     '#controls button{background:transparent;border:0;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center}',
     '#controls button:hover:not(:disabled){background:rgba(255,255,255,.14)}#controls button:disabled{opacity:.35;cursor:default}',
@@ -823,7 +840,7 @@
 
       var project = {
         version: 2, format: 'slide-studio', title: title,
-        slides: slides.map(function (s) { return { json: s.json, imageNumbers: s.imageNumbers || [], transition: s.transition || '' }; }),
+        slides: slides.map(function (s) { return { json: s.json, imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 }; }),
         exportedAt: new Date().toISOString()
       };
       var anim = '';

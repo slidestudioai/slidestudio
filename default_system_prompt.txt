@@ -497,5 +497,5 @@ CHART element:
 - Keep the chart in its own area; put the explanation text beside it (right 35%) — never on top of it.
 STATISTICS: for key numbers use big stat cards (rect + huge number text + small label) or a chart; the "stats" idea = 2–4 cards in one row.
 SLIDE TRANSITION (animation of the WHOLE slide when presenting, not an element animation):
-{"action":"set_transition","slide":N,"transition":"fade|zoom|flip|up|blur|none"}  or for every slide: {"action":"set_transition","target":"all","transition":"fade"}
+{"action":"set_transition","slide":N,"transition":"fade|blur|zoom|flip|up|down|left|right|wipeR|wipeL|wipeD|wipeU|coverL|coverR|split|circle|none","duration":0.8,"auto":5}  (duration seconds 0.2-5, optional; auto = seconds before auto-advancing, optional; all keys also work in PowerPoint)  or for every slide: {"action":"set_transition","target":"all","transition":"fade","duration":0.7}
 - Use it when the user asks for "slayd animatsiyasi / o'tish / transition". It costs no balance. Never invent other names.

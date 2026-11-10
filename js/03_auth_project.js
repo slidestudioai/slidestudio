@@ -519,7 +519,7 @@
             
             projectTitle = d.title || projectTitle;
             const te = document.getElementById('presentationTitle'); if (te) te.innerText = projectTitle;
-            slides = d.slides.map(function (s) { return { json: s.json || '{}', thumb: '', imageNumbers: s.imageNumbers || [], transition: s.transition || '' }; });
+            slides = d.slides.map(function (s) { return { json: s.json || '{}', thumb: '', imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 }; });
             activeIndex = 0;
             bumpObjectIdCounterFromSlides();
             renderSidebar();
@@ -537,7 +537,7 @@
           currentProjectId = generateUUID();
           projectTitle = sv.title || projectTitle;
           const te2 = document.getElementById('presentationTitle'); if (te2) te2.innerText = projectTitle;
-          slides = sv.slides.map(function (s) { return { json: s.json || '{}', thumb: s.thumb || '', imageNumbers: s.imageNumbers || [], transition: s.transition || '' }; });
+          slides = sv.slides.map(function (s) { return { json: s.json || '{}', thumb: s.thumb || '', imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 }; });
           activeIndex = Math.max(0, Math.min(slides.length - 1, sv.activeIndex || 0));
           bumpObjectIdCounterFromSlides();
           renderSidebar();

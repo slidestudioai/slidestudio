@@ -694,14 +694,23 @@
             case 'slide_transition': {
               // v48: butun slayd o'tish animatsiyasi: {"action":"set_transition","slide":N | "target":"all","transition":"fade|zoom|flip|up|blur|none"}
               try {
-                const _tr = String(cmd.transition || cmd.type || cmd.name || '').toLowerCase();
+                const _raw = String(cmd.transition || cmd.type || cmd.name || '').trim();
+                const _lc = _raw.toLowerCase().replace(/[\s_-]+/g, '');
+                let _tr = '';
+                if (_lc && _lc !== 'default' && window.SS_TR) {
+                  const _hit = window.SS_TR.list.find(function (x) { return x.k.toLowerCase() === _lc; });
+                  _tr = _hit ? _hit.k : (_lc === 'none' || _lc === 'off' ? 'none' : (_lc === 'dissolve' ? 'blur' : (_lc === 'pushup' ? 'up' : (_lc === 'pushdown' ? 'down' : (_lc === 'pushleft' ? 'left' : (_lc === 'pushright' ? 'right' : _raw.toLowerCase()))))));
+                }
+                const _o = {};
+                if (cmd.duration != null || cmd.dur != null) _o.dur = cmd.duration != null ? cmd.duration : cmd.dur;
+                if (cmd.auto != null || cmd.advance != null) _o.auto = cmd.auto != null ? cmd.auto : cmd.advance;
                 if (cmd.target === 'all' || cmd.all === true) {
                   const cur = slides[activeIndex];
-                  if (cur) { cur.transition = _tr === 'default' ? '' : _tr; }
+                  if (cur) { cur.transition = _tr; if (_o.dur != null) cur.transDur = window.SS_TR.clampDur(_o.dur, 0.7); if (_o.auto != null) cur.transAuto = Math.max(0, parseFloat(_o.auto) || 0); }
                   window.ssSetTransition && window.ssSetTransition(cur ? cur.transition : _tr, true);
                 } else {
                   const _ti = ((cmd.slide != null ? cmd.slide : (activeIndex + 1)) || 1) - 1;
-                  if (_ti >= 0 && _ti < slides.length) window.ssSetTransition && window.ssSetTransition(_tr === 'default' ? '' : _tr, false, _ti);
+                  if (_ti >= 0 && _ti < slides.length) window.ssSetTransition && window.ssSetTransition(_tr, false, _ti, _o);
                 }
               } catch (e) { console.warn('set_transition:', e); }
               break;

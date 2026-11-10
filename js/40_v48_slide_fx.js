@@ -9,23 +9,13 @@
   window.__ssV48Fx = true;
 
   var PALETTE = ['#4f8cff', '#f5a524', '#2fbf71', '#ef4f5f', '#9b5de5', '#00bbf9', '#f15bb5', '#8ac926'];
-  var TRANSITIONS = [['', 'Standart'], ['fade', 'Fade'], ['zoom', 'Zoom'], ['flip', 'Flip'], ['up', 'Pastdan'], ['blur', 'Blur'], ['none', "Yo'q"]];
+  var TRANSITIONS = [['', 'Standart']].concat((window.SS_TR ? window.SS_TR.list : []).map(function (x) { return [x.k, x.t, x.g]; })).concat([['none', "Yo'q"]]);
 
   /* ------------------------------------------------------------------ CSS */
   var css = document.createElement('style');
   css.id = 'ssV48Css';
   css.textContent = [
-    '@keyframes ssTrFade{from{opacity:0}to{opacity:1}}',
-    '@keyframes ssTrZoom{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:scale(1)}}',
-    '@keyframes ssTrFlip{from{opacity:0;transform:perspective(900px) rotateY(80deg)}to{opacity:1;transform:perspective(900px) rotateY(0)}}',
-    '@keyframes ssTrUp{from{opacity:0;transform:translateY(48px)}to{opacity:1;transform:translateY(0)}}',
-    '@keyframes ssTrBlur{from{opacity:0;filter:blur(14px)}to{opacity:1;filter:blur(0)}}',
-    '.presentation-overlay .pres-tr-fade{animation:ssTrFade .6s ease both}',
-    '.presentation-overlay .pres-tr-zoom{animation:ssTrZoom .55s cubic-bezier(.22,.61,.36,1) both}',
-    '.presentation-overlay .pres-tr-flip{animation:ssTrFlip .7s cubic-bezier(.22,.61,.36,1) both}',
-    '.presentation-overlay .pres-tr-up{animation:ssTrUp .5s cubic-bezier(.22,.61,.36,1) both}',
-    '.presentation-overlay .pres-tr-blur{animation:ssTrBlur .6s ease both}',
-    '@media (prefers-reduced-motion:reduce){.presentation-overlay [class*="pres-tr-"]{animation:none}}',
+    (window.SS_TR ? window.SS_TR.css('.presentation-overlay .pres-tr-', '.presentation-overlay .pres-tr-out-') : ''),
     '.ap-trans{margin:10px 0 4px;padding-top:8px;border-top:1px solid rgba(128,128,128,.25)}',
     '.ap-trans b{display:block;font-size:12px;margin-bottom:6px}',
     '.ap-trans .ap-trg{display:flex;flex-wrap:wrap;gap:6px}',
@@ -45,26 +35,31 @@
       }).join('') + '</div><button class="ap-all" onclick="ssSetTransition(null,true)">Shuni hamma slaydga qo\'llash</button></div>';
   };
   function rerenderPanel() { try { if (window.AnimKit && AnimKit.renderPanel) AnimKit.renderPanel(); } catch (e) {} }
-  window.ssSetTransition = function (name, all, index) {
+  function markDirty() { try { hasUnsavedChanges = true; } catch (e) {} try { if (typeof window.ssPrewarmPresentation === 'function') setTimeout(window.ssPrewarmPresentation, 600); } catch (e) {} }
+  /** name — effekt kalitu; opts {dur, auto}. all=true: hozirgi slaydning effekt/davomiylik/avto sozlamasi hammasiga. */
+  window.ssSetTransition = function (name, all, index, opts) {
     try {
       var valid = TRANSITIONS.some(function (t) { return t[0] === (name || ''); });
       if (name != null && !valid) return false;
       if (all) {
-        var base = (curSlide() || {}).transition || '';
-        slides.forEach(function (s) { s.transition = base; });
+        var cs = (index != null && slides[index]) ? slides[index] : (curSlide() || {});
+        var base = cs.transition || '', bd = cs.transDur || 0, ba = cs.transAuto || 0;
+        slides.forEach(function (s) { s.transition = base; s.transDur = bd; s.transAuto = ba; });
         try { showToast('Hamma slaydga qo\'llandi', 'info'); } catch (e) {}
       } else {
         var s = (index != null && slides[index]) ? slides[index] : curSlide();
         if (!s) return false;
-        s.transition = name || '';
-        try { hasUnsavedChanges = true; } catch (e) {}
-        try { showToast(name ? ('Slayd o\'tishi: ' + name) : 'Standart o\'tish', 'info'); } catch (e) {}
+        if (name != null) s.transition = name || '';
+        if (opts && opts.dur != null) s.transDur = window.SS_TR ? SS_TR.clampDur(opts.dur, 0.7) : opts.dur;
+        if (opts && opts.auto != null) s.transAuto = Math.max(0, Math.min(600, parseFloat(opts.auto) || 0));
+        if (name != null) { try { showToast(name ? ('Slayd o\'tishi: ' + name) : 'Standart o\'tish', 'info'); } catch (e) {} }
       }
+      markDirty();
       rerenderPanel();
       return true;
     } catch (e) { return false; }
   };
-  /* Namoyish: hozirgi slaydning o'tishini qo'llaydi (10_export_present.js dan chaqiriladi) */
+  /* Muharrir namoyishi (zaxira yo'l): hozirgi slaydning o'tishini qo'llaydi */
   window.ssApplyPresTransition = function (stage, slide) {
     try {
       if (!stage) return;
@@ -72,7 +67,10 @@
       var t = slide && slide.transition;
       if (!t) return;
       stage.classList.remove('pres-anim-next', 'pres-anim-prev');
-      if (t !== 'none') { void stage.offsetWidth; stage.classList.add('pres-tr-' + t); }
+      if (t !== 'none') {
+        stage.style.setProperty('--trd', (window.SS_TR ? SS_TR.clampDur(slide.transDur, 0.7) : 0.7) + 's');
+        void stage.offsetWidth; stage.classList.add('pres-tr-' + t);
+      }
     } catch (e) {}
   };
 
@@ -165,6 +163,8 @@
     var header = el.header !== false;
     var fs0 = Math.max(11, Math.min(26, +el.fs0 || +el.fontSize || (rows.length > 7 ? 14 : (cols > 4 ? 15 : 18))));
     var hFill = el.headerFill || '#1a73e8', hCol = el.headerColor || '#ffffff', stripe = el.stripe !== false;
+    var bodyFill = el.bodyFill || '#ffffff', stripeColor = el.stripeColor || '#f1f5f9', bodyColor = el.bodyColor || '#1f2937', borderColor = el.borderColor || '#dbe1ea';
+    var cellStyles = (el.cellStyles && typeof el.cellStyles === 'object') ? el.cellStyles : {};
     var L = layoutTable(rows, width, maxH, fs0, header);
     var objs = [], y = 0;
     rows.forEach(function (r, ri) {
@@ -173,11 +173,12 @@
         var cw = L.colW[ci];
         objs.push(new fabric.Rect({
           left: x, top: y, width: cw, height: rh, selectable: false, evented: false, objectCaching: false,
-          fill: isH ? hFill : (stripe && ri % 2 === 0 ? '#f1f5f9' : '#ffffff'), stroke: '#dbe1ea', strokeWidth: 1
+          fill: (cellStyles[ri + ',' + ci] && cellStyles[ri + ',' + ci].fill) || (isH ? hFill : (stripe && ri % 2 === 0 ? stripeColor : bodyFill)), stroke: borderColor, strokeWidth: 1
         }));
         var tb = txt(r[ci], {
           left: x + PAD_X, top: y, width: cw - 2 * PAD_X, fontSize: L.fs,
-          fontWeight: isH ? 'bold' : 'normal', fill: isH ? hCol : '#1f2937', textAlign: ci === 0 && !isH ? 'left' : 'center'
+          fontWeight: ((cellStyles[ri + ',' + ci] && cellStyles[ri + ',' + ci].bold) || isH) ? 'bold' : 'normal',
+          fill: (cellStyles[ri + ',' + ci] && cellStyles[ri + ',' + ci].color) || (isH ? hCol : bodyColor), textAlign: ci === 0 && !isH ? 'left' : 'center'
         });
         tb.set('top', y + (rh - tb.height) / 2);              // balandlikka ko'ra markazlash (ko'p qatorli ham)
         objs.push(tb);
@@ -188,6 +189,7 @@
     var g = new fabric.Group(objs, { left: left, top: top, subTargetCheck: false, objectCaching: false });
     g.ssKind = 'table';
     g.ssSpec = { v: LAYOUT_V, rows: rows, header: header, headerFill: hFill, headerColor: hCol, stripe: stripe,
+      bodyFill: bodyFill, stripeColor: stripeColor, bodyColor: bodyColor, borderColor: borderColor, cellStyles: cellStyles,
       fs: L.fs, fs0: fs0, w: width, h: L.total, maxH: maxH, colW: L.colW, rowHs: L.rowH, rowH: L.total / rows.length,
       padX: PAD_X, padY: PAD_Y, lh: CELL_LH, fontOk: fontReady() };
     try { if (el.id) g.set('id', el.id); } catch (e) {}
@@ -346,6 +348,7 @@
   function relayoutObject(o) {
     var sp = o.ssSpec, ng;
     if (o.ssKind === 'table') ng = buildTable({ rows: sp.rows, header: sp.header, headerFill: sp.headerFill, headerColor: sp.headerColor, stripe: sp.stripe,
+      bodyFill: sp.bodyFill, stripeColor: sp.stripeColor, bodyColor: sp.bodyColor, borderColor: sp.borderColor, cellStyles: sp.cellStyles,
       left: o.left, top: o.top, width: sp.w, maxH: sp.maxH || sp.h || 360, fs0: sp.fs0 || sp.fs });
     else ng = buildChart({ chart: sp.chart, title: sp.title, labels: sp.labels, series: sp.series, colors: sp.colors, textColor: sp.textColor,
       left: o.left, top: o.top, width: sp.w || o.width, height: sp.h || o.height });
@@ -466,34 +469,48 @@
     '#ssTrPanel button.t:hover{background:#f1f3f4}#ssTrPanel button.t.on{background:#e8f0fe;border-color:#1a73e8;color:#1a56db;font-weight:700}',
     '#ssTrPanel .acts{display:flex;gap:6px;margin-top:10px}#ssTrPanel .acts button{flex:1;border:0;border-radius:9px;padding:8px;font-size:12.5px;cursor:pointer;background:#1a73e8;color:#fff}',
     '#ssTrPanel .acts button.g{background:#f1f3f4;color:#1f2937}',
+    '#ssTrPanel{max-height:calc(100vh - 140px);overflow:auto}#ssTrPanel .trh{margin:10px 0 5px;font-size:11.5px;font-weight:600;color:#6b7280}#ssTrPanel input[type=range]{width:100%}#ssTrPanel input[type=number]{width:100%;padding:6px 8px;border:1px solid #dadce0;border-radius:8px}',
     '#ssTrPanel .x{border:0;background:transparent;font-size:20px;cursor:pointer;color:#5f6368;line-height:1}',
-    '.ss-prev-fade{animation:ssTrFade .7s ease both}.ss-prev-zoom{animation:ssTrZoom .65s cubic-bezier(.22,.61,.36,1) both}.ss-prev-flip{animation:ssTrFlip .8s cubic-bezier(.22,.61,.36,1) both}',
-    '.ss-prev-up{animation:ssTrUp .6s cubic-bezier(.22,.61,.36,1) both}.ss-prev-blur{animation:ssTrBlur .7s ease both}',
+    (window.SS_TR ? window.SS_TR.css('.canvas-container.ss-prev-', '.ss-prev-out-') : ''),
     '@media (max-width:640px){#ssTrPanel{top:auto;bottom:70px;right:10px;left:10px;width:auto}}'
   ].join('\n');
   document.head.appendChild(pcss);
 
+  var _prevTimer = null;
   function previewTransition(name) {
     var nm = name || 'fade';
     var host = document.querySelector('.canvas-container');
     if (!host || nm === 'none') return;
-    ['fade', 'zoom', 'flip', 'up', 'blur'].forEach(function (k) { host.classList.remove('ss-prev-' + k); });
+    var s = curSlide() || {}, dur = window.SS_TR ? SS_TR.clampDur(s.transDur, 0.7) : 0.7;
+    (window.SS_TR ? SS_TR.list : []).forEach(function (x) { host.classList.remove('ss-prev-' + x.k); });
+    host.style.setProperty('--trd', dur + 's');
     void host.offsetWidth;
     host.classList.add('ss-prev-' + nm);
-    setTimeout(function () { host.classList.remove('ss-prev-' + nm); }, 1000);
+    clearTimeout(_prevTimer);
+    _prevTimer = setTimeout(function () { host.classList.remove('ss-prev-' + nm); }, dur * 1000 + 150);
   }
   function renderTrPanel() {
     var p = document.getElementById('ssTrPanel'); if (!p) return;
-    var s = curSlide(), cur = (s && s.transition) || '';
-    p.innerHTML = '<h4>Varaq ochilish effekti <button class="x" onclick="ssCloseTrPanel()" aria-label="Yopish">×</button></h4>' +
-      '<p>Namoyishda varaqning o\'zi shu effekt bilan ochiladi (birinchi varaq paydo bo\'lgandek). Elementlar animatsiyasi alohida — «Animatsiya».</p>' +
-      '<div class="trg">' + TRANSITIONS.map(function (t) {
-        return '<button class="t' + (cur === t[0] ? ' on' : '') + '" data-t="' + t[0] + '">' + t[1] + '</button>';
-      }).join('') + '</div>' +
+    var s = curSlide() || {}, cur = s.transition || '';
+    var dur = window.SS_TR ? SS_TR.clampDur(s.transDur, 0.7) : 0.7, auto = s.transAuto > 0 ? s.transAuto : 0;
+    var groups = {}, order = [];
+    TRANSITIONS.forEach(function (t) { var g = t[2] || ''; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(t); });
+    var btns = function (arr) { return '<div class="trg">' + arr.map(function (t) { return '<button class="t' + (cur === t[0] ? ' on' : '') + '" data-t="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>'; };
+    p.innerHTML = '<h4>Varaq o\'tishi <button class="x" onclick="ssCloseTrPanel()" aria-label="Yopish">×</button></h4>' +
+      '<p>Namoyishda va PowerPoint (.pptx) da varaq shu effekt bilan almashadi. Elementlar animatsiyasi alohida — «Animatsiya».</p>' +
+      order.map(function (g) { return (g ? '<div class="trh">' + g + '</div>' : '') + btns(groups[g]); }).join('') +
+      '<div class="trh">Davomiyligi: <b id="ssTrDurV">' + dur.toFixed(1) + ' s</b></div>' +
+      '<input type="range" id="ssTrDur" min="0.2" max="5" step="0.1" value="' + dur + '">' +
+      '<div class="trh">Avtomatik o\'tish (soniya, 0 = faqat bosganda)</div>' +
+      '<input type="number" id="ssTrAuto" min="0" max="600" step="0.5" value="' + auto + '">' +
       '<div class="acts"><button class="g" data-a="all">Hamma varaqqa</button><button data-a="prev">Ko\'rish</button></div>';
     Array.prototype.forEach.call(p.querySelectorAll('button.t'), function (b) {
-      b.onclick = function () { var t = b.getAttribute('data-t'); ssSetTransition(t); previewTransition(t); renderTrPanel(); };
+      b.onclick = function () { var t = b.getAttribute('data-t'); ssSetTransition(t); previewTransition(t || 'fade'); renderTrPanel(); };
     });
+    var rng = p.querySelector('#ssTrDur'), rv = p.querySelector('#ssTrDurV');
+    rng.oninput = function () { rv.textContent = parseFloat(rng.value).toFixed(1) + ' s'; };
+    rng.onchange = function () { ssSetTransition(null, false, null, { dur: rng.value }); previewTransition(((curSlide() || {}).transition) || 'fade'); };
+    p.querySelector('#ssTrAuto').onchange = function () { ssSetTransition(null, false, null, { auto: this.value }); };
     p.querySelector('[data-a="all"]').onclick = function () { ssSetTransition(null, true); renderTrPanel(); };
     p.querySelector('[data-a="prev"]').onclick = function () { previewTransition(((curSlide() || {}).transition) || 'fade'); };
   }
@@ -507,8 +524,6 @@
     renderTrPanel();
   };
   function rerenderPanel2() { try { renderTrPanel(); } catch (e) {} }
-  var _origSet = window.ssSetTransition;
-  window.ssSetTransition = function () { var r = _origSet.apply(this, arguments); rerenderPanel2(); return r; };
   // v49.2: panel faqat × bilan yopiladi (Animatsiya paneli kabi); varaq almashsa tanlov yangilanadi
   var _trLast = null;
   setInterval(function () {

@@ -582,17 +582,97 @@
         hyperlink: { url: watch, tooltip: 'Videoni brauzerda ochish' }, objectName: 'SS_VideoLink' });
     } catch (e) {  }
   }
-  /** v42: slaydga "Avtomatik boshlash" (media ijro) animatsiyasini qo'shadi */
-  function injectVideoAutoplay(xml) {
-    if (xml.indexOf('<p:timing') >= 0 || xml.indexOf('<a:videoFile') < 0) return xml;
-    var ids = [], re = /<p:pic>[\s\S]*?<\/p:pic>/g, m;
-    while ((m = re.exec(xml))) {
-      var blk = m[0];
-      if (blk.indexOf('<a:videoFile') < 0 || blk.indexOf('SS_VideoNoAuto') >= 0) continue;
-      var idm = /<p:cNvPr[^>]*\sid="(\d+)"/.exec(blk);
-      if (idm) ids.push(idm[1]);
+  /* ---- v50: element animatsiyalari -> PowerPoint <p:timing> (kirish / diqqat / chiqish effektlari) ---- */
+  var PPT_FX = {
+    fadeIn: ['entr', 10, 0, 'fade'], fadeInUp: ['entr', 2, 4, 'fly', 'b'], fadeInDown: ['entr', 2, 1, 'fly', 't'],
+    fadeInLeft: ['entr', 2, 8, 'fly', 'l'], fadeInRight: ['entr', 2, 2, 'fly', 'r'], zoomIn: ['entr', 53, 16, 'zoom'],
+    bounceIn: ['entr', 53, 16, 'zoom'], slideInUp: ['entr', 2, 4, 'fly', 'b'], slideInLeft: ['entr', 2, 8, 'fly', 'l'],
+    slideInRight: ['entr', 2, 2, 'fly', 'r'], flipInX: ['entr', 22, 1, 'wipe', 'u'], rotateIn: ['entr', 31, 0, 'spin'],
+    pulse: ['emph', 6, 0, 'grow', 108000], bounce: ['emph', 6, 0, 'grow', 112000], tada: ['emph', 6, 0, 'grow', 120000],
+    heartBeat: ['emph', 6, 0, 'grow', 130000], rubberBand: ['emph', 6, 0, 'grow', 125000], jello: ['emph', 6, 0, 'grow', 108000],
+    flash: ['emph', 6, 0, 'grow', 103000], shakeX: ['emph', 32, 0, 'teeter'], swing: ['emph', 32, 0, 'teeter'], wobble: ['emph', 32, 0, 'teeter'],
+    fadeOut: ['exit', 10, 0, 'fade'], zoomOut: ['exit', 53, 16, 'zoom'], bounceOut: ['exit', 53, 16, 'zoom'], slideOutDown: ['exit', 2, 4, 'fly', 'b'],
+    float: ['emph', 6, 0, 'grow', 104000], spin: ['emph', 8, 0, 'rot'], pulseLoop: ['emph', 6, 0, 'grow', 106000]
+  };
+  var PPT_LOOPS = { float: 1, spin: 1, pulseLoop: 1 };
+  function buildAnimEffects(list, nextId) {
+    // list: [{spid, name, dur, delay, loop}]  ->  { xml, n }
+    var n = nextId, out = '', first = true;
+    function id() { return n++; }
+    function tgt(spid) { return '<p:tgtEl><p:spTgt spid="' + spid + '"/></p:tgtEl>'; }
+    function setVis(spid, val, delayMs) {
+      return '<p:set><p:cBhvr><p:cTn id="' + id() + '" dur="1" fill="hold"><p:stCondLst><p:cond delay="' + delayMs + '"/></p:stCondLst></p:cTn>' + tgt(spid) +
+        '<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="' + val + '"/></p:to></p:set>';
     }
-    if (!ids.length) return xml;
+    function anim(spid, attr, from, to, ms) {
+      var v = function (x) { return typeof x === 'number' ? '<p:val><p:fltVal val="' + x + '"/></p:val>' : '<p:val><p:strVal val="' + x + '"/></p:val>'; };
+      return '<p:anim calcmode="lin" valueType="num"><p:cBhvr' + (/ppt_[xy]/.test(attr) ? ' additive="base"' : '') + '><p:cTn id="' + id() + '" dur="' + ms + '" fill="hold"/>' + tgt(spid) +
+        '<p:attrNameLst><p:attrName>' + attr + '</p:attrName></p:attrNameLst></p:cBhvr><p:tavLst><p:tav tm="0">' + v(from) + '</p:tav><p:tav tm="100000">' + v(to) + '</p:tav></p:tavLst></p:anim>';
+    }
+    function fade(spid, dir, ms) { return '<p:animEffect transition="' + dir + '" filter="fade"><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '"/>' + tgt(spid) + '</p:cBhvr></p:animEffect>'; }
+    list.forEach(function (it) {
+      var fx = PPT_FX[it.name]; if (!fx) return;
+      var cls = fx[0], pid = fx[1], sub = fx[2], kind = fx[3], arg = fx[4];
+      var spid = it.spid, loop = it.loop || PPT_LOOPS[it.name];
+      var ms = Math.max(100, Math.round((it.dur > 0 ? it.dur : (loop ? 2 : 0.8)) * 1000)), dl = Math.max(0, Math.round((it.delay || 0) * 1000));
+      var body = '';
+      if (cls === 'entr') {
+        body += setVis(spid, 'visible', 0);
+        if (kind === 'fade') body += fade(spid, 'in', ms);
+        else if (kind === 'fly') {
+          var fx0 = arg === 'l' ? '0-#ppt_w/2' : arg === 'r' ? '1+#ppt_w/2' : '#ppt_x', fy0 = arg === 'b' ? '1+#ppt_h/2' : arg === 't' ? '0-#ppt_h/2' : '#ppt_y';
+          body += anim(spid, 'ppt_x', fx0, '#ppt_x', ms) + anim(spid, 'ppt_y', fy0, '#ppt_y', ms);
+        }
+        else if (kind === 'zoom') body += anim(spid, 'ppt_w', 0, '#ppt_w', ms) + anim(spid, 'ppt_h', 0, '#ppt_h', ms) + fade(spid, 'in', ms);
+        else if (kind === 'wipe') body += '<p:animEffect transition="in" filter="wipe(' + (arg === 'u' ? 'up' : arg === 'l' ? 'left' : arg === 'r' ? 'right' : 'down') + ')"><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '"/>' + tgt(spid) + '</p:cBhvr></p:animEffect>';
+        else if (kind === 'spin') body += anim(spid, 'ppt_w', 0, '#ppt_w', ms) + anim(spid, 'ppt_h', 0, '#ppt_h', ms) + anim(spid, 'style.rotation', 90, 0, ms) + fade(spid, 'in', ms);
+      } else if (cls === 'exit') {
+        if (kind === 'fade') body += fade(spid, 'out', ms);
+        else if (kind === 'fly') body += anim(spid, 'ppt_x', '#ppt_x', '#ppt_x', ms) + anim(spid, 'ppt_y', '#ppt_y', '1+#ppt_h/2', ms);
+        else if (kind === 'zoom') body += anim(spid, 'ppt_w', '#ppt_w', 0, ms) + anim(spid, 'ppt_h', '#ppt_h', 0, ms) + fade(spid, 'out', ms);
+        body += setVis(spid, 'hidden', Math.max(0, ms - 1));
+      } else {                                               // emph
+        var rep = loop ? ' repeatCount="indefinite"' : '';
+        if (kind === 'grow') {
+          var by = arg || 110000;
+          body += '<p:animScale><p:cBhvr><p:cTn id="' + id() + '" dur="' + Math.round(ms / 2) + '" autoRev="1" fill="hold"' + rep + '/>' + tgt(spid) + '</p:cBhvr><p:by x="' + by + '" y="' + by + '"/></p:animScale>';
+        } else if (kind === 'rot') {
+          body += '<p:animRot by="21600000"><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '" fill="hold"' + rep + '/>' + tgt(spid) + '<p:attrNameLst><p:attrName>r</p:attrName></p:attrNameLst></p:cBhvr></p:animRot>';
+        } else {
+          body += '<p:animRot by="300000"><p:cBhvr><p:cTn id="' + id() + '" dur="' + Math.max(80, Math.round(ms / 8)) + '" autoRev="1" repeatCount="4000" fill="hold"/>' + tgt(spid) + '<p:attrNameLst><p:attrName>r</p:attrName></p:attrNameLst></p:cBhvr></p:animRot>';
+        }
+      }
+      out += '<p:par><p:cTn id="' + id() + '" presetID="' + pid + '" presetClass="' + cls + '" presetSubtype="' + sub + '" fill="hold" grpId="0" nodeType="' + (first ? 'afterEffect' : 'withEffect') + '">' +
+        '<p:stCondLst><p:cond delay="' + dl + '"/></p:stCondLst><p:childTnLst>' + body + '</p:childTnLst></p:cTn></p:par>';
+      first = false;
+    });
+    return { xml: out, n: n };
+  }
+  /** v42 + v50: video avto-ijro VA element animatsiyalari bitta <p:timing> ichida. anims: [{tag,name,dur,delay,loop}] */
+  function injectVideoAutoplay(xml, anims) {
+    anims = anims || [];
+    var hasVid = xml.indexOf('<a:videoFile') >= 0;
+    if (xml.indexOf('<p:timing') >= 0 || (!hasVid && !anims.length)) return xml;
+    var ids = [], m;
+    if (hasVid) {
+      var re = /<p:pic>[\s\S]*?<\/p:pic>/g;
+      while ((m = re.exec(xml))) {
+        var blk = m[0];
+        if (blk.indexOf('<a:videoFile') < 0 || blk.indexOf('SS_VideoNoAuto') >= 0) continue;
+        var idm = /<p:cNvPr[^>]*\sid="(\d+)"/.exec(blk);
+        if (idm) ids.push(idm[1]);
+      }
+    }
+    // animatsiya tegi -> shakl id (+ matnli <p:sp> bo'lsa bldP)
+    var fxList = [], bld = '';
+    anims.forEach(function (a) {
+      var r = new RegExp('<p:cNvPr id="(\\d+)" name="' + a.tag + '"').exec(xml);
+      if (!r) return;
+      fxList.push({ spid: r[1], name: a.name, dur: a.dur, delay: a.delay, loop: a.loop });
+      var spBlk = new RegExp('<p:sp>(?:(?!<\\/p:sp>)[\\s\\S])*?<p:cNvPr id="' + r[1] + '" name="' + a.tag + '"').test(xml);
+      if (spBlk) bld += '<p:bldP spid="' + r[1] + '" grpId="0" animBg="1"/>';
+    });
+    if (!ids.length && !fxList.length) return xml;
     var n = 5;
     var eff = ids.map(function (id, i) {
       var a = n++, b = n++;
@@ -600,14 +680,16 @@
         '<p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="' + b + '" dur="1" fill="hold"/>' +
         '<p:tgtEl><p:spTgt spid="' + id + '"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par>';
     }).join('');
+    var fx = buildAnimEffects(fxList, n);
+    if (ids.length && fx.xml) fx.xml = fx.xml.replace(/nodeType="afterEffect"/, 'nodeType="withEffect"');   // media bilan birga boshlanadi
     var timing = '<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>' +
       '<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>' +
       '<p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst>' +
-      '<p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>' + eff + '</p:childTnLst></p:cTn></p:par>' +
+      '<p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>' + eff + fx.xml + '</p:childTnLst></p:cTn></p:par>' +
       '</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn>' +
       '<p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst>' +
       '<p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq>' +
-      '</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>';
+      '</p:childTnLst></p:cTn></p:par></p:tnLst>' + (bld ? '<p:bldLst>' + bld + '</p:bldLst>' : '') + '</p:timing>';
     if (xml.indexOf('</p:clrMapOvr>') >= 0) return xml.replace('</p:clrMapOvr>', '</p:clrMapOvr>' + timing);
     return xml.replace('</p:sld>', timing + '</p:sld>');
   }
@@ -788,17 +870,19 @@
     var cols = rows[0].length, avg = (Math.abs(sx) + Math.abs(sy)) / 2 || 1;
     var fsPt = Math.max(6, Math.round((sp.fs || 16) * avg * 0.75 * 2) / 2);
     var hFill = hex6(sp.headerFill, '1A73E8'), hCol = hex6(sp.headerColor, 'FFFFFF');
-    var border = { type: 'solid', pt: 0.75, color: 'DBE1EA' };
+    var border = { type: 'solid', pt: 0.75, color: hex6(sp.borderColor, 'DBE1EA') };
+    var bodyFillX = hex6(sp.bodyFill, 'FFFFFF'), stripeX = hex6(sp.stripeColor, 'F1F5F9'), bodyInk = hex6(sp.bodyColor, '1F2937'), cs = sp.cellStyles || {};
     // v49: canvas'dagi layout bilan BIR XIL — katak ichki bo'shlig'i, qator qadami (1.2 × shrift) va qator/ustun o'lchamlari
     var padX = (sp.padX != null ? sp.padX : 8) * Math.abs(sx) * SX, padY = (sp.padY != null ? sp.padY : 6) * Math.abs(sy) * SY;
     var lineSp = Math.round(fsPt * (sp.lh || 1.2) * 100) / 100;
     var data = rows.map(function (r, ri) {
       var isH = sp.header !== false && ri === 0;
       return r.map(function (c, ci) {
+        var st = cs[ri + ',' + ci] || {};
         return { text: String(c), options: {
-          bold: isH, color: isH ? hCol : '1F2937', fontFace: 'Arial', fontSize: fsPt, lineSpacing: lineSp,
+          bold: isH || !!st.bold, color: st.color ? hex6(st.color, '1F2937') : (isH ? hCol : bodyInk), fontFace: 'Arial', fontSize: fsPt, lineSpacing: lineSp,
           align: (ci === 0 && !isH) ? 'left' : 'center', valign: 'middle',
-          fill: { color: isH ? hFill : (sp.stripe !== false && ri % 2 === 0 ? 'F1F5F9' : 'FFFFFF') },
+          fill: { color: st.fill ? hex6(st.fill, 'FFFFFF') : (isH ? hFill : (sp.stripe !== false && ri % 2 === 0 ? stripeX : bodyFillX)) },
           border: [border, border, border, border], margin: [r4(padY), r4(padX), r4(padY), r4(padX)]
         } };
       });
@@ -842,12 +926,13 @@
     slide.addChart(type, data, o);
     return true;
   }
-  var TR_XML = { fade: '<p:fade/>', zoom: '<p:zoom dir="in"/>', flip: '<p:cover dir="r"/>', up: '<p:push dir="u"/>', blur: '<p:dissolve/>' };
-  function injectTransition(xml, name) {
+  function injectTransition(xml, name, dur, auto) {
+    if (xml.indexOf('<p:transition') >= 0 || xml.indexOf('<mc:AlternateContent') >= 0) return xml;
     var key = name == null || name === '' ? 'fade' : String(name);
-    var inner = TR_XML[key];
-    if (!inner || xml.indexOf('<p:transition') >= 0) return xml;
-    var tag = '<p:transition spd="med">' + inner + '</p:transition>';
+    var tag = '';
+    if (key === 'none') tag = auto > 0 ? '<p:transition advTm="' + Math.round(auto * 1000) + '"/>' : '';
+    else if (window.SS_TR) tag = SS_TR.pptXml(key, (name == null || name === '') && !(dur > 0) ? 0.5 : dur, auto);
+    if (!tag) return xml;
     if (/<\/p:clrMapOvr>/.test(xml)) return xml.replace('</p:clrMapOvr>', '</p:clrMapOvr>' + tag);
     if (/<p:timing[\s>]/.test(xml)) return xml.replace(/<p:timing[\s>]/, function (m) { return tag + m; });
     return xml.replace('</p:sld>', tag + '</p:sld>');
@@ -855,9 +940,11 @@
   window.__ssInjectTransition = injectTransition;
 
   var _pptxBusy = false;
+  var animBySlide = {}, animSeq = 1;
 
   async function exportPPTX() {
     if (_pptxBusy) { toast('PPTX tayyorlanmoqda, biroz kuting…'); return; }
+    animBySlide = {}; animSeq = 1;
     if (window.isAiApplyingCommands || window.isAiStreaming ||
         (typeof isAiApplyingCommands !== 'undefined' && isAiApplyingCommands) ||
         (typeof isAiStreaming !== 'undefined' && isAiStreaming)) {
@@ -932,11 +1019,16 @@
 
         var objs = parsed.objects || [];
         var ctx = { idx: i, total: slides.length };
+        animBySlide[i] = [];
         for (var k = 0; k < objs.length; k++) {
           var el = objs[k];
           if (!el || el.visible === false) continue;
-          if (el.animName) stats.anim = (stats.anim || 0) + 1;
-          el = stripAnim(el);                 // veb-animatsiyalar PPTX ga o'tmaydi
+          var animInfo = null, soBefore = (slide._slideObjects || []).length;
+          if (el.animName) {
+            stats.anim = (stats.anim || 0) + 1;
+            if (PPT_FX[el.animName]) animInfo = { name: el.animName, dur: num(el.animDur, 0), delay: num(el.animDelay, 0), loop: el.animLoop === true || el.animLoop === 'true' };
+          }
+          el = stripAnim(el);                 // CSS animatsiya xossalari obyektdan olinadi; PowerPoint effekti <p:timing> orqali yoziladi
           try {
             var ok = false, t = el.type;
             if (t === 'textbox' || t === 'i-text' || t === 'text') ok = addTextEl(slide, el);
@@ -957,6 +1049,15 @@
                 var okF = await addFallbackEl(slide, el);
                 if (!okF) stats.imgFail++;
               } else stats.skipped++;
+            }
+            if (animInfo && ok) {                // birinchi hosil bo'lgan obyektni nomlab qo'yamiz — keyin XML'dan topiladi
+              var soNow = slide._slideObjects || [];
+              if (soNow.length > soBefore && soNow[soBefore] && soNow[soBefore].options) {
+                var atag = 'SS_A' + (animSeq++);
+                soNow[soBefore].options.objectName = atag;
+                animInfo.tag = atag;
+                animBySlide[i].push(animInfo);
+              }
             }
           } catch (e) {
             stats.errors++;
@@ -982,7 +1083,8 @@
           for (var an = 0; an < slideNames.length; an++) {
             try {
               var axml = await zip.file(slideNames[an]).async('string');
-              var bxml = injectVideoAutoplay(axml);
+              var aix = parseInt(slideNames[an].match(/slide(\d+)\.xml$/)[1], 10) - 1;
+              var bxml = injectVideoAutoplay(axml, animBySlide[aix] || []);
               if (bxml !== axml) zip.file(slideNames[an], bxml);
             } catch (e) { console.warn('PPTX avto-ijro:', e); }
           }
@@ -991,7 +1093,7 @@
             try {
               var tix = parseInt(slideNames[tn].match(/slide(\d+)\.xml$/)[1], 10) - 1;
               var txml = await zip.file(slideNames[tn]).async('string');
-              var uxml = injectTransition(txml, slides[tix] && slides[tix].transition);
+              var uxml = injectTransition(txml, slides[tix] && slides[tix].transition, slides[tix] && slides[tix].transDur, slides[tix] && slides[tix].transAuto);
               if (uxml !== txml) zip.file(slideNames[tn], uxml);
             } catch (e) { console.warn('PPTX o\'tish:', e); }
           }
@@ -1014,7 +1116,7 @@
           }
           var payload = {
             version: 2, format: 'slide-studio', title: title,
-            slides: slides.map(function (s) { return { json: s.json, imageNumbers: s.imageNumbers || [], transition: s.transition || '' }; }),
+            slides: slides.map(function (s) { return { json: s.json, imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 }; }),
             exportedAt: new Date().toISOString()
           };
           zip.file('slide-studio/project.json', JSON.stringify(payload), { compression: 'DEFLATE' });
@@ -1043,7 +1145,7 @@
       if (stats.badVideo) warn.push(stats.badVideo + ' ta video (faqat MP4 PowerPoint\u2019da ishlaydi)');
       if (stats.errors) warn.push(stats.errors + ' ta xatolik');
       if (warn.length) toast('PPTX yuklandi, lekin qo\'shilmadi: ' + warn.join(', ') + ((stats.gifFail || stats.imgFail) ? ' (internet/CORS)' : ''), 'error');
-      else toast(stats.anim ? 'PPTX yuklandi. Eslatma: PowerPoint\'da animatsiyalar ishlamasligi yoki cheklanishi mumkin' : 'PPTX yuklandi — PowerPoint da ochib, qayta tahrirlash mumkin');
+      else toast(stats.anim ? 'PPTX yuklandi — slayd o\'tishlari va animatsiyalar PowerPoint effektlariga o\'girildi (ba\'zi effektlar eng yaqin PowerPoint analogi bilan)' : 'PPTX yuklandi — PowerPoint da ochib, qayta tahrirlash mumkin');
     } catch (e) {
       console.error('PPTX saqlash xatosi:', e);
       toast('PPTX saqlashda xatolik: ' + String((e && e.message) || e), 'error');
@@ -1633,7 +1735,7 @@
       if (titleEl) titleEl.innerText = projectTitle;
     }
     slides = list.map(function (s) {
-      return { json: s.json || '{}', thumb: s.thumb || '', imageNumbers: s.imageNumbers || [], transition: s.transition || '' };
+      return { json: s.json || '{}', thumb: s.thumb || '', imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 };
     });
     activeIndex = 0;
     try { reindexAllSlideImages(); } catch (e) {  }
