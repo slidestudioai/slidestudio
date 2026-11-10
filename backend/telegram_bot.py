@@ -34,7 +34,7 @@ from urllib.parse import parse_qsl, quote
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 try:
     from backend import tg_decks as decks
@@ -123,15 +123,22 @@ async def tg(method: str, **payload: Any) -> Optional[Any]:
     return None
 
 
-async def tg_send_document(chat_id: int, filename: str, data: bytes, mime: str, caption: str = "") -> bool:
+async def tg_send_document(chat_id: int, filename: str, data: Any, mime: str, caption: str = "") -> bool:
+    """Faylni Telegram'ga yuboradi. `data` — bytes yoki io.BytesIO (RAM'da, diskka yozilmaydi). BytesIO oqim sifatida
+    multipart ichiga uzatiladi (qo'shimcha nusxa olinmaydi); qayta urinishda boshiga qaytariladi."""
     if not ENABLED:
         return False
+    stream = data if hasattr(data, "read") else io.BytesIO(data)
     for attempt in range(2):
         try:
+            try:
+                stream.seek(0)
+            except Exception:
+                pass
             r = await _http().post(
                 f"{API}/sendDocument",
                 data={"chat_id": str(chat_id), "caption": caption[:900], "parse_mode": "HTML"},
-                files={"document": (filename, data, mime.split(";")[0])},
+                files={"document": (filename, stream, mime.split(";")[0])},
                 timeout=httpx.Timeout(90.0, connect=8.0),
             )
             j = r.json()
@@ -2556,6 +2563,7 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
         st["ui"] = None                                   # slayd tayyor — «Yangi slayd» rejimi tugadi
         await _edit(chat_id, msg_id, _card_text(deck, "✅", f"💳 Sarflandi: <b>{_fmt_pages(spent)}</b> varaq · Qoldi: <b>{_fmt_pages(left)}</b>{note}"), kb_done(st))
         await _maybe_ad(chat_id, uid, email)
+        _spawn(_prewarm_files(chat_id))                     # PPTX ni fonda oldindan tayyorlab qo'yamiz
     except asyncio.TimeoutError:
         await _edit(chat_id, msg_id, "⌛ AI juda uzoq o'ylandi. Hech narsa yechilmadi — qayta urinib ko'ring (yoki ⚡ Tez AI rejimini tanlang: /mode).")
     except RuntimeError as e:
@@ -2648,6 +2656,7 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
             kb_done(st),
         )
         await _maybe_ad(chat_id, uid, email)
+        _spawn(_prewarm_files(chat_id))
     except asyncio.TimeoutError:
         await _edit(chat_id, msg_id, "⌛ AI juda uzoq o'ylandi. Hech narsa yechilmadi — qayta urinib ko'ring.", kb_done(st))
     except Exception as e:
@@ -2657,8 +2666,27 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         st["busy"] = False
 
 
+async def _chat_action_loop(chat_id: int, action: str, stop: "asyncio.Event") -> None:
+    """Fayl tayyorlanayotganda Telegram'da «yuborilmoqda…» ko'rsatib turadi (har 4 soniyada; harakat 5 s da o'chadi)."""
+    try:
+        while not stop.is_set():
+            await tg("sendChatAction", chat_id=chat_id, action=action)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=4.0)
+            except asyncio.TimeoutError:
+                pass
+    except Exception:
+        pass
+
+
+_FMT_LABEL = {"pptx": "PPTX", "pdf": "PDF", "html": "HTML", "all": "PPTX + PDF + HTML"}
+
+
 async def _send_files(chat_id: int, fmt: str) -> bool:
-    """Fayllar FAQAT RAM'da yasaladi, Telegram'ga yuboriladi va darhol tashlab yuboriladi (diskka yozilmaydi)."""
+    """v53: tezkor yuborish.
+    - Fayllar FAQAT RAM'da (io.BytesIO) yasaladi va to'g'ridan-to'g'ri Telegram'ga oqim qilinadi — Supabase/diskka yozilmaydi.
+    - Tayyor fayl keshda bo'lsa (oldindan isitilgan yoki shu slayd avval yuborilgan) rasmlar yuklanmaydi, sahna qayta qurilmaydi.
+    - Birinchi bosishdayoq «tayyorlanmoqda» xabari + «fayl yuborilmoqda» belgisi ko'rinadi (kutish jim emas)."""
     st = _state(chat_id)
     if not st.get("deck") and not await _restore_deck(chat_id):
         await _send(chat_id, "Slayd topilmadi (bot qayta ishga tushgan bo'lishi mumkin). Mavzuni yozing — yangisini yarataman 🙂")
@@ -2666,39 +2694,82 @@ async def _send_files(chat_id: int, fmt: str) -> bool:
     if st.get("sending"):
         return False
     deck = st["deck"]
+    lang = st.get("lang", "uz")
     st["sending"] = True
-    files: Optional[list] = None
     ok_all = False
+    stop = asyncio.Event()
+    pulse = asyncio.create_task(_chat_action_loop(chat_id, "upload_document", stop))
+    status_id: Optional[int] = None
     try:
-        await tg("sendChatAction", chat_id=chat_id, action="upload_document")
-        imgs_q = await _fetch_images(deck, st.get("imgs") or {}, True)          # faqat yetishmayotgan rasmlar
-        st["imgs"], st["img_ts"] = imgs_q, time.time()
-        lang = st.get("lang", "uz")
-        if fmt == "all":
-            files = await asyncio.to_thread(decks.export_all, deck, _img_index(deck, imgs_q), lang)
+        fmts = ["pptx", "pdf", "html"] if fmt == "all" else [fmt]
+        # 1) keshdan darhol (rasm yuklash ham, sahna qurish ham yo'q)
+        cached = [decks.cache_peek(deck, lang, f) for f in fmts]
+        if not all(cached):
+            m = await _send(chat_id, f"⏳ <b>{_FMT_LABEL.get(fmt, fmt)}</b> tayyorlanmoqda…")
+            status_id = (m or {}).get("message_id") if isinstance(m, dict) else None
+            imgs_q = await _fetch_images(deck, st.get("imgs") or {}, True)          # faqat yetishmayotgan rasmlar
+            st["imgs"], st["img_ts"] = imgs_q, time.time()                          # IMG_TTL gacha RAM'da: keyingi format uchun qayta yuklanmaydi
+            idx = _img_index(deck, imgs_q)
+            files = []
+            for f in fmts:
+                async with _gen_sem:                                                # CPU og'ir ish: AI bilan bir xil cheklov
+                    name, stream, mime, size = await asyncio.to_thread(decks.export_stream, deck, idx, f, lang)
+                files.append((name, stream, mime))
         else:
-            files = [await asyncio.to_thread(decks.export, deck, _img_index(deck, imgs_q), fmt, lang)]
+            files = [(n, io.BytesIO(d), mt) for n, d, mt in cached]
         total, ok_all, first = len(files), True, True
-        while files:
-            name, data, mime = files.pop(0)                                     # yuborilgach RAM'dan bo'shaydi
+        for name, stream, mime in files:
             cap = f"📦 <b>{esc(deck['title'])}</b>" if (first and fmt == "all") else (f"<b>{esc(deck['title'])}</b>" if total == 1 else "")
             if name.endswith(".html") and fmt != "all":
                 cap += "\n<i>Brauzerda oching: ← → tugmalar yoki barmoq bilan suring, F — to'liq ekran.</i>"
-            ok_all = (await tg_send_document(chat_id, name, data, mime, cap)) and ok_all
-            first, data = False, None
+            ok_all = (await tg_send_document(chat_id, name, stream, mime, cap)) and ok_all
+            first = False
+            try:
+                stream.close()                                                      # yuborilgach RAM'dan bo'shaydi
+            except Exception:
+                pass
+        if status_id:
+            _spawn(tg("deleteMessage", chat_id=chat_id, message_id=status_id))
+            status_id = None
         if ok_all:
             await _send(chat_id, "✅ Tayyor! Yana format kerakmi yoki o'zgartirish qilamizmi?\n<i>Masalan: «3-slaydni qisqartir», «sarlavhasini o'zgartir».</i>", kb_done(st))
         else:
             await _send(chat_id, "⚠️ Faylni yuborib bo'lmadi. Qayta urinib ko'ring.", kb_done(st))
     except Exception as e:
         _warn("files", f"fayl yig'ish xatosi: {type(e).__name__}: {str(e)[:160]}")
+        if status_id:
+            _spawn(tg("deleteMessage", chat_id=chat_id, message_id=status_id))
         await _send(chat_id, "⚠️ Faylni tayyorlashda xatolik. Qayta urinib ko'ring.", kb_done(st))
     finally:
-        files = None
-        st["imgs"] = {}                                                         # rasmlar ham RAM'dan tozalanadi
-        st["sending"] = False
-        gc.collect()
+        stop.set()
+        try:
+            await pulse
+        except Exception:
+            pass
+        st["sending"] = False                                                       # rasmlar _sweep_imgs orqali IMG_TTL dan keyin tashlanadi
     return ok_all
+
+
+async def _prewarm_files(chat_id: int) -> None:
+    """Slayd tayyor bo'lgach FONDA PPTX ni oldindan yasab RAM keshiga qo'yadi — «PPTX» tugmasi bosilganda fayl darhol ketadi.
+    Foydalanuvchi bosmasa ham zarar yo'q: kesh 10 daqiqada o'zi tozalanadi. TG_PREWARM=0 bilan o'chiriladi."""
+    if decks is None or _env("TG_PREWARM", "1") == "0":
+        return
+    try:
+        st = _state(chat_id)
+        deck = st.get("deck")
+        if not deck or st.get("sending"):          # (busy tekshirilmaydi: generatsiya tugash arafasida — bu aynan kerakli payt)
+            return
+        lang = st.get("lang", "uz")
+        if decks.cache_peek(deck, lang, "pptx"):
+            return
+        imgs_q = await _fetch_images(deck, st.get("imgs") or {}, True)
+        st["imgs"], st["img_ts"] = imgs_q, time.time()
+        idx = _img_index(deck, imgs_q)
+        async with _gen_sem:
+            await asyncio.to_thread(decks.export_cached, deck, idx, "pptx", lang)
+    except Exception as e:
+        _warn("prewarm", f"oldindan tayyorlash: {type(e).__name__}: {str(e)[:100]}")
 
 
 async def _ask_count(chat_id: int, user: dict, topic: str) -> None:
@@ -3803,12 +3874,37 @@ async def telegram_file(t: str = ""):
                     headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-File-Name": quote(f["name"])})
 
 
+def _stream_response(name: str, stream: "io.BytesIO", mime: str, size: int, inline: bool = True) -> StreamingResponse:
+    """RAM'dagi BytesIO ni 64 KB bo'laklarda oqim qilib beradi (Content-Length bilan). Yuborish tugagach BytesIO yopiladi
+    (Starlette uni fon vazifasi sifatida chaqiradi) — fayl hech qayerda saqlanmaydi."""
+    def gen():
+        try:
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+    disp = "inline" if inline else "attachment"
+    return StreamingResponse(
+        gen(), media_type=mime.split(";")[0],
+        headers={"Cache-Control": "no-store", "Content-Length": str(size), "X-Content-Type-Options": "nosniff",
+                 "Content-Disposition": f"{disp}; filename=\"slayd.{name.rsplit('.', 1)[-1]}\"; filename*=UTF-8''{quote(name)}"},
+    )
+
+
 @router.get("/api/telegram/deck-file")
-async def telegram_deck_file(t: str = ""):
-    """Botdagi «Muharrirda ochish»: slaydni bazadagi qisqa JSON'dan RAM'da PPTX qilib beradi (diskka yozilmaydi);
-    sayt uni editorga o'zi import qiladi."""
+async def telegram_deck_file(t: str = "", fmt: str = "pptx"):
+    """Botdagi «Muharrirda ochish»: slaydni bazadagi qisqa JSON'dan RAM'da PPTX qilib beradi (diskka/Supabase'ga yozilmaydi);
+    sayt uni editorga o'zi import qiladi. v53: keshlangan + oqim (StreamingResponse): bot oldindan tayyorlagan fayl bo'lsa — darhol."""
     if not ENABLED or decks is None:
         return JSONResponse({"error": "disabled"}, status_code=503)
+    if fmt not in ("pptx", "pdf", "html"):
+        fmt = "pptx"
     ids = _check_token("D", t)
     if not ids:
         return JSONResponse({"error": "expired"}, status_code=410)
@@ -3817,12 +3913,16 @@ async def telegram_deck_file(t: str = ""):
     deck = decks.normalize_deck(row.get("deck"), MAX_SLIDES + 10, row.get("title") or "") if row else None
     if not deck:
         return JSONResponse({"error": "not_found"}, status_code=404)
+    lang = row.get("lang") or "uz"
+    hit = decks.cache_peek(deck, lang, fmt)
+    if hit:
+        name, data, mime = hit
+        return _stream_response(name, io.BytesIO(data), mime, len(data))
     async with _gen_sem:
-        imgs = await _fetch_images(deck, {}, True)
-        _name, data, mime = await asyncio.to_thread(decks.export, deck, _img_index(deck, imgs), "pptx", row.get("lang") or "uz")
+        imgs = await _fetch_images(deck, (_state(tid).get("imgs") or {}), True)
+        name, stream, mime, size = await asyncio.to_thread(decks.export_stream, deck, _img_index(deck, imgs), fmt, lang)
     imgs = None
-    return Response(content=data, media_type=mime.split(";")[0],
-                    headers={"Cache-Control": "no-store", "Content-Disposition": 'inline; filename="slayd.pptx"'})
+    return _stream_response(name, stream, mime, size)
 
 
 @router.post("/api/telegram/auth")

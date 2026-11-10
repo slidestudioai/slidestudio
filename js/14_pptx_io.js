@@ -789,20 +789,26 @@
     var fsPt = Math.max(6, Math.round((sp.fs || 16) * avg * 0.75 * 2) / 2);
     var hFill = hex6(sp.headerFill, '1A73E8'), hCol = hex6(sp.headerColor, 'FFFFFF');
     var border = { type: 'solid', pt: 0.75, color: 'DBE1EA' };
+    // v49: canvas'dagi layout bilan BIR XIL — katak ichki bo'shlig'i, qator qadami (1.2 × shrift) va qator/ustun o'lchamlari
+    var padX = (sp.padX != null ? sp.padX : 8) * Math.abs(sx) * SX, padY = (sp.padY != null ? sp.padY : 6) * Math.abs(sy) * SY;
+    var lineSp = Math.round(fsPt * (sp.lh || 1.2) * 100) / 100;
     var data = rows.map(function (r, ri) {
       var isH = sp.header !== false && ri === 0;
       return r.map(function (c, ci) {
         return { text: String(c), options: {
-          bold: isH, color: isH ? hCol : '1F2937', fontFace: 'Arial', fontSize: fsPt,
+          bold: isH, color: isH ? hCol : '1F2937', fontFace: 'Arial', fontSize: fsPt, lineSpacing: lineSp,
           align: (ci === 0 && !isH) ? 'left' : 'center', valign: 'middle',
           fill: { color: isH ? hFill : (sp.stripe !== false && ri % 2 === 0 ? 'F1F5F9' : 'FFFFFF') },
-          border: [border, border, border, border], margin: [0.03, 0.08, 0.03, 0.08]
+          border: [border, border, border, border], margin: [r4(padY), r4(padX), r4(padY), r4(padX)]
         } };
       });
     });
-    var cw = []; for (var i = 0; i < cols; i++) cw.push(r4(b.w / cols));
-    var rh = []; for (var j = 0; j < rows.length; j++) rh.push(r4(b.h / rows.length));
-    slide.addTable(data, { x: b.x, y: b.y, w: b.w, colW: cw, rowH: rh });
+    var cw = [], rh = [], i, j;
+    if (Array.isArray(sp.colW) && sp.colW.length === cols) for (i = 0; i < cols; i++) cw.push(r4(sp.colW[i] * Math.abs(sx) * SX));
+    else for (i = 0; i < cols; i++) cw.push(r4(b.w / cols));
+    if (Array.isArray(sp.rowHs) && sp.rowHs.length === rows.length) for (j = 0; j < rows.length; j++) rh.push(r4(sp.rowHs[j] * Math.abs(sy) * SY));
+    else for (j = 0; j < rows.length; j++) rh.push(r4(b.h / rows.length));
+    slide.addTable(data, { x: b.x, y: b.y, w: r4(cw.reduce(function (a, v) { return a + v; }, 0)), colW: cw, rowH: rh });
     return true;
   }
   function addChartEl(pptx, slide, el) {
@@ -824,6 +830,11 @@
       showLegend: pie || data.length > 1, legendPos: pie ? 'r' : 't', legendFontSize: 12, legendColor: ink,
       catAxisLabelColor: ink, catAxisLabelFontSize: 12, valAxisLabelColor: '6B7280', valAxisLabelFontSize: 11,
       valGridLine: { color: 'E5E7EB', size: 0.75 }, catAxisLabelPos: 'low' };
+    // v49: Y o'qi canvas bilan BIR XIL (min / max / qadam) — avto-o'q PowerPoint/WPS'da boshqa raqam va gridline berardi
+    if (!pie && sp.yMax != null && sp.yStep) {
+      o.valAxisMinVal = sp.yMin != null ? sp.yMin : 0; o.valAxisMaxVal = sp.yMax; o.valAxisMajorUnit = sp.yStep;
+      o.valAxisLabelFormatCode = sp.yStep >= 1 ? '#,##0' : '0.0#'; o.dataLabelFormatCode = '#,##0.##';
+    }
     if (pie) { o.showPercent = true; o.showValue = false; o.dataLabelFormatCode = '0%'; o.dataLabelColor = kind === 'pie' ? 'FFFFFF' : ink; if (kind === 'doughnut') o.holeSize = 55; }
     else if (kind === 'bar') { o.barDir = 'col'; o.barGapWidthPct = 60; if (data.length === 1) o.valAxisHidden = false; }
     else { o.lineSize = 3; o.lineDataSymbolSize = 8; }
@@ -860,6 +871,7 @@
     _pptxBusy = true;
     try {
       saveCurrentSlideState();
+      try { if (window.ssSyncPageNumbers) window.ssSyncPageNumbers(true); } catch (e) {}
       toast('PPTX tayyorlanmoqda…');
       var title = (typeof projectTitle === 'string' && projectTitle.trim()) ? projectTitle.trim() : 'Taqdimot';
       var pptx = new PptxGenJS();

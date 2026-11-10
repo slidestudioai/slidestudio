@@ -76,45 +76,120 @@
     } catch (e) {}
   };
 
-  /* ------------------------------------------------------------------ Jadval */
+  /* ------------------------------------------------------------------ Yagona layout engine (v49) ----
+   *  Jadval va grafik geometriyasi BIR joyda hisoblanadi va ssSpec ichida saqlanadi (colW, rowHs, yMin/yMax/yStep).
+   *  Canvas ham, PPTX eksport (14_pptx_io.js) ham, qayta yuklash ham SHU raqamlardan foydalanadi — shuning uchun
+   *  ko'rinish hamma joyda bir xil. Sabablar (eski xatolar):
+   *   1) qator balandligi 1 qatorga hisoblangan edi — ko'p qatorli katak keyingi qatorga «minib» ketardi;
+   *   2) fabric.Textbox uzun so'z katakka sig'masa O'ZI kengayadi (dynamicMinWidth) — «ifloslanishi» shu sabab surilardi;
+   *   3) fabric qator balandligi = fontSize × lineHeight × 1.13 (_fontSizeMult) — bu hisobga olinmagan edi;
+   *   4) shrift (Roboto) yuklanmasdan o'lchangan — o'lchamlar keyin eskirib qolardi (ssSpec.fontOk bilan qayta quriladi).
+   */
+  var LAYOUT_V = 2;
+  var FAB_MULT = 1.13;                 // fabric 5.x ichki koeffitsienti
+  var CELL_LH = 1.2;                   // matn qatori qadami = 1.2 × shrift (PPTX'da aniq lineSpacing sifatida yoziladi)
+  var CELL_LINEH = CELL_LH / FAB_MULT; // fabric.lineHeight qiymati
+  var PAD_X = 8, PAD_Y = 6;            // katak ichki bo'shlig'i (px) — PPTX'da ham xuddi shunday margin
+  var FONT = 'Roboto';
+
+  function fontReady() {
+    try { return !(document.fonts && document.fonts.check) || (document.fonts.check('400 16px ' + FONT) && document.fonts.check('700 16px ' + FONT)); } catch (e) { return true; }
+  }
+  function preloadFont() {
+    try { if (document.fonts && document.fonts.load) { document.fonts.load('400 16px ' + FONT); document.fonts.load('700 16px ' + FONT); } } catch (e) {}
+  }
+  preloadFont();
+
   function txt(s, o) {
     return new fabric.Textbox(String(s == null ? '' : s), Object.assign({
-      fontFamily: 'Roboto', fontSize: 18, fill: '#1f2937', textAlign: 'center', splitByGrapheme: false,
-      lineHeight: 1.15, selectable: false, evented: false
+      fontFamily: FONT, fontSize: 18, fill: '#1f2937', textAlign: 'center', splitByGrapheme: false,
+      lineHeight: CELL_LINEH, selectable: false, evented: false, objectCaching: false
     }, o || {}));
   }
+  function sum(a) { return a.reduce(function (x, y) { return x + y; }, 0); }
+  /** Bitta matn qatorining kengligi (fabric'ning o'z o'lchovi bilan). */
+  function textW(str, fs, bold) {
+    var t = new fabric.Text(String(str), { fontFamily: FONT, fontSize: fs, fontWeight: bold ? 'bold' : 'normal' });
+    return t.width;
+  }
+  /** Katakdagi eng uzun so'z kengligi — ustun bundan tor bo'lsa Textbox o'zi kengayib, qo'shni katakka kirib ketadi. */
+  function longestWordW(str, fs, bold) {
+    var mx = 0;
+    String(str == null ? '' : str).split(/\s+/).forEach(function (w) { if (w) mx = Math.max(mx, textW(w, fs, bold)); });
+    return mx;
+  }
+
+  /** Jadval layout: shriftni, ustun kengliklarini va qator balandliklarini O'LCHAB topadi. */
+  function layoutTable(rows, width, maxH, fs0, header) {
+    var cols = rows[0].length, MINFS = 10, res = null, weights = [];
+    for (var c = 0; c < cols; c++) {
+      var mx = 0; rows.forEach(function (r) { mx = Math.max(mx, String(r[c] == null ? '' : r[c]).length); });
+      weights.push(Math.min(30, Math.max(6, mx)));
+    }
+    var wsum = sum(weights);
+    for (var fs = fs0; fs >= MINFS; fs--) {
+      var minW = [];
+      for (var c2 = 0; c2 < cols; c2++) {
+        var m = 0;
+        rows.forEach(function (r, ri) { m = Math.max(m, longestWordW(r[c2], fs, header && ri === 0)); });
+        minW.push(Math.ceil(m + 2 * PAD_X + 2));
+      }
+      var sumMin = sum(minW);
+      if (sumMin > width && fs > MINFS) continue;            // so'z sig'maydi — shriftni kichraytiramiz
+      var extra = Math.max(0, width - sumMin), colW;
+      if (sumMin > width) { var k = width / sumMin; colW = minW.map(function (v) { return v * k; }); }
+      else colW = minW.map(function (v, i) { return v + extra * weights[i] / wsum; });
+      var rowH = [], cellH = [];
+      rows.forEach(function (r, ri) {
+        var hs = [], mh = fs * CELL_LH;
+        for (var cc = 0; cc < cols; cc++) {
+          var tb = txt(r[cc], { width: Math.max(10, colW[cc] - 2 * PAD_X), fontSize: fs, fontWeight: (header && ri === 0) ? 'bold' : 'normal' });
+          hs.push(tb.height); mh = Math.max(mh, tb.height);
+        }
+        cellH.push(hs); rowH.push(Math.ceil(mh + 2 * PAD_Y));
+      });
+      res = { fs: fs, colW: colW, rowH: rowH, cellH: cellH, total: sum(rowH) };
+      if (res.total <= maxH) break;                          // sig'di
+    }
+    return res;                                              // MINFS da ham sig'masa — jadval pastga o'sadi (matn hech qachon ustma-ust tushmaydi)
+  }
+
   function buildTable(el) {
     var rows = Array.isArray(el.rows) ? el.rows.filter(function (r) { return Array.isArray(r) && r.length; }) : [];
     if (!rows.length) rows = [['Ustun 1', 'Ustun 2'], ['—', '—']];
     rows = rows.slice(0, 14);
     var cols = Math.min(8, Math.max.apply(null, rows.map(function (r) { return r.length; })));
+    rows = rows.map(function (r) { var o = []; for (var c = 0; c < cols; c++) o.push(String(r[c] == null ? '' : r[c])); return o; });
     var left = +el.left || 60, top = +el.top || 130, width = Math.max(240, Math.min(900, +el.width || 840));
-    var maxH = Math.max(120, Math.min(420, +el.height || 360));
+    var maxH = Math.max(120, Math.min(420, +el.maxH || +el.height || 360));
     var header = el.header !== false;
-    var fs = Math.max(11, Math.min(26, +el.fontSize || (rows.length > 7 ? 14 : (cols > 4 ? 15 : 18))));
-    var rowH = Math.max(fs * 1.9, Math.min(fs * 2.6, maxH / rows.length));
-    var colW = width / cols;
+    var fs0 = Math.max(11, Math.min(26, +el.fs0 || +el.fontSize || (rows.length > 7 ? 14 : (cols > 4 ? 15 : 18))));
     var hFill = el.headerFill || '#1a73e8', hCol = el.headerColor || '#ffffff', stripe = el.stripe !== false;
-    var objs = [];
+    var L = layoutTable(rows, width, maxH, fs0, header);
+    var objs = [], y = 0;
     rows.forEach(function (r, ri) {
-      var isH = header && ri === 0;
+      var isH = header && ri === 0, rh = L.rowH[ri], x = 0;
       for (var ci = 0; ci < cols; ci++) {
-        var x = ci * colW, y = ri * rowH;
+        var cw = L.colW[ci];
         objs.push(new fabric.Rect({
-          left: x, top: y, width: colW, height: rowH, selectable: false, evented: false,
+          left: x, top: y, width: cw, height: rh, selectable: false, evented: false, objectCaching: false,
           fill: isH ? hFill : (stripe && ri % 2 === 0 ? '#f1f5f9' : '#ffffff'), stroke: '#dbe1ea', strokeWidth: 1
         }));
         var tb = txt(r[ci], {
-          left: x + 6, top: y + (rowH - fs * 1.15) / 2, width: colW - 12, fontSize: fs,
+          left: x + PAD_X, top: y, width: cw - 2 * PAD_X, fontSize: L.fs,
           fontWeight: isH ? 'bold' : 'normal', fill: isH ? hCol : '#1f2937', textAlign: ci === 0 && !isH ? 'left' : 'center'
         });
+        tb.set('top', y + (rh - tb.height) / 2);              // balandlikka ko'ra markazlash (ko'p qatorli ham)
         objs.push(tb);
+        x += cw;
       }
+      y += rh;
     });
-    var g = new fabric.Group(objs, { left: left, top: top, subTargetCheck: false, objectCaching: true });
+    var g = new fabric.Group(objs, { left: left, top: top, subTargetCheck: false, objectCaching: false });
     g.ssKind = 'table';
-    g.ssSpec = { rows: rows.map(function (r) { var o = []; for (var c = 0; c < cols; c++) o.push(String(r[c] == null ? '' : r[c])); return o; }),
-      header: header, headerFill: hFill, headerColor: hCol, stripe: stripe, fs: fs, w: width, rowH: rowH };
+    g.ssSpec = { v: LAYOUT_V, rows: rows, header: header, headerFill: hFill, headerColor: hCol, stripe: stripe,
+      fs: L.fs, fs0: fs0, w: width, h: L.total, maxH: maxH, colW: L.colW, rowHs: L.rowH, rowH: L.total / rows.length,
+      padX: PAD_X, padY: PAD_Y, lh: CELL_LH, fontOk: fontReady() };
     try { if (el.id) g.set('id', el.id); } catch (e) {}
     return g;
   }
@@ -137,6 +212,28 @@
       ' L ' + xi1 + ' ' + yi1 + ' A ' + inner + ' ' + inner + ' 0 ' + large + ' 0 ' + xi0 + ' ' + yi0 + ' Z';
   }
   function fmt(v) { v = +v; return Math.abs(v) >= 1000 ? v.toLocaleString('en-US') : (Math.round(v * 100) / 100).toString(); }
+
+  /** Y o'qi: chiroyli qadam (backend/tg_decks.chart_axis bilan BIR XIL algoritm) — canvas, PPTX, PDF, HTML bir xil raqam ko'rsatadi. */
+  function niceAxis(allv) {
+    var vmax = Math.max.apply(null, allv.concat([0])), vmin = Math.min.apply(null, allv.concat([0]));
+    if (vmax === vmin) vmax = vmin + 1;
+    var span = vmax - vmin, step = Math.pow(10, Math.floor(Math.log10(span / 4)));
+    var ms = [1, 2, 2.5, 5, 10];
+    for (var i = 0; i < ms.length; i++) { if (span / (step * ms[i]) <= 5) { step *= ms[i]; break; } }
+    var top = Math.ceil(vmax / step - 1e-9) * step;
+    var bot = vmin < 0 ? Math.floor(vmin / step) * step : 0;
+    var ticks = [];
+    for (var v = bot, g = 0; v <= top + step * 1e-6 && g < 12; v += step, g++) ticks.push(Math.round(v / step * 1e6) / 1e6 * step);
+    return { min: bot, max: top, step: step, ticks: ticks };
+  }
+  /** Matnni (left, top) qutisi bilan qo'yadi: markaz/o'ng chekka bo'yicha, fabric origin'iga TAYANMASDAN (guruh ichida ham aniq). */
+  function placed(str, o, anchor, ax, cy) {
+    var t = new fabric.Text(String(str), Object.assign({ fontFamily: FONT, selectable: false, evented: false, objectCaching: false }, o));
+    var left = anchor === 'r' ? ax - t.width : (anchor === 'c' ? ax - t.width / 2 : ax);
+    t.set({ left: left, top: cy - t.height / 2 });          // cy — qatorning VERTIKAL MARKAZI
+    return t;
+  }
+
   function buildChart(el) {
     var kind = String(el.chart || el.kind || 'bar').toLowerCase();
     var labels = (Array.isArray(el.labels) ? el.labels : []).map(String).slice(0, 12);
@@ -147,74 +244,150 @@
     while (labels.length < n) labels.push(String(labels.length + 1));
     var colors = (Array.isArray(el.colors) && el.colors.length ? el.colors : PALETTE);
     var left = +el.left || 60, top = +el.top || 120, W = Math.max(260, Math.min(900, +el.width || 560)), H = Math.max(200, Math.min(420, +el.height || 340));
-    var objs = [], font = 'Roboto', ink = el.textColor || '#374151';
-    if (el.title) objs.push(txt(el.title, { left: 0, top: 0, width: W, fontSize: 20, fontWeight: 'bold', fill: el.titleColor || '#111827' }));
-    var y0 = el.title ? 34 : 0, ph = H - y0;
+    var objs = [], ink = el.textColor || '#374151', axis = null;
+    var y0 = 0;
+    if (el.title) {
+      var ttl = txt(el.title, { left: 0, top: 0, width: W, fontSize: 20, fontWeight: 'bold', fill: el.titleColor || '#111827' });
+      objs.push(ttl); y0 = Math.ceil(ttl.height) + 8;
+    }
+    var ph = H - y0;
     if (kind === 'pie' || kind === 'donut' || kind === 'doughnut') {
       var vals = series[0].values.slice(0, n).map(function (v) { return Math.max(0, v); });
-      var sum = vals.reduce(function (a, b) { return a + b; }, 0) || 1;
+      var sumV = vals.reduce(function (a, b) { return a + b; }, 0) || 1;
       var R = Math.min(ph, W * 0.5) / 2 - 4, cx = R + 6, cy = y0 + ph / 2, a = -Math.PI / 2;
       vals.forEach(function (v, i) {
-        var da = (v / sum) * Math.PI * 2; if (da <= 0) return;
+        var da = (v / sumV) * Math.PI * 2; if (da <= 0) return;
         var a1 = a + Math.min(da, Math.PI * 2 - 0.0001);
-        objs.push(new fabric.Path(arcPath(cx, cy, R, a, a1, kind === 'pie' ? 0 : R * 0.55), { fill: colors[i % colors.length], stroke: '#ffffff', strokeWidth: 2, selectable: false, evented: false }));
+        objs.push(new fabric.Path(arcPath(cx, cy, R, a, a1, kind === 'pie' ? 0 : R * 0.55), { fill: colors[i % colors.length], stroke: '#ffffff', strokeWidth: 2, selectable: false, evented: false, objectCaching: false }));
         a += da;
       });
-      var lx = cx + R + 28;
+      var lx = cx + R + 28, rowStep = Math.min(26, Math.max(18, (ph - 10) / Math.max(1, n)));
       labels.slice(0, n).forEach(function (lb, i) {
-        var ly = y0 + 10 + i * 24;
-        objs.push(new fabric.Rect({ left: lx, top: ly + 3, width: 14, height: 14, rx: 3, ry: 3, fill: colors[i % colors.length], selectable: false, evented: false }));
-        objs.push(txt(lb + '  ' + Math.round((vals[i] / sum) * 100) + '%', { left: lx + 22, top: ly, width: Math.max(80, W - lx - 26), fontSize: 15, textAlign: 'left', fill: ink }));
+        var ly = y0 + 10 + i * rowStep;
+        objs.push(new fabric.Rect({ left: lx, top: ly + (rowStep - 14) / 2 - 2, width: 14, height: 14, rx: 3, ry: 3, fill: colors[i % colors.length], selectable: false, evented: false, objectCaching: false }));
+        objs.push(placed(lb + '  ' + Math.round((vals[i] / sumV) * 100) + '%', { fontSize: 15, fill: ink }, 'l', lx + 22, ly + rowStep / 2 - 2));
       });
     } else {
-      var padL = 44, padB = 34, cw = W - padL - 6, chH = ph - padB - 14, base = y0 + 14 + chH;
-      var maxV = Math.max(1, Math.max.apply(null, series.reduce(function (a, s) { return a.concat(s.values); }, [])));
-      var step = Math.pow(10, Math.floor(Math.log10(maxV))), top5 = Math.ceil(maxV / step) * step;
-      if (top5 / step < 3) top5 = Math.ceil(maxV / (step / 2)) * (step / 2);
-      for (var g = 0; g <= 4; g++) {
-        var gy = base - (chH * g) / 4;
-        objs.push(new fabric.Line([padL, gy, W, gy], { stroke: g === 0 ? '#9ca3af' : '#e5e7eb', strokeWidth: 1, selectable: false, evented: false }));
-        objs.push(txt(fmt((top5 * g) / 4), { left: 0, top: gy - 8, width: padL - 6, fontSize: 12, textAlign: 'right', fill: '#6b7280' }));
-      }
-      var slot = cw / n;
+      axis = niceAxis(series.reduce(function (acc, s) { return acc.concat(s.values.slice(0, n)); }, []));
+      var YFS = 12;
+      var padL = Math.ceil(Math.max.apply(null, axis.ticks.map(function (t) { return textW(fmt(t), YFS, false); }))) + 16;
+      var slot = (W - padL - 6) / n;
+      var xfs = Math.round(Math.min(14, Math.max(10, slot / 6)));
+      var xlH = 0, xl = labels.slice(0, n).map(function (lb) {
+        var t = txt(lb, { width: Math.max(10, slot - 4), fontSize: xfs, fill: ink }); xlH = Math.max(xlH, t.height); return t;
+      });
+      var legendH = series.length > 1 ? 26 : 0;
+      var padT = y0 + legendH + 22;                                 // bar ustidagi qiymat yozuvi uchun joy
+      var padB = Math.ceil(xlH) + 14;
+      var plotH = Math.max(60, H - padT - padB), base = padT + plotH;
+      var span = axis.max - axis.min;
+      var py = function (v) { return base - ((v - axis.min) / span) * plotH; };
+      axis.ticks.forEach(function (tv, gi) {
+        var gy = py(tv);
+        objs.push(new fabric.Line([padL, gy, W, gy], { stroke: Math.abs(tv) < 1e-9 ? '#9ca3af' : '#e5e7eb', strokeWidth: 1, selectable: false, evented: false, objectCaching: false }));
+        objs.push(placed(fmt(tv), { fontSize: YFS, fill: '#6b7280' }, 'r', padL - 8, gy));        // yorliq gridline'ning aynan o'rtasida
+      });
+      var zeroY = py(0);
       if (kind === 'line') {
         series.forEach(function (s, si) {
-          var pts = s.values.slice(0, n).map(function (v, i) { return { x: padL + slot * i + slot / 2, y: base - (v / top5) * chH }; });
-          if (pts.length > 1) objs.push(new fabric.Polyline(pts, { fill: '', stroke: colors[si % colors.length], strokeWidth: 3, strokeLineJoin: 'round', selectable: false, evented: false }));
+          var pts = s.values.slice(0, n).map(function (v, i) { return { x: padL + slot * i + slot / 2, y: py(v) }; });
+          if (pts.length > 1) objs.push(new fabric.Polyline(pts, { fill: '', stroke: colors[si % colors.length], strokeWidth: 3, strokeLineJoin: 'round', selectable: false, evented: false, objectCaching: false }));
           pts.forEach(function (p, i) {
-            objs.push(new fabric.Circle({ left: p.x - 5, top: p.y - 5, radius: 5, fill: '#ffffff', stroke: colors[si % colors.length], strokeWidth: 3, selectable: false, evented: false }));
-            if (series.length === 1) objs.push(txt(fmt(s.values[i]), { left: p.x - 30, top: p.y - 26, width: 60, fontSize: 12, fill: ink, fontWeight: 'bold' }));
+            objs.push(new fabric.Circle({ left: p.x - 5, top: p.y - 5, radius: 5, fill: '#ffffff', stroke: colors[si % colors.length], strokeWidth: 3, selectable: false, evented: false, objectCaching: false }));
+            if (series.length === 1) objs.push(placed(fmt(s.values[i]), { fontSize: 12, fontWeight: 'bold', fill: ink }, 'c', p.x, p.y - 16));
           });
         });
       } else {
         var bw = Math.min(64, (slot * 0.72) / series.length);
         series.forEach(function (s, si) {
           s.values.slice(0, n).forEach(function (v, i) {
-            var h = Math.max(1, (v / top5) * chH), x = padL + slot * i + (slot - bw * series.length) / 2 + bw * si;
-            objs.push(new fabric.Rect({ left: x, top: base - h, width: bw - 2, height: h, rx: 4, ry: 4, fill: colors[(series.length > 1 ? si : i) % colors.length], selectable: false, evented: false }));
-            if (series.length === 1 || bw > 26) objs.push(txt(fmt(v), { left: x - 12, top: base - h - 20, width: bw + 22, fontSize: 12, fontWeight: 'bold', fill: ink }));
+            var x = padL + slot * i + (slot - bw * series.length) / 2 + bw * si, yv = py(v);
+            var bt = Math.min(yv, zeroY), bh = Math.max(1, Math.abs(zeroY - yv));
+            objs.push(new fabric.Rect({ left: x, top: bt, width: bw - 2, height: bh, rx: 4, ry: 4, fill: colors[(series.length > 1 ? si : i) % colors.length], selectable: false, evented: false, objectCaching: false }));
+            if (series.length === 1 || bw > 26) objs.push(placed(fmt(v), { fontSize: 12, fontWeight: 'bold', fill: ink }, 'c', x + (bw - 2) / 2, (v >= 0 ? bt - 11 : bt + bh + 11)));
           });
         });
       }
-      labels.slice(0, n).forEach(function (lb, i) {
-        objs.push(txt(lb, { left: padL + slot * i, top: base + 6, width: slot, fontSize: Math.min(14, Math.max(10, slot / 6)), fill: ink }));
-      });
+      xl.forEach(function (t, i) { t.set({ left: padL + slot * i + 2, top: base + 8 }); objs.push(t); });
       if (series.length > 1) {
+        var lx2 = padL;
         series.forEach(function (s, si) {
-          var lx2 = padL + si * 130;
-          objs.push(new fabric.Rect({ left: lx2, top: y0 - 12 + (el.title ? 0 : 0), width: 12, height: 12, rx: 3, ry: 3, fill: colors[si % colors.length], selectable: false, evented: false }));
-          objs.push(txt(s.name || ('Qator ' + (si + 1)), { left: lx2 + 18, top: y0 - 14, width: 110, fontSize: 13, textAlign: 'left', fill: ink }));
+          var nm = s.name || ('Qator ' + (si + 1)), tw = textW(nm, 13, false);
+          objs.push(new fabric.Rect({ left: lx2, top: y0 + 4, width: 12, height: 12, rx: 3, ry: 3, fill: colors[si % colors.length], selectable: false, evented: false, objectCaching: false }));
+          objs.push(placed(nm, { fontSize: 13, fill: ink }, 'l', lx2 + 18, y0 + 10));
+          lx2 += 18 + tw + 22;
         });
       }
     }
-    var grp = new fabric.Group(objs, { left: left, top: top, subTargetCheck: false, objectCaching: true });
+    var grp = new fabric.Group(objs, { left: left, top: top, subTargetCheck: false, objectCaching: false });
     grp.ssKind = 'chart';
-    grp.ssSpec = { chart: kind === 'donut' ? 'doughnut' : kind, title: el.title || '', labels: labels.slice(0, n), series: series.map(function (s) { return { name: s.name, values: s.values.slice(0, n) }; }), colors: colors.slice(), textColor: ink };
+    grp.ssSpec = { v: LAYOUT_V, chart: kind === 'donut' ? 'doughnut' : kind, title: el.title || '', labels: labels.slice(0, n),
+      series: series.map(function (s) { return { name: s.name, values: s.values.slice(0, n) }; }), colors: colors.slice(), textColor: ink,
+      w: W, h: H, fontOk: fontReady() };
+    if (axis) { grp.ssSpec.yMin = axis.min; grp.ssSpec.yMax = axis.max; grp.ssSpec.yStep = axis.step; }
     try { if (el.id) grp.set('id', el.id); } catch (e) {}
     return grp;
   }
   window.ssBuildTable = buildTable;
   window.ssBuildChart = buildChart;
+  window.ssLayout = { LAYOUT_V: LAYOUT_V, CELL_LH: CELL_LH, PAD_X: PAD_X, PAD_Y: PAD_Y, niceAxis: niceAxis, layoutTable: layoutTable, fontReady: fontReady };
+
+  /* ------------------------------------------------------------------ Eskirgan jadval/grafikni qayta qurish ----
+   *  Qachon: (a) shrift yuklanmasdan o'lchangan (fontOk=false), (b) eski versiya (v<2: bir qatorli balandlik).
+   *  Obyekt joyida almashtiriladi (o'rni, masshtabi, animatsiyasi, id saqlanadi).                                  */
+  var KEEP = ['_oid', 'id', 'imageNumber', 'animName', 'animDur', 'animDelay', 'animLoop', 'opacity', 'angle', 'scaleX', 'scaleY', 'flipX', 'flipY', 'skewX', 'skewY', 'visible'];
+  function needsRelayout(o) {
+    var sp = o && o.ssSpec;
+    if (!sp || (o.ssKind !== 'table' && o.ssKind !== 'chart')) return false;
+    if (sp.v !== LAYOUT_V) return true;
+    if (!sp.fontOk && fontReady()) return true;
+    return false;
+  }
+  function relayoutObject(o) {
+    var sp = o.ssSpec, ng;
+    if (o.ssKind === 'table') ng = buildTable({ rows: sp.rows, header: sp.header, headerFill: sp.headerFill, headerColor: sp.headerColor, stripe: sp.stripe,
+      left: o.left, top: o.top, width: sp.w, maxH: sp.maxH || sp.h || 360, fs0: sp.fs0 || sp.fs });
+    else ng = buildChart({ chart: sp.chart, title: sp.title, labels: sp.labels, series: sp.series, colors: sp.colors, textColor: sp.textColor,
+      left: o.left, top: o.top, width: sp.w || o.width, height: sp.h || o.height });
+    KEEP.forEach(function (k) { if (o[k] !== undefined) ng[k] = o[k]; });
+    ng.set({ left: o.left, top: o.top });
+    return ng;
+  }
+  var _rlBusy = false;
+  window.ssRelayoutStale = function () {
+    if (_rlBusy || typeof canvas === 'undefined' || !canvas) return 0;
+    var n = 0;
+    _rlBusy = true;
+    try {
+      var active = canvas.getActiveObject && canvas.getActiveObject();
+      canvas.getObjects().slice().forEach(function (o) {
+        if (o === active || !needsRelayout(o)) return;
+        var idx = canvas.getObjects().indexOf(o), ng = relayoutObject(o);
+        canvas.remove(o); canvas.insertAt(ng, idx, false); ng.setCoords(); n++;
+      });
+      if (n) {
+        canvas.requestRenderAll();
+        try { setTimeout(function () { saveCurrentSlideState(); }, 60); } catch (e) {}
+      }
+    } catch (e) { console.warn('[v49] relayout:', e); }
+    finally { _rlBusy = false; }
+    return n;
+  };
+  (function hookRelayout() {
+    var t = null;
+    function soon() { clearTimeout(t); t = setTimeout(window.ssRelayoutStale, 60); }
+    try {
+      if (document.fonts) {
+        if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', soon);
+        if (document.fonts.ready && document.fonts.ready.then) document.fonts.ready.then(soon);
+      }
+      // slayd yuklanganda (loadFromJSON tugagach) — eski jadvallar bir marta yangi layout'ga o'tadi
+      var tries = 0, iv = setInterval(function () {
+        if (typeof canvas !== 'undefined' && canvas && canvas.on) { clearInterval(iv); canvas.on('after:render', function () { if (!_rlBusy) soon(); }); }
+        else if (++tries > 60) clearInterval(iv);
+      }, 250);
+    } catch (e) {}
+  })();
 
   /* AI elements[] ichidagi table/chart ni tanitish */
   try {

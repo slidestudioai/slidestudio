@@ -458,7 +458,7 @@ def series_colors(th: dict, n: int) -> List[str]:
 
 def _fmt_num(v: float) -> str:
     if abs(v - round(v)) < 1e-9:
-        return f"{int(round(v)):,}".replace(",", " ")
+        return f"{int(round(v)):,}"                  # 1,000 — canvas va PPTX bilan bir xil
     return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
@@ -502,6 +502,26 @@ def expand_item(it: dict) -> List[dict]:
     return [it]
 
 
+def chart_axis(series: List[dict]) -> Tuple[float, float, float]:
+    """Bar/line diagramma Y o'qi: (pastki chegara, yuqori chegara, qadam).
+    Yagona manba: PDF/HTML'dagi o'zimiz chizgan o'q ham, PPTX'dagi native diagramma ham SHU qiymatlarni ishlatadi —
+    shuning uchun raqamlar va gridline'lar hamma formatda bir xil bo'ladi (avval PPTX o'zi 'avto' tanlardi)."""
+    allv = [float(v) for sr in series for v in sr["values"]]
+    vmax = max(allv + [0.0])
+    vmin = min(allv + [0.0])
+    if vmax == vmin:
+        vmax = vmin + 1
+    span = vmax - vmin
+    step = 10 ** math.floor(math.log10(span / 4.0))
+    for m in (1, 2, 2.5, 5, 10):
+        if span / (step * m) <= 5:
+            step *= m
+            break
+    top = math.ceil(vmax / step - 1e-9) * step
+    bot = math.floor(vmin / step) * step if vmin < 0 else 0.0
+    return bot, top, step
+
+
 def _chart_items(it: dict) -> List[dict]:
     th = it["th"]
     X, Y, CW, CH = it["x"], it["y"], it["w"], it["h"]
@@ -531,21 +551,8 @@ def _chart_items(it: dict) -> List[dict]:
             tmp.text(X + CW - 90, ly, 90, 30, pct, 20, th["primary"], bold=True, align="r", anchor="m", lines=[pct])
             ly += 34
         return tmp.items
-    # bar / line
-    allv = [v for sr in series for v in sr["values"]]
-    vmax = max(allv + [0.0])
-    vmin = min(allv + [0.0])
-    if vmax == vmin:
-        vmax = vmin + 1
-    span = vmax - vmin
-    # chiroyli qadam
-    step = 10 ** math.floor(math.log10(span / 4.0))
-    for m in (1, 2, 2.5, 5, 10):
-        if span / (step * m) <= 5:
-            step *= m
-            break
-    top = math.ceil(vmax / step) * step
-    bot = math.floor(vmin / step) * step if vmin < 0 else 0.0
+    # bar / line — o'q chegaralari PPTX bilan BIR XIL (chart_axis)
+    bot, top, step = chart_axis(series)
     gx0 = X + 70
     gx1 = X + CW - 10
     legend_h = 30 if len(series) > 1 else 0
@@ -933,6 +940,7 @@ def _pptx_table(slide, it: dict, E: int, rgb) -> None:
             tf.word_wrap = True
             p = tf.paragraphs[0]
             p.alignment = PP_ALIGN.LEFT if ci == 0 else PP_ALIGN.CENTER
+            p.line_spacing = Pt(it["fs"] * LH)          # o'lchash (wrap) bilan bir xil qator balandligi -> qator kengayib siljimaydi
             run = p.add_run()
             run.text = txt
             run.font.size = Pt(it["fs"])
@@ -999,6 +1007,8 @@ def _pptx_chart(slide, it: dict, E: int, rgb) -> None:
             ch.legend.position = XL_LEGEND_POSITION.TOP
             ch.legend.include_in_layout = False
         dl.show_value = True
+        dl.number_format = "#,##0" if all(abs(v - round(v)) < 1e-9 for sr in it["series"] for v in sr["values"]) else "#,##0.##"
+        dl.number_format_is_linked = False
         try:
             dl.position = XL_LABEL_POSITION.OUTSIDE_END if kind == "bar" else XL_LABEL_POSITION.ABOVE
         except Exception:
@@ -1017,6 +1027,11 @@ def _pptx_chart(slide, it: dict, E: int, rgb) -> None:
         if kind == "bar":
             plot.gap_width = 60
         va = ch.value_axis
+        bot, top, step = chart_axis(it["series"])
+        va.minimum_scale, va.maximum_scale, va.major_unit = bot, top, step      # PDF/HTML bilan bir xil o'q
+        va.has_major_gridlines = True
+        va.tick_labels.number_format = "#,##0" if step >= 1 else "0.0#"
+        va.tick_labels.number_format_is_linked = False
         va.major_gridlines.format.line.color.rgb = rgb(mix(th["tint"], th["muted"], 0.35))
         va.format.line.fill.background()
         va.tick_labels.font.size = Pt(14)
@@ -1284,14 +1299,136 @@ def export(deck: dict, images: Optional[Dict[int, bytes]], fmt: str, lang: str =
 
 
 def export_all(deck: dict, images: Optional[Dict[int, bytes]], lang: str = "uz") -> List[Tuple[str, bytes, str]]:
-    scenes = build_scenes(deck, images, lang)          # sahna bir marta quriladi (rasm kesish qimmat)
+    # sahna va PPTX bir marta yasaladi (keshda), PDF/HTML shundan foydalanadi
+    return [export_cached(deck, images, f, lang) for f in ("pptx", "pdf", "html")]
+
+
+# ---------------------------------------------------------------------------------------------
+# RAM keshi + oqim (stream): bir slayd uchun sahna va fayllar BIR MARTA yasaladi
+# ---------------------------------------------------------------------------------------------
+# Avval har bir «PPTX / PDF / HTML» bosilganda: rasmlar qayta yuklanardi, sahna (Pillow bilan kesish) qayta qurilardi,
+# HTML uchun PPTX ikkinchi marta yasalardi. Endi: kalit = slayd mazmuni + til + rasmlar to'plami; natija RAM'da qisqa
+# muddat saqlanadi (diskka / Supabase'ga YOZILMAYDI) va tayyor baytlar bevosita oqim sifatida uzatiladi.
+import hashlib
+import threading
+import time as _time
+
+MIME = {
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pdf": "application/pdf",
+    "html": "text/html; charset=utf-8",
+}
+CACHE_TTL = 600.0                    # soniya
+CACHE_MAX_ENTRIES = 4
+CACHE_MAX_BYTES = 48 * 1024 * 1024   # barcha tayyor fayllar yig'indisi (Render 512 MB RAM ga mos)
+
+
+class _Entry:
+    __slots__ = ("ts", "scenes", "out", "title", "size")
+
+    def __init__(self, scenes: List[Scene], title: str):
+        self.ts = _time.time()
+        self.scenes = scenes
+        self.title = title
+        self.out: Dict[str, bytes] = {}
+        self.size = 0
+
+
+_CACHE: "OrderedDict[str, _Entry]" = OrderedDict()
+_LATEST: Dict[str, str] = {}                  # slayd mazmuni xeshi -> eng so'nggi to'liq kalit
+_CLOCK = threading.Lock()                      # kesh jadvali uchun (qisqa)
+_KLOCKS: Dict[str, threading.Lock] = {}        # kalit bo'yicha: bir xil slaydni ikki marta yasamaslik uchun
+
+
+def _deck_hash(deck: dict, lang: str) -> str:
+    raw = json.dumps(deck, sort_keys=True, ensure_ascii=False, default=str) + "|" + (lang or "uz")
+    return hashlib.blake2b(raw.encode("utf-8"), digest_size=16).hexdigest()
+
+
+def _cache_key(deck: dict, images: Optional[Dict[int, bytes]], lang: str) -> Tuple[str, str]:
+    dh = _deck_hash(deck, lang)
+    h = hashlib.blake2b(dh.encode(), digest_size=16)
+    for k in sorted((images or {}).keys()):
+        b = images[k]
+        h.update(str(k).encode() + b"|" + str(len(b)).encode() + b"|" + b[:64])
+    return dh, h.hexdigest()
+
+
+def _evict_locked() -> None:
+    now = _time.time()
+    for k in [k for k, e in _CACHE.items() if now - e.ts > CACHE_TTL]:
+        _CACHE.pop(k, None)
+    total = lambda: sum(e.size for e in _CACHE.values())
+    while _CACHE and (len(_CACHE) > CACHE_MAX_ENTRIES or total() > CACHE_MAX_BYTES):
+        _CACHE.popitem(last=False)
+    live = set(_CACHE.keys())
+    for dh in [d for d, k in _LATEST.items() if k not in live]:
+        _LATEST.pop(dh, None)
+    for k in [k for k in _KLOCKS if k not in live and not _KLOCKS[k].locked()]:
+        _KLOCKS.pop(k, None)
+
+
+def cache_peek(deck: dict, lang: str, fmt: str) -> Optional[Tuple[str, bytes, str]]:
+    """Tayyor fayl RAM'da bo'lsa (rasmlarni yuklamasdan) darhol qaytaradi: (nom, bayt, mime) yoki None."""
+    dh = _deck_hash(deck, lang)
+    with _CLOCK:
+        key = _LATEST.get(dh)
+        e = _CACHE.get(key) if key else None
+        if e is None or _time.time() - e.ts > CACHE_TTL or fmt not in e.out:
+            return None
+        _CACHE.move_to_end(key)
+        return safe_filename(e.title, fmt), e.out[fmt], MIME[fmt]
+
+
+def export_cached(deck: dict, images: Optional[Dict[int, bytes]], fmt: str, lang: str = "uz") -> Tuple[str, bytes, str]:
+    """export() bilan bir xil natija, lekin sahna va fayllar keshlanadi (sinxron — asyncio.to_thread ichida chaqiring)."""
+    if fmt not in MIME:
+        raise ValueError("noma'lum format")
+    dh, key = _cache_key(deck, images, lang)
     title = deck.get("title") or "Taqdimot"
-    px = render_pptx(scenes, title)
-    return [
-        (safe_filename(title, "pptx"), px, "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
-        (safe_filename(title, "pdf"), render_pdf(scenes, title), "application/pdf"),
-        (safe_filename(title, "html"), render_html(scenes, title, lang, px), "text/html; charset=utf-8"),
-    ]
+    with _CLOCK:
+        _evict_locked()
+        kl = _KLOCKS.setdefault(key, threading.Lock())
+    with kl:
+        with _CLOCK:
+            e = _CACHE.get(key)
+            if e is not None:
+                _CACHE.move_to_end(key)
+        if e is None:
+            e = _Entry(build_scenes(deck, images, lang), title)
+            with _CLOCK:
+                _CACHE[key] = e
+                _LATEST[dh] = key
+        if fmt not in e.out:
+            if fmt == "pptx":
+                data = render_pptx(e.scenes, title)
+            elif fmt == "pdf":
+                data = render_pdf(e.scenes, title)
+            else:
+                px = e.out.get("pptx") or render_pptx(e.scenes, title)     # HTML ichidagi PPTX nusxasi qayta yasalmaydi
+                if "pptx" not in e.out:
+                    e.out["pptx"] = px
+                    e.size += len(px)
+                data = render_html(e.scenes, title, lang, px)
+            e.out[fmt] = data
+            e.size += len(data)
+        e.ts = _time.time()
+        with _CLOCK:
+            _LATEST[dh] = key
+            _evict_locked()
+        return safe_filename(title, fmt), e.out[fmt], MIME[fmt]
+
+
+def export_stream(deck: dict, images: Optional[Dict[int, bytes]], fmt: str, lang: str = "uz") -> Tuple[str, io.BytesIO, str, int]:
+    """(nom, BytesIO, mime, hajm). Fayl faqat RAM'da (io.BytesIO), diskka/Supabase'ga yozilmaydi."""
+    name, data, mime = export_cached(deck, images, fmt, lang)
+    return name, io.BytesIO(data), mime, len(data)
+
+
+def cache_clear() -> None:
+    with _CLOCK:
+        _CACHE.clear()
+        _LATEST.clear()
 
 
 # ---------------------------------------------------------------------------------------------
