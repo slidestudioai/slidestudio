@@ -1905,6 +1905,22 @@ def _fetch_image_sync(url: str) -> dict:
     _cache_put(url, res)
     return res
 
+# v53: proksilar faylni to'liq RAM'ga o'qiydi (rasm <=15 MB, video <=90 MB). Bir vaqtdagi yuklashlar soni cheklanadi —
+# aks holda bir nechta parallel so'rov serverni xotirasiz qoldirardi (Render free = 512 MB -> OOM restart).
+PROXY_IMAGE_CONCURRENCY = max(1, _env_int("PROXY_IMAGE_CONCURRENCY", 6))
+PROXY_VIDEO_CONCURRENCY = max(1, _env_int("PROXY_VIDEO_CONCURRENCY", 1))
+PROXY_QUEUE_TIMEOUT = 20.0
+_PROXY_IMG_SEM = asyncio.Semaphore(PROXY_IMAGE_CONCURRENCY)
+_PROXY_VID_SEM = asyncio.Semaphore(PROXY_VIDEO_CONCURRENCY)
+
+async def _proxy_slot(sem: asyncio.Semaphore) -> None:
+    """Navbat: bo'sh joy kutiladi; PROXY_QUEUE_TIMEOUT dan oshsa 503 (server band)."""
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=PROXY_QUEUE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Server band. Birozdan keyin qayta urinib ko'ring.",
+                            headers={"Retry-After": "10"})
+
 @app.get("/api/proxy-image")
 async def proxy_image(url: str, raw: int = 0):
     url = (url or "").strip()
@@ -1916,7 +1932,13 @@ async def proxy_image(url: str, raw: int = 0):
             url = urllib.parse.unquote(url)
         except Exception:
             pass
-    res = await asyncio.to_thread(_fetch_image_sync, url)
+    res = _cache_get(url)                     # RAM keshida bo'lsa navbat kutilmaydi
+    if not res:
+        await _proxy_slot(_PROXY_IMG_SEM)
+        try:
+            res = await asyncio.to_thread(_fetch_image_sync, url)
+        finally:
+            _PROXY_IMG_SEM.release()
     if res.get("error"):
         if raw:
             raise HTTPException(status_code=400, detail=res["error"])
@@ -1978,7 +2000,11 @@ async def proxy_video(url: str):
     url = (url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="url bo'sh")
-    res = await asyncio.to_thread(_fetch_video_sync, url)
+    await _proxy_slot(_PROXY_VID_SEM)
+    try:
+        res = await asyncio.to_thread(_fetch_video_sync, url)
+    finally:
+        _PROXY_VID_SEM.release()
     if res.get("error"):
         raise HTTPException(status_code=400, detail=res["error"])
     return Response(content=res["data"], media_type=res["content_type"],
