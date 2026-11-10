@@ -174,14 +174,15 @@
     try { if (store) store.setItem(KEY, JSON.stringify(mem)); } catch (e) {}
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-  var open = false;
+  var open = false, openId = 0, closeFn = null;
 
   function show(n) {
     if (open || !n || document.getElementById('ssNotice')) return;
-    open = true;
+    open = true; openId = n.id;
+    markSeen(n.id);                       // v56: hammaga BIR MARTA — sahifani yangilasa ham qayta chiqmaydi
     var media = '';
     if (n.media_url && n.media_type === 'image') media = '<img class="ssn-media" src="' + esc(n.media_url) + '" alt="" referrerpolicy="no-referrer">';
-    else if (n.media_url && n.media_type === 'video') media = '<video class="ssn-media" src="' + esc(n.media_url) + '" autoplay muted loop playsinline></video>';
+    else if (n.media_url && n.media_type === 'video') media = '<video class="ssn-media" src="' + esc(n.media_url) + '" autoplay muted loop playsinline controls></video>';
     var ov = document.createElement('div');
     ov.id = 'ssNotice'; ov.className = 'ssn-ov';
     ov.innerHTML = '<div class="ssn" role="dialog" aria-modal="true" aria-label="' + esc(n.title || "E'lon") + '">' +
@@ -192,11 +193,12 @@
     document.body.appendChild(ov);
     requestAnimationFrame(function () { ov.classList.add('on'); });
     function close() {
-      markSeen(n.id);
+      if (!ov.isConnected) return;
       ov.classList.remove('on');
-      setTimeout(function () { try { ov.remove(); } catch (e) {} open = false; }, 220);
+      setTimeout(function () { try { ov.remove(); } catch (e) {} open = false; openId = 0; closeFn = null; }, 220);
       document.removeEventListener('keydown', onKey);
     }
+    closeFn = close;
     function onKey(e) { if (e.key === 'Escape') close(); }
     document.addEventListener('keydown', onKey);
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
@@ -209,16 +211,27 @@
     });
   }
 
+  var busy = false;
   async function check() {
-    if (open || document.hidden) return;
+    if (busy || document.hidden) return;
+    busy = true;
     try {
       var r = await fetch('/api/notice/next?exclude=' + encodeURIComponent(seen().join(',')), { cache: 'no-store' });
       if (!r.ok) return;
       var j = await r.json();
+      if (open) {
+        // ochiq e'lon admin tomonidan bekor qilingan yoki undan yangisi chiqqan — yopamiz (yangisi keyingi tekshiruvda)
+        if (!j || (!j.notice && j.latest !== openId)) { if (closeFn) closeFn(); }
+        else if (j.notice && j.notice.id !== openId) { if (closeFn) closeFn(); setTimeout(function () { show(j.notice); }, 300); }
+        return;
+      }
       if (j && j.notice && seen().indexOf(j.notice.id) < 0) show(j.notice);
-    } catch (e) {}
+    } catch (e) {
+    } finally { busy = false; }
   }
   window.ssCheckNotice = check;
   setTimeout(check, 2500);                 // sahifa ochilib, slayd chizilgandan keyin
-  setInterval(check, 10 * 60 * 1000);
+  setInterval(check, 45 * 1000);           // v56: sahifani yangilamasa ham yangi e'lon ~1 daqiqada chiqadi
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+  window.addEventListener('focus', check);
 })();

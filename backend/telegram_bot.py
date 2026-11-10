@@ -1286,9 +1286,15 @@ async def _admin_ads(cid: int, mid: Optional[int], adm, user: dict) -> None:
         title = (r.get("title") or r.get("body") or ("🖼 media" if r.get("media_type") != "none" else "—")).strip().replace("\n", " ")[:28]
         kind_tag = "📣 e'lon" if str(r.get("kind") or "ad") == "notice" else "📢 reklama"
         lines.append(f"\n{'🟢' if on else '⚪️'} <b>{_i}.</b> {esc(title)}\n   {kind_tag} · {where} · {left} · 👁 {r.get('impressions') or 0} · 🖱 {r.get('clicks') or 0}")
-        kb.append([_btn(f"👁 {_i}", f"a:ad:v:{r['id']}"),
-                   _btn((f"⏹ To'xtatish {_i}" if on else f"▶️ Yoqish {_i}"), f"a:ad:t:{r['id']}"),
-                   _btn(f"🗑 Botdan ham o'chirish {_i}", f"a:ad:d:{r['id']}")])
+        if str(r.get("kind") or "ad") == "notice":
+            # v56: e'lon — bitta tugma bilan bekor qilinadi: saytdagi popup yopiladi va botdagi xabarlar chatlardan o'chadi
+            kb.append([_btn(f"👁 {_i}", f"a:ad:v:{r['id']}"),
+                       (_btn(f"❌ Bekor qilish {_i}", f"a:ad:c:{r['id']}") if on else _btn(f"▶️ Qayta yoqish {_i}", f"a:ad:t:{r['id']}")),
+                       _btn(f"🗑 O'chirish {_i}", f"a:ad:d:{r['id']}")])
+        else:
+            kb.append([_btn(f"👁 {_i}", f"a:ad:v:{r['id']}"),
+                       _btn((f"⏹ To'xtatish {_i}" if on else f"▶️ Yoqish {_i}"), f"a:ad:t:{r['id']}"),
+                       _btn(f"🗑 Botdan ham o'chirish {_i}", f"a:ad:d:{r['id']}")])
         kb.append([_btn(f"📤 Hozir hammaga {_i}", f"a:ad:p:{r['id']}"), _btn(f"🔁 Joyi {_i}", f"a:ad:pl:{r['id']}")])
     kb.append([_btn("➕ Yangi reklama", "a:ad:new"), _btn("📣 Yangi e'lon (reklamasiz)", "a:ad:newn")])
     kb.append(_HOME)
@@ -1767,7 +1773,7 @@ async def _wiz_step(cid: int, mid: Optional[int], step: str) -> None:
         await _show(cid, mid, "🔘 Tugma yozuvini tanlang (yoki o'zingiz yozing, 24 belgigacha):", _wiz_nav(rows))
         a["await"] = "ad_btn"
     elif step == "where":
-        if ad["media_type"] == "video" or str(ad["media_url"]).startswith("tg:"):
+        if ad.get("kind") != "notice" and (ad["media_type"] == "video" or str(ad["media_url"]).startswith("tg:")):
             ad["placement"] = "bot"
             await _wiz_step(cid, mid, "hours")
             return
@@ -2047,6 +2053,14 @@ async def _admin_cb(cid: int, mid: Optional[int], user: dict, data: str) -> None
             n = await _push_ad_all(cid, aid)
             if n:
                 await _show(cid, mid, f"📤 Yuborish boshlandi ({n} ta). Tugagach xabar keladi.", _akb([[_btn("↩️ Reklamalar", "a:ads")], _HOME]))
+        elif sub == "c" and aid:
+            await _show(cid, mid, "❌ <b>E'lon bekor qilinsinmi?</b>\n\nSaytda darhol yopiladi (sahifani yangilash shart emas) va botdagi "
+                                  "yuborilgan xabarlar chatlardan o'chiriladi. Keyin «▶️ Qayta yoqish» mumkin.",
+                        _akb([[_btn("✅ Ha, bekor qilish", f"a:ad:cc:{aid}"), _btn("↩️ Yo'q", "a:ads")]]))
+        elif sub == "cc" and aid:
+            await asyncio.to_thread(adm._dispatch, "ad_toggle", {"id": aid, "active": False}, actor)
+            _keep_task(asyncio.get_running_loop().create_task(_ad_purge(aid)))
+            await _admin_ads(cid, mid, adm, user)
         elif sub == "dd" and aid:
             await asyncio.to_thread(adm._dispatch, "ad_delete", {"id": aid}, actor)
             _AD_REPORTS.pop(aid, None)

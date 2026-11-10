@@ -1755,13 +1755,17 @@ async def ads_next(request: Request, surface: str = "site", token: str = "", exc
 @app.get("/api/notice/next")
 async def notice_next(exclude: str = ""):
     """v55: sayt e'loni (reklamasiz popup). Hammaga ko'rsatiladi (VIP ham) — brauzer ko'rganlarini o'zi eslab qoladi."""
+    # v56: FAQAT eng oxirgi faol e'lon. Bir nechta e'lon yuborilgan bo'lsa-yu odam ko'rmagan bo'lsa — eskilari chiqmaydi,
+    # faqat oxirgisi. Ko'rgan bo'lsa (exclude) — hech narsa. Bekor qilinsa — {"notice": null} va ochiq popup yopiladi.
     seen = {int(x) for x in (exclude or "").split(",")[:50] if x.strip().isdigit()}
     rows = await asyncio.to_thread(ads_mod._load)
     now = ads_mod._now()
-    pool = [r for r in rows if ads_mod._eligible(r, "site", now) and ads_mod.kind_of(r) == "notice" and int(r["id"]) not in seen]
+    pool = [r for r in rows if ads_mod._eligible(r, "site", now) and ads_mod.kind_of(r) == "notice"]
     if not pool:
         return JSONResponse({"notice": None}, headers={"Cache-Control": "no-store"})
-    row = max(pool, key=lambda r: int(r["id"]))           # eng yangisi birinchi
+    row = max(pool, key=lambda r: int(r["id"]))
+    if int(row["id"]) in seen:
+        return JSONResponse({"notice": None, "latest": int(row["id"])}, headers={"Cache-Control": "no-store"})
     asyncio.get_running_loop().run_in_executor(None, ads_mod.bump, int(row["id"]), "impression")
     return JSONResponse({"notice": ads_mod.public(row, "site")}, headers={"Cache-Control": "no-store"})
 

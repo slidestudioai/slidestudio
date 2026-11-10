@@ -5,7 +5,7 @@
 :root {
   --ss-ctl-h: 34px;          /* yuqori panel tugmalari */
   --ss-tb: 32px;             /* asboblar paneli tugmalari */
-  --ss-round: 40px;          /* suzuvchi dumaloq tugmalar (zoom, pastki boshqaruv) */
+  --ss-round: 34px;          /* v56: suzuvchi dumaloq tugmalar (zoom, pastki boshqaruv) — ixchamroq */
   --ss-radius: 999px;       /* v55: yumshoq «pill» shakl (to'rtburchak emas) */
   --ss-border: #e2e8f0;
   --ss-ink: #1f2937;
@@ -155,16 +155,16 @@ html.in-telegram body #googleLoginBtn { display: none !important; }
 
 /* ---------- v55: chap panel biroz torroq (v40.css dagi 225/218/208 !important o'rniga), sozlamalar rejimi bundan mustasno ---------- */
 @media (min-width: 1400px) {
+  .sidebar:not(:has(.settings-panel-inner)) { width: 218px !important; }
+  .sidebar.collapsed { margin-left: -218px !important; }
+}
+@media (min-width: 1025px) and (max-width: 1399px) {
   .sidebar:not(:has(.settings-panel-inner)) { width: 206px !important; }
   .sidebar.collapsed { margin-left: -206px !important; }
 }
-@media (min-width: 1025px) and (max-width: 1399px) {
-  .sidebar:not(:has(.settings-panel-inner)) { width: 196px !important; }
-  .sidebar.collapsed { margin-left: -196px !important; }
-}
 @media (min-width: 769px) and (max-width: 1024px) {
-  .sidebar:not(:has(.settings-panel-inner)) { width: 186px !important; }
-  .sidebar.collapsed { margin-left: -186px !important; }
+  .sidebar:not(:has(.settings-panel-inner)) { width: 192px !important; }
+  .sidebar.collapsed { margin-left: -192px !important; }
 }
 
 /* ---------- v55: E'lon popup (reklamasiz) ---------- */
@@ -184,3 +184,38 @@ html.in-telegram body #googleLoginBtn { display: none !important; }
 .ssn-go:hover { background: #0a4cb8; }
 .ssn-x { position: absolute; top: 10px; right: 10px; z-index: 2; width: 32px; height: 32px; border: 0; border-radius: 50%;
   background: rgba(15, 23, 42, .55); color: #fff; font-size: 20px; line-height: 30px; cursor: pointer; }
+
+/* ---------- v56: ixchamroq pastki panel, AI panel va chap panel tugmalari ---------- */
+@media (min-width: 769px) {
+  /* «Shu varoq haqida yozing» qatori va uning ustidagi boshqaruv tugmalari kichikroq */
+  .bottom-controls-wrapper { max-width: 560px !important; gap: 6px !important; }
+  .bottom-mobile-controls { padding: 4px 10px !important; gap: 8px !important; }
+  .bottom-mobile-controls .material-symbols-outlined { font-size: 19px !important; }
+  .bottom-ai-container { padding: 2px 6px 2px 12px !important; min-height: 36px; }
+  .bottom-ai-container .material-symbols-outlined { font-size: 18px !important; }
+  .bottom-ai-input-display { font-size: 13.5px !important; }
+  .bottom-ai-btn { width: 28px !important; height: 28px !important; min-width: 28px; }
+  #mzIn .material-symbols-outlined, #mzOut .material-symbols-outlined,
+  #mzFit .material-symbols-outlined, #mzHand .material-symbols-outlined { font-size: 19px !important; }
+
+  /* O'ng AI panel: torroq va mayinroq yozuv */
+  .ai-sidebar.open { width: 320px !important; }
+  .ai-msg { font-size: 12.5px !important; line-height: 1.5 !important; padding: 9px 11px !important; }
+  .ai-sidebar-input-box textarea { font-size: 12.5px !important; }
+  .ai-action-btn { font-size: 11.5px !important; }
+}
+@media (min-width: 769px) and (max-width: 1366px) {
+  .ai-sidebar.open { width: 296px !important; }
+}
+
+/* Chap panel: «Slayd qo'shish» / «Hamma varaqni tozalash» — chetlarga yopishmasin, ikki tomonda teng joy */
+.sidebar-slides-scroll { padding-left: 10px !important; padding-right: 10px !important; }
+.sidebar-slides-scroll > .btn-add-slide-bottom,
+.sidebar-slides-scroll > .btn-reset-canvas,
+.sidebar-slides-scroll > .btn-about-bot {
+  margin-left: 6px !important;
+  margin-right: 6px !important;
+  width: auto !important;
+  border-radius: 10px !important;
+}
+.sidebar-slides-scroll > .btn-add-slide-bottom { margin-top: 2px !important; }
