@@ -58,8 +58,10 @@ def test_notice_endpoint(client, monkeypatch):
     monkeypatch.setattr(ads, "bump", lambda *a: None)
     j = client.get("/api/notice/next").json()
     assert j["notice"]["id"] == 7 and j["notice"]["label"] is False      # eng yangisi, reklama emas, bot uchun emas
-    assert client.get("/api/notice/next?exclude=7").json()["notice"]["id"] == 3
-    assert client.get("/api/notice/next?exclude=7,3").json()["notice"] is None
+    # v56: faqat ENG OXIRGI e'lon. Uni ko'rgan bo'lsa — eskisi (3) chiqmaydi
+    j = client.get("/api/notice/next?exclude=7").json()
+    assert j["notice"] is None and j["latest"] == 7
+    assert client.get("/api/notice/next?exclude=3").json()["notice"]["id"] == 7
     assert client.get("/api/ads/next").json()["ad"]["id"] == 9              # reklama endpointida e'lon chiqmaydi
 
 
@@ -262,3 +264,15 @@ def test_new_mode_sends_balance_to_ai(sb, monkeypatch):
     asyncio.run(tg._run_new(777, {"id": 777}, "balansim qancha?"))
     assert "[ACCOUNT" in seen["user"] and "Balance" in seen["user"]
     assert any("10 varaq" in t for t in sent)
+
+
+def test_notice_only_latest_and_cancel(client, monkeypatch):
+    """3 ta e'lon ketma-ket yuborilgan, odam hech birini ko'rmagan — faqat oxirgisi. Hammasi bekor qilinsa — hech narsa."""
+    rows = [{"id": i, "active": True, "placement": "both", "kind": "notice", "title": f"E'lon {i}"} for i in (10, 11, 12)]
+    _rows(monkeypatch, rows)
+    monkeypatch.setattr(ads, "bump", lambda *a: None)
+    assert client.get("/api/notice/next").json()["notice"]["id"] == 12
+    assert client.get("/api/notice/next?exclude=12").json() == {"notice": None, "latest": 12}   # ko'rgan — eskilari chiqmaydi
+    for r in rows:
+        r["active"] = False                                    # bekor qilindi
+    assert client.get("/api/notice/next?exclude=12").json() == {"notice": None}

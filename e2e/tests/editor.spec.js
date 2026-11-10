@@ -105,8 +105,8 @@ test('yuqori tugmalar yumaloq (pill), chap panel torroq', async ({ page }) => {
   expect(r.length).toBeGreaterThan(1);
   for (const v of r) expect(v).toBeGreaterThanOrEqual(16);
   const w = await page.evaluate(() => document.getElementById('sidebar').getBoundingClientRect().width);
-  expect(w).toBeLessThanOrEqual(212);
-  expect(w).toBeGreaterThanOrEqual(190);
+  expect(w).toBeLessThanOrEqual(224);           // v56: 218px (salgina kengroq)
+  expect(w).toBeGreaterThanOrEqual(212);
 });
 
 test('e\'lon popup: «Reklama» yozuvisiz chiqadi va yopilgach qayta chiqmaydi', async ({ page }) => {
@@ -128,4 +128,54 @@ test('e\'lon popup: «Reklama» yozuvisiz chiqadi va yopilgach qayta chiqmaydi',
   await page.evaluate(() => window.ssCheckNotice());
   await page.waitForTimeout(500);
   await expect(page.locator('#ssNotice')).toHaveCount(0);
+});
+
+test('e\'lon: sahifani yangilamasdan chiqadi, faqat oxirgisi, bekor qilinsa o\'zi yopiladi', async ({ page }) => {
+  const state = { notices: [] };
+  await page.route('**/api/notice/next**', (r) => {
+    const seen = (new URL(r.request().url()).searchParams.get('exclude') || '').split(',').filter(Boolean).map(Number);
+    const latest = state.notices.length ? Math.max(...state.notices.map((n) => n.id)) : null;
+    let body = { notice: null };
+    if (latest !== null) body = seen.includes(latest) ? { notice: null, latest } : { notice: state.notices.find((n) => n.id === latest) };
+    return r.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await openEditor(page);
+  await expect(page.locator('#ssNotice')).toHaveCount(0);
+  const mk = (id) => ({ id, title: "E'lon " + id, body: 'Matn', media_type: 'none', media_url: '', has_link: false, kind: 'notice', label: false });
+  state.notices = [mk(1), mk(2), mk(3)];                       // 3 ta e'lon — odam hech birini ko'rmagan
+  await page.evaluate(() => window.ssCheckNotice());           // (o'zi har 45 s da tekshiradi — testda tezlatamiz)
+  await expect(page.locator('#ssNotice')).toContainText("E'lon 3");
+  state.notices = [mk(1), mk(2)];                              // admin 3-sini bekor qildi
+  await page.evaluate(() => window.ssCheckNotice());
+  await expect(page.locator('#ssNotice')).toHaveCount(0);
+});
+
+test('chap panel tugmalari chetga yopishmagan, ikki tomonda teng joy', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openEditor(page);
+  const sizes = await page.$$eval('.sidebar-slides-scroll > .btn-add-slide-bottom, .sidebar-slides-scroll > .btn-reset-canvas',
+    (els) => els.map((e) => { const r = e.getBoundingClientRect(), p = e.parentElement.getBoundingClientRect(); return [Math.round(r.left - p.left), Math.round(p.right - r.right)]; }));
+  expect(sizes.length).toBe(2);
+  for (const [l, rgt] of sizes) { expect(l).toBeGreaterThanOrEqual(12); expect(Math.abs(l - rgt)).toBeLessThanOrEqual(10); }
+});
+
+test('pastki AI qatori, boshqaruv va zoom tugmalari ixcham; AI panel torroq', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 960 });
+  await openEditor(page);
+  await page.evaluate(() => toggleAISidebar(true));
+  await page.waitForTimeout(500);
+  const m = await page.evaluate(() => ({
+    bar: document.querySelector('.bottom-ai-container').getBoundingClientRect().height,
+    barW: document.querySelector('.bottom-ai-container').getBoundingClientRect().width,
+    ctrl: document.querySelector('.bottom-ctrl-btn').getBoundingClientRect().height,
+    zoom: document.getElementById('mzIn').getBoundingClientRect().height,
+    ai: document.getElementById('aiSidebar').getBoundingClientRect().width,
+    fs: parseFloat(getComputedStyle(document.querySelector('.ai-msg')).fontSize),
+  }));
+  expect(m.bar).toBeLessThanOrEqual(38);
+  expect(m.barW).toBeLessThanOrEqual(570);
+  expect(m.ctrl).toBeLessThanOrEqual(34);
+  expect(m.zoom).toBeLessThanOrEqual(34);
+  expect(m.ai).toBeLessThanOrEqual(322);
+  expect(m.fs).toBeLessThanOrEqual(13);
 });

@@ -78,6 +78,11 @@ npx playwright install --with-deps chromium
 npm test
 ```
 
+## Yangilanganda (v56)
+- Pastki «Shu varoq haqida yozing» qatori, uning ustidagi tugmalar va o'ngdagi zoom tugmalari ixchamroq; AI panel torroq, yozuvi mayinroq; chap panel biroz kengroq, tugmalari chetga yopishmaydi.
+- **E'lon:** faqat ENG OXIRGI faol e'lon ko'rsatiladi (bir nechtasi yuborilib, odam ko'rmagan bo'lsa ham — faqat oxirgisi). Har bir kishiga bir marta. Saytni yangilamasa ham ~45 soniyada chiqadi.
+  Bot admin → «📢 Reklamalar» → e'lon yonidagi **«❌ Bekor qilish»**: saytdagi ochiq popup o'zi yopiladi, botdagi yuborilgan xabarlar chatlardan o'chadi. E'longa rasm, video, havola va tugma qo'shish mumkin.
+
 ## Yangilanganda (v55)
 `SUPABASE_SCHEMA.sql` ni Supabase SQL Editor'da **qayta ishga tushiring** (`ads.kind` ustuni — e'lonlar uchun). Qayta bosish xavfsiz.
 - **E'lon (reklamasiz):** bot admin → «📢 Reklamalar» → «📣 Yangi e'lon» (yoki veb admin panelda «Turi: E'lon»). «Reklama» yozuvisiz; saytda popup bo'lib chiqadi, botda hammaga (VIP ham) boradi.
