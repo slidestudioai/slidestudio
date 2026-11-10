@@ -12,6 +12,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+
+_RUNTIME_SECRET = secrets.token_hex(32)   # v52-fix: fallback HMAC kalit (barcha e'lonlardan oldin)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response, RedirectResponse
@@ -111,10 +113,10 @@ def _env_int(name, default):
 DEFAULT_CONFIG = {
     "supabase_url": "",
     "supabase_publishable_key": "",
-    "supabase_secret_key": "",  
+    "supabase_secret_key": "",
     "google_client_id": "",
-    "google_client_secret": "",  
-    "api_key": "",  
+    "google_client_secret": "",
+    "api_key": "",
     "model_name": "deepseek-chat",
     "available_models": ["deepseek-chat", "deepseek-reasoner"],
     "max_context_messages": 10,
@@ -459,6 +461,23 @@ def init_supabase():
 
 init_supabase()
 
+def _stable_hmac_secret() -> str:
+    """Barcha HMAC imzolar uchun YAGONA barqaror kalit:
+    SLIDE_STUDIO_HMAC_SECRET -> HMAC_SECRET -> config.json hmac_secret -> runtime random.
+    Muhim: server restart'da kalit o'zgarmasligi kerak — aks holda admin tokenlari
+    yaroqsiz bo'ladi va foydalanuvchi sessiyalari (TOK_CACHE kaliti) reset bo'ladi."""
+    s = (os.environ.get("SLIDE_STUDIO_HMAC_SECRET") or os.environ.get("HMAC_SECRET") or "").strip()
+    if not s:
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    s = str((json.load(f) or {}).get("hmac_secret") or "").strip()
+        except Exception:
+            s = ""
+    return s or _RUNTIME_SECRET
+
+# load_config() hali ishlamaydigan paytda ham xavfsiz (CONFIG_FILE faylidan o'qiydi).
+_SCALING_HMAC_SECRET = _stable_hmac_secret()
 try:
     from backend.scaling import (
         GEMINI_SEMAPHORE, MAX_WS as _SCALING_MAX_WS, DEEPSEEK_CONCURRENCY,
@@ -466,6 +485,13 @@ try:
         _active_sessions as active_sessions,
         _sessions_lock as sessions_lock,
     )
+    # v52-fix: scaling moduli bilan BIR XIL kalitni ishlatamiz — aks holda hash_user_id
+    # natijasi main.py fallback'i bilan farq qilib, tok-kesh/session kalitlari buziladi.
+    if (_env("SLIDE_STUDIO_HMAC_SECRET", "HMAC_SECRET", default="") != _SCALING_HMAC_SECRET
+            and getattr(__import__("backend.scaling", fromlist=["scaling"]), "HMAC_SECRET", "") != _SCALING_HMAC_SECRET):
+        def hash_user_id(uid: str, _sec=_SCALING_HMAC_SECRET) -> str:  # noqa: F811
+            import hashlib, hmac as _hmac
+            return _hmac.new(_sec.encode("utf-8"), (uid or "anon").encode("utf-8"), hashlib.sha256).hexdigest()[:32]
     MAX_WS = _SCALING_MAX_WS
     print(f"[SCALING] concurrency={DEEPSEEK_CONCURRENCY} MAX_WS={MAX_WS}")
 except Exception as _sc_err:
@@ -478,20 +504,29 @@ except Exception as _sc_err:
     MAX_WS = int(os.environ.get("MAX_WS", "2000") or "2000")
     def hash_user_id(uid: str) -> str:
         import hashlib, hmac as _hmac
-        secret = (os.environ.get("SLIDE_STUDIO_HMAC_SECRET") or _RUNTIME_SECRET).encode()
+        secret = _stable_hmac_secret().encode()
         return _hmac.new(secret, (uid or "anon").encode(), hashlib.sha256).hexdigest()[:32]
 
-_RUNTIME_SECRET = secrets.token_hex(32)
 MODEL_COST_MULT = {"deepseek-chat": 1, "deepseek-reasoner": 3}   # (eski nom; faqat ma'lumot) Chuqur varaq = 3 Tez-varaq. Narx — backend/monitoring.py MODES
 server_paused = threading.Event()
 _user_locks: Dict[str, asyncio.Lock] = {}
+_user_locks_guard = threading.Lock()   # v52-fix: clear()/create tugmachasiz holat (race) oldini oladi
 
 def _user_lock(uid: str) -> asyncio.Lock:
     lk = _user_locks.get(uid)
     if lk is None:
-        if len(_user_locks) > 5000:
-            _user_locks.clear()
-        lk = _user_locks[uid] = asyncio.Lock()
+        with _user_locks_guard:
+            lk = _user_locks.get(uid)          # double-checked: boshqa ip birinchi yaratgan bo'lishi mumkin
+            if lk is None:
+                if len(_user_locks) > 5000:
+                    # v52-fix: to'liq clear() o'rniga FAQAT band bo'lmagan lock'larni o'chiramiz.
+                    # Eski xatti-harakat: clear() davomida yopib qo'yilgan lock yo'qolib,
+                    # ikki parallel oqim (webhook + sayt) BOSHQA lock olib, balans race'iga yo'l qo'yardi.
+                    for k in [k for k, v in list(_user_locks.items()) if not v.locked()][:2500]:
+                        _user_locks.pop(k, None)
+                    if len(_user_locks) > 5000:   # hali ham juda ko'p — majburan tozalash (oxirgi chora)
+                        _user_locks.clear()
+                lk = _user_locks[uid] = asyncio.Lock()
     return lk
 
 def _deck_slide_count(deck_state) -> Optional[int]:
@@ -567,7 +602,7 @@ def _get_or_create_user_usage_raw(user_id: str, email: str) -> dict:
         return apply_24h_reset(default)
     try:
         res = supabase.table("user_usage").select("*").eq("user_id", user_id).execute()
-        if res.data:
+        if res.
             u = normalize_user_row(res.data[0])
             u_before = dict(u)
             u = apply_24h_reset(u)
@@ -975,7 +1010,7 @@ admin_core.configure(
     supabase_getter=lambda: supabase,
     ledger_log=lambda *a, **k: ledger_log(*a, **k),
     config=lambda: config,
-    secret_hint=lambda: config.get("supabase_secret_key") or "",
+    secret_hint=lambda: config.get("supabase_secret_key") or _stable_hmac_secret(),
     state=_admin_state, paused=lambda: server_paused.is_set(),
     set_paused=_set_paused, set_ai_key=_set_ai_key,
 )
@@ -1165,7 +1200,7 @@ async def import_pdf(request: Request):
     if ctype and ctype not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(status_code=415, detail="Faqat PDF fayl qabul qilinadi")
     data = await _read_body_limited(request)
-    if not data:
+    if not 
         raise HTTPException(status_code=400, detail="Fayl bo'sh")
     if not data.startswith(b"%PDF"):
         raise HTTPException(status_code=400, detail="Bu PDF emas")
@@ -1194,9 +1229,9 @@ async def analyze_images(payload: Dict[str, Any]):
             continue
         number = item.get("number")
         src = item.get("src") or ""
-        if isinstance(src, str) and src.startswith("data:") and len(src) > int(MAX_UPLOAD_BYTES * 1.4):     # base64 ~ 1.33x
+        if isinstance(src, str) and src.startswith("") and len(src) > int(MAX_UPLOAD_BYTES * 1.4):     # base64 ~ 1.33x
             raise HTTPException(status_code=413, detail="Rasm 10 MB dan oshmasin")
-        if not isinstance(src, str) or not src.lower().startswith(tuple("data:" + m + ";" for m in ALLOWED_IMAGE_MIME)):
+        if not isinstance(src, str) or not src.lower().startswith(tuple("" + m + ";" for m in ALLOWED_IMAGE_MIME)):
             results.append({"number": number, "description": "Rasm ma'lumoti mavjud emas."})
             continue
         image_desc = "Rasm tarkibiy qismlari va asosiy ob'ektlari aniqlanmoqda."
@@ -1363,7 +1398,7 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     return_url = ls["base_url"] or str(return_url_hint or "").strip().rstrip("/")
     if return_url and not return_url.startswith(("http://", "https://")):
         return_url = ""
-    checkout_data: Dict[str, Any] = {"custom": {"user_id": str(user_id), "product": "pack"}}
+    checkout_ Dict[str, Any] = {"custom": {"user_id": str(user_id), "product": "pack"}}
     if user_email:
         checkout_data["email"] = user_email
     product_options: Dict[str, Any] = {"name": f"Slide Studio — {pack_pages()} varaq"}
@@ -1662,9 +1697,9 @@ def _is_public_host(host: str) -> bool:
     except Exception:
         return False
 
-def _sniff_image_mime(data: bytes, fallback: str = "") -> str:
+def _sniff_image_mime( bytes, fallback: str = "") -> str:
     """Magic-bytes asosida MIME. GIF har doim image/gif — animatsiya yo'qolmasin."""
-    if not data:
+    if not 
         return fallback if fallback.startswith("image/") else ""
     if data[:6] in (b"GIF87a", b"GIF89a"):
         return "image/gif"
@@ -1893,12 +1928,12 @@ async def proxy_image(url: str, raw: int = 0):
                 "Cache-Control": "public, max-age=86400, immutable",
                 "Access-Control-Allow-Origin": "*",
                 "Cross-Origin-Resource-Policy": "cross-origin",
-                "Content-Security-Policy": "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+                "Content-Security-Policy": "sandbox; default-src 'none'; img-src ; style-src 'unsafe-inline'",
                 "X-Content-Type-Options": "nosniff",
             },
         )
     return JSONResponse({
-        "data_url": f"data:{ctype};base64," + base64.b64encode(data).decode(),
+        "data_url": f"{ctype};base64," + base64.b64encode(data).decode(),
         "content_type": ctype,
         "final_url": res.get("final_url") or url,
     })
