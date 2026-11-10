@@ -12,6 +12,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from starlette.websockets import WebSocketState
 
 _RUNTIME_SECRET = secrets.token_hex(32)   # v52-fix: fallback HMAC kalit (barcha e'lonlardan oldin)
 from fastapi.middleware.cors import CORSMiddleware
@@ -2296,706 +2297,731 @@ async def ws_chat(websocket: WebSocket):
     DEV_MODE = os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() == "1"
     DEV_TOKEN = os.environ.get("SLIDE_STUDIO_DEV_TOKEN", "")
     try:
+        _ws_errs = 0
         while True:
             raw = await websocket.receive_text()
-            data = json.loads(raw)
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                data = None
+            if not isinstance(data, dict):        # v53: noto'g'ri xabar butun ulanishni yopmaydi
+                await websocket.send_json({"type": "error", "code": "bad_request", "message": "Noto'g'ri so'rov."})
+                continue
             if data.get("type") == "search_result":
                 continue
-            token = data.get("token", "")
-            prompt = (data.get("prompt") or "").strip()
-            deck_state = data.get("deck_state") or data.get("slide_context") or ""
-            images_meta: List[Dict] = data.get("images_meta") or []
-            chat_history = data.get("chat_history") or []
-            scope = data.get("scope", "all_slides")
-            active_slide = data.get("active_slide_index", 1)
-            mode = (data.get("mode") or "").strip().lower()
-            plan_slides = data.get("plan_slides") or []
-            plan_index = data.get("plan_index")
-            model = resolve_model(data.get("model"), config.get("model_name", "deepseek-chat"))
-            if DEV_MODE and DEV_TOKEN and token and token == DEV_TOKEN:
-                uid, email = "dev-user", "dev@local"
-            else:
-                if not supabase:
-                    print("[AUTH] ❌ supabase=None — server tomonida auth sozlanmagan.")
-                    await websocket.send_json({"type": "error", "code": "server_auth_misconfigured",
-                                               "message": "Serverda avtorizatsiya sozlanmagan. Administratorga murojaat qiling."})
-                    continue
-                if not token or token == "dev-token":
-                    await websocket.send_json({"type": "error", "code": "auth_required",
-                                               "message": "AI bilan yozishish uchun tizimga kiring."})
-                    continue
-                try:
-                    _tk = hash_user_id(token)
-                    _hit = _TOK_CACHE.get(_tk)
-                    if _hit and time.time() - _hit[2] < TOK_TTL:
-                        uid, email = _hit[0], _hit[1]
-                    else:
-                        user_res = await asyncio.to_thread(supabase.auth.get_user, token)
-                        if not user_res or not user_res.user:
-                            _TOK_CACHE.pop(_tk, None)
-                            await websocket.send_json({"type": "error", "code": "invalid_token",
-                                                       "message": "Sessiya tugagan. Qayta kiring."})
-                            continue
-                        uid = user_res.user.id
-                        email = user_res.user.email or ""
-                        _TOK_CACHE[_tk] = (uid, email, time.time())
-                        while len(_TOK_CACHE) > 5000:
-                            _TOK_CACHE.popitem(last=False)
-                except Exception as e:
-                    await websocket.send_json({"type": "error", "code": "invalid_token",
-                                               "message": "Kirishni tekshirib bo'lmadi. Qayta kiring."})
-                    continue
-            _wait = _user_rate_hit(str(uid), "plan" if mode == "plan" else ("generate" if mode == "generate" else "chat"))
-            if _wait:
-                await websocket.send_json({"type": "error", "code": "RATE_LIMITED", "retry_after": _wait,
-                                           "message": f"Juda tez-tez so'rov yuboryapsiz. {_wait} soniyadan keyin qayta urinib ko'ring."})
-                continue
-            usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
-            if usage.get("blocked"):
-                await websocket.send_json({"type": "error", "message": "Akkaunt bloklangan."})
-                continue
-            if appsettings.get("maintenance") and not is_unlimited(usage):
-                await websocket.send_json({"type": "error", "code": "maintenance", "message": appsettings.get("maintenance_text")})
-                continue
-
-            usage = apply_24h_reset(usage)
-            bill_mode = mode_for_model(model)
-            bal_units = total_credits(usage)
-            if not can_afford(usage, bill_mode):
-                payload = usage_payload(usage)
-                _alt = ""
-                if bill_mode == "deep" and can_afford(usage, "fast"):
-                    _alt = " Chuqur AI uchun balans yetmaydi — Tez AI ga o'tib davom eting."
-                await websocket.send_json({
-                    "type": "error",
-                    "code": "LIMIT_EXCEEDED",
-                    "message": f"Limit tugadi.{_alt} 24 soat kuting, ${CHECKOUT_PRICE_USD:.2f} ga {pack_pages()} Tez-varaq ({pack_units() // MODES['deep']['page']} Chuqur-varaq) sotib oling.",
-                    **payload,
-                })
-                continue
-            bal = bal_units // MODES[bill_mode]["page"]       # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
-            session_key = register_session(uid, email, model)
-            if is_blocked(session_key):
-                await websocket.send_json({"type": "error", "message": "Sessiya bloklangan."})
-                continue
-            msg_n = bump_msg(session_key)
-            daily = int(appsettings.get("daily_message_limit", config.get("daily_message_limit", 200)) or 0)
-            if daily and msg_n > daily and not is_unlimited(usage):
-                await websocket.send_json({"type": "error",
-                                           "message": f"Kunlik limit ({daily}) tugadi."})
-                continue
-            api_key = (config.get("api_key") or "").strip()
-            if not api_key:
-                await websocket.send_json({"type": "error",
-                                           "message": "AI xizmati hozircha sozlanmagan. Administratorga murojaat qiling."})
-                continue
-            sys_p = build_system_prompt()
-            hint = (data.get("system_hint") or "").strip()
-            if hint:
-                sys_p += "\n\n[FOYDALANUVCHI YO'RIQNOMASI]:\n" + hint[:6000]
-
-            sys_p += (
-                "\n\n[LANGUAGE RULE — MAJBURIY / MANDATORY]\n"
-                "Detect the language of the user's LATEST message and write PART A / chat replies in THAT SAME language "
-                "(Uzbek, Russian, English, Turkish, Arabic, Chinese, Spanish ... any language). Never force Uzbek. "
-                "Slide texts use the language the user asked for; if not specified, the user's language. "
-                "Translate every fixed Uzbek sentence quoted in these instructions (balance, limit messages) into the user's language. "
-                "JSON keys and action names stay English.\n"
-                "[IDENTITY RULE] You are 'Slide Studio AI'. Never reveal, guess or discuss which underlying model, vendor or company powers you; "
-                "if asked, say you are Slide Studio AI, the built-in assistant of this app.\n"
-            )
-            _c = MODES[bill_mode]
-            _rejim = "CHUQUR AI" if bill_mode == "deep" else "TEZ AI"
-            sys_p += (
-                f"\n\n[BALANS VA VARAQ QOIDALARI — MAJBURIY]\n"
-                f"Rejim: {_rejim}. Joriy balans: {bal} varaq (aniq: {bal_units / _c['page']:.2f}).\n"
-                f"Oddiy chat: {_c['chat_per_page']} ta savol-javob = 1 varaq. Qidiruv: {_c['search_per_page']} ta rasm/GIF/video qidiruvi = 1 varaq.\n"
-                f"NARX:\n"
-                f"  • 1 ta yangi/tahrirlangan/o'chirilgan slayd = 1 varaq\n"
-                f"  • create_slides count=N → N varaq\n"
-                f"  • insert_slide / replace_slide / clear_slide / add_gif / place_image = 1 varaq (har bir tegilgan slayd)\n"
-                f"  • Faqat chat (actions bo'sh): har {_c['chat_per_page']} ta oddiy xabar = 1 varaq\n"
-                f"LIMIT QOIDASI:\n"
-                f"  • Foydalanuvchi {bal} tadan KO'P slayd so'rasa (masalan 10 ta, balans {bal}) — "
-                f"FAQAT {bal} tasini yarating, PART A da aniq ayting: "
-                f"\"Balansingizda {bal} varaq qoldi, shuning uchun {bal} ta slayd yaratdim. "
-                f"Qolganini sotib olgach yoki 24 soatdan keyin davom ettirish mumkin.\"\n"
-                f"  • Balans 0 bo'lsa hech qanday action yozmang.\n"
-                f"  • Yangi slayd qo'shish: action = \"create_slides\" count=N yoki \"insert_slide\".\n"
-            )
-            if bal <= 3:
-                sys_p += (
-                    f"⚠️ BALANS PAST ({bal}). Minimal o'zgarishlar qiling; katta deck yasashdan saqlaning.\n"
-                )
-            if scope == "current_slide":
-                sys_p += (
-                    f"\n\n[SCOPE: CURRENT_SLIDE]\nJoriy varoq: {active_slide}-slayd.\n"
-                    "Agar foydalanuvchi shu slaydga tegishli o'zgartirish so'rasa, shu slaydda ishlang.\n"
-                    "Boshqa slaydga tegishli buyruq bo'lsa ham swap/move_image_to_slide ishlating.\n"
-                    "MUHIM: Agar foydalanuvchi shunchaki salomlashsa yoki umumiy savol bersa "
-                    "(slaydni o'zgartirishni so'ramasa), hech qanday action yaratmang — "
-                    "shunchaki tabiiy matnda javob bering va \"actions\": [] qoldiring.\n"
-                )
-            if mode == "plan":
-                sys_p += (
-                    "\n\n[MODE: PLAN — REJA BOSQICHI]\n"
-                    "Faqat REJA tuzing, to'liq slayd kontentini YOZMANg.\n"
-                    "Javob formati (faqat shu JSON):\n"
-                    '{"reply_text":"<qisqa izoh>","plan":[{"title":"<slayd sarlavhasi>",'
-                    '"summary":"<1 jumla mazmun>","has_image":true|false}, ...]}\n'
-                    "QOIDALAR:\n"
-                    "- `plan` massivida foydalanuvchi so'ragan ANIQ sondagi slayd bo'lsin.\n"
-                    "- Har bir elementda faqat `title`, `summary`, `has_image` bo'lsin. `has_image` — foydalanuvchi rasmni taqiqlamagan bo'lsa va rasm slaydga foyda beradigan bo'lsa true (titul va mavzuni ko'rsatadigan slaydlarda odatda true); taqiqlagan bo'lsa hammasi false.\n"
-                    "- `actions` massivini YOZMANg (rejada kerak emas).\n"
-                    "- Hech qanday `replace_slide`/`insert_slide` chiqarmang.\n"
-                )
-            elif mode == "generate":
-                try:
-                    total = len(plan_slides) if isinstance(plan_slides, list) else 0
-                    idx = int(plan_index) if plan_index is not None else 0
-                except Exception:
-                    total, idx = 0, 0
-                cur = plan_slides[idx] if (isinstance(plan_slides, list) and 0 <= idx < len(plan_slides)) else {}
-                slide_no = idx + 1
-                action_name = "replace_slide" if slide_no == 1 else "insert_slide"
-                after_no = slide_no - 1
-                sys_p += (
-                    f"\n\n[MODE: GENERATE — {slide_no}/{total or '?'} SLAYDNI YARATISH]\n"
-                    f"Faqat {slide_no}-slaydni to'liq yarating. Boshqa slaydlarni YOZMANg.\n"
-                    f"Reja ma'lumoti: {json.dumps(cur, ensure_ascii=False)}\n"
-                    "QOIDALAR:\n"
-                    f"- Faqat BITTA asosiy action chiqaring: `{action_name}`"
-                    + (f' bilan `"slide": 1`' if slide_no == 1 else f' bilan `"after": {after_no}`') + ".\n"
-                    "- `elements` massivida sarlavha + matn/kartalar bo'lsin (reja mazmuniga mos).\n"
-                    "- RASM: foydalanuvchi rasm/GIF'ni TAQIQLAMAGAN bo'lsa va reja `has_image` true bo'lsa — AVVAL search_images tool bilan mavzuga 100% mos rasm toping va {\"type\":\"image\",\"src\":URL,...} element qiling. Rasm taqiqlangan bo'lsa — rasm QO'SHMANG.\n"
-                    "- Rang mavzusi barcha slaydlarda BIR XIL: 1-slayddagi `background` va ranglarni (deck state'dan) takrorlang.\n"
-                    "- Professional ko'rinish uchun maqsadli shakllardan foydalaning: sarlavha ostida chiziq/aksent, raqamli doira, galochka (check), strelka/chevron, pill. Tasodifiy shakl sochmang.\n"
-                    "- Jami actionlar soni 4 tadan OSHMASIN. Tool (search_images) chaqiruvlari bu hisobga kirmaydi.\n"
-                    "- JSON toza va to'liq bo'lsin (trailing comma yo'q, qo'shtirnoqlar yopilgan).\n"
-                )
-            imgs = extract_images_from_deck_state(deck_state)
-            meta_desc = {}
-            for m in images_meta:
-                if isinstance(m, dict) and m.get("number") is not None and m.get("description"):
-                    meta_desc[m["number"]] = m["description"]
-            if imgs["pending"]:
-                lines = []
-                for p in imgs["pending"]:
-                    n = p.get("number")
-                    if n is None:
-                        continue
-                    d = meta_desc.get(n, "")
-                    dim = ""
-                    if p.get("width") and p.get("height"):
-                        dim = f" [{p['width']}x{p['height']}]"
-                    lines.append(f"  • Rasm #{n}: {d}{dim}")
-                sys_p += "\n\n[FOYDALANUVCHI YUKLAGAN RASMLAR — PENDING]\n" + "\n".join(lines) + "\n"
-                sys_p += (
-                    "Bu rasmlar hali slaydda EMAS — faqat metadata (raqam, o'lcham) berilgan.\n"
-                    "Ularni ishlatish uchun ANIQ action chiqaring:\n"
-                    "  • place_image (slide, image_number, image_index, left, top, width, height) — slaydga qo'yish.\n"
-                    "  • set_background_url (slide, image_number) — to'liq fon qilish (url SHART EMAS).\n"
-                    "  • duplicate_image (to_slide, image_number, left, top, width, height) — bir rasmni 2+ slaydga nusxalash.\n"
-                    "Rasm ishlatilgach panel'dan AVTOMATIK o'chiriladi — qayta ishlatmang.\n"
-                )
-            if imgs["placed"]:
-                lines = []
-                gif_lines = []
-                for img in imgs["placed"]:
-                    is_gif = (img.get("kind") == "gif")
-                    label = "GIF" if is_gif else "Rasm"
-                    line = f"  • {label} #{img.get('number')}"
-                    if img.get("slide") is not None:
-                        line += f" — {img['slide']}-VAROQDA"
-                    if img.get("left") is not None:
-                        line += f", joy=({img['left']},{img['top']})"
-                    if img.get("width"):
-                        line += f", {img['width']}×{img['height']}"
-                    if is_gif:
-                        gif_lines.append(line)
-                    else:
-                        lines.append(line)
-                if lines:
-                    sys_p += "\n\n[ALLAQACHON JOYLASHTIRILGAN RASMLAR]\n" + "\n".join(lines) + "\n"
-                if gif_lines:
-                    sys_p += "\n\n[JONLI GIF'LAR — ALLAQACHON SLAYDLARDA]\n" + "\n".join(gif_lines) + "\n"
-                    sys_p += (
-                        "Bu elementlar JONLI GIF (animatsiyali). Ular #raqam-GIF bilan belgilangan.\n"
-                        "GIF'lar oddiy rasmlardan farq qiladi — ular animatsiyali va o'lchamga ega.\n"
-                        "GIF'ni ko'chirish/almashtirish uchun move_image_to_slide yoki swap_images ishlating.\n"
-                        "GIF'ni fon qilish uchun set_background_url (image_number bilan) ishlating.\n"
-                    )
-
-            sys_p += (
-                "\n\n[RASM/GIF ALMASHTIRISH — swap_images]\n"
-                "Ikki xil rasmni (yoki GIFni) almashtirish uchun `swap_images` action ishlating.\n"
-                "SXEMA: {\"action\":\"swap_images\",\"image_a\":<1-rasm raqami>,\"slide_a\":<a slayd>,\n"
-                "        \"image_b\":<2-rasm raqami>,\"slide_b\":<b slayd>,\"swap_position\":true|false}\n"
-                "QOIDALAR:\n"
-                "- `image_a` va `image_b` — global rasm/GIF raqamlari (yuqoridagi ro'yxatdan).\n"
-                "- `slide_a`/`slide_b` — o'sha rasmlar joylashgan slayd raqamlari (1-based).\n"
-                "- `swap_position: true` (standart) — rasm TARKIBI almashtiriladi, joyi/o'lchami o'zgarmaydi.\n"
-                "- `swap_position: false` — rasm JOYI/o'lchami almashtiriladi, tarkibi o'zgarmaydi.\n"
-                "- Ikkala rasm ham mavjud va turli obyekt bo'lishi SHART.\n"
-                "- GIF'lar ham xuddi rasm kabi almashtiriladi (raqami bo'yicha).\n"
-            )
-
-            sys_p += (
-                "\n\n[AMALLAR HISOBOTI VA HALOLLIK]\n"
-                "Sizga har safar oldingi javobingizdagi amallarning HAQIQIY bajarilish natijasi "
-                "(✅ bajarilgan / ❌ bajarilmagan) berilishi mumkin.\n"
-                "QOIDALAR:\n"
-                "- Agar amal ✅ bo'lsa — u TUGALLANGAN. Uni QAYTA bajarmang va qayta so'ramang.\n"
-                "- Agar amal ❌ bo'lsa — u BAJARILMAGAN. Foydalanuvchiga bajarildi deb AYTMANG; "
-                "sababini tushuntiring yoki to'g'rilab qayta urinib ko'ring.\n"
-                "- `reply_text` da faqat HAQIQATDA bajarilgan ishni tasvirlang. Yolg'on da'vo qilmang.\n"
-                "- Foydalanuvchi \"bajarilmadi\" desa va hisobotda ✅ bo'lsa — ish aslida bajarilgan; "
-                "muloyimlik bilan tasdiqlang va nima o'zgarganini tushuntiring.\n"
-            )
-            if deck_state:
-                try:
-                    d = json.loads(deck_state) if isinstance(deck_state, str) else deck_state
-                    if isinstance(d, dict):
-                        def _obj_brief(o, z_index=0):
-                            if not isinstance(o, dict):
-                                return None
-                            is_gif = bool(o.get("isGif") or o.get("gifUrl") or o.get("type") in ("gif", "gifImage") or o.get("kind") == "gif")
-                            is_img = is_gif or o.get("type") in ("image", "videoImage", "video", "embedVideo") or o.get("kind") == "image" or o.get("isVideo")
-                            is_text = o.get("type") in ("textbox", "i-text", "text") or o.get("kind") == "text"
-                            brief = {
-                                "type": "gif" if is_gif else (o.get("type") or o.get("kind")),
-                                "id": o.get("id") or o.get("_oid"),
-                                "left": o.get("left"), "top": o.get("top"),
-                                "width": o.get("width"), "height": o.get("height"),
-                                "angle": o.get("angle") or 0,
-                                "zIndex": z_index,
-                            }
-                            if o.get("fill") is not None:
-                                brief["fill"] = o.get("fill")
-                            if o.get("stroke") is not None:
-                                brief["stroke"] = o.get("stroke")
-                            if o.get("strokeWidth") is not None:
-                                brief["strokeWidth"] = o.get("strokeWidth")
-                            if o.get("opacity") is not None:
-                                brief["opacity"] = o.get("opacity")
-                            if is_text:
-                                brief["text"] = (o.get("text") or "")[:120]
-                                if o.get("fontSize") is not None:
-                                    brief["fontSize"] = o.get("fontSize")
-                                if o.get("fontFamily"):
-                                    brief["fontFamily"] = o.get("fontFamily")
-                                if o.get("fontWeight") is not None:
-                                    brief["fontWeight"] = o.get("fontWeight")
-                                if o.get("fontStyle") is not None:
-                                    brief["fontStyle"] = o.get("fontStyle")
-                                if o.get("textAlign") is not None:
-                                    brief["textAlign"] = o.get("textAlign")
-                                if o.get("underline"):
-                                    brief["underline"] = True
-                            if is_img and o.get("imageNumber") is not None:
-                                brief["imageNumber"] = o.get("imageNumber")
-                            if o.get("animation") or o.get("animName"):
-                                brief["animation"] = o.get("animation") or o.get("animName")
-                            if o.get("type") == "video" or o.get("type") == "embedVideo":
-                                brief["type"] = "video"
-                                brief["url"] = (o.get("url") or o.get("embedUrl") or "")[:160]
-                            if o.get("type") in ("button", "slideButton"):
-                                brief["type"] = "button"
-                                brief["text"] = (o.get("buttonText") or o.get("text") or o.get("btnLabel") or "")[:60]
-                                brief["click"] = o.get("click") or o.get("btnAction")
-                            if is_gif:
-                                brief["kind"] = "gif"
-                                if o.get("gifUrl"):
-                                    brief["gifUrl"] = (o.get("gifUrl") or "")[:120]
-                            return brief
-
-                        full = {
-                            "active_slide": d.get("active_slide"),
-                            "total_slides": d.get("total_slides") or len(d.get("presentation") or []) or 1,
-                            "title": d.get("title"),
-                            "pending_images": d.get("slide_images_pending") or [],
-                        }
-
-                        pres = d.get("presentation") or []
-                        slides_out = []
-                        if isinstance(pres, list) and pres:
-                            for s in pres[:30]:
-                                if not isinstance(s, dict):
-                                    continue
-                                entry = {
-                                    "slide": s.get("slide") or s.get("slide_index"),
-                                    "background": s.get("background") or "#ffffff",
-                                    "objects": [],
-                                }
-                                if s.get("backgroundGif"):
-                                    entry["backgroundGif"] = True
-                                if s.get("backgroundImage"):
-                                    entry["backgroundImage"] = True
-                                for zi, o in enumerate((s.get("objects") or s.get("elements") or [])[:50]):
-                                    b = _obj_brief(o, z_index=zi)
-                                    if b:
-                                        entry["objects"].append(b)
-                                slides_out.append(entry)
-                        else:
-
-                            sd = d.get("slide_data") or {}
-                            if isinstance(sd, dict):
-                                entry = {
-                                    "slide": d.get("active_slide") or 1,
-                                    "background": sd.get("background") or "#ffffff",
-                                    "objects": [],
-                                }
-                                if sd.get("backgroundGif"):
-                                    entry["backgroundGif"] = True
-                                for zi, o in enumerate((sd.get("objects") or sd.get("elements") or [])[:50]):
-                                    b = _obj_brief(o, z_index=zi)
-                                    if b:
-                                        entry["objects"].append(b)
-                                slides_out.append(entry)
-                        full["slides"] = slides_out
-                        sys_p += (
-                            "\n\n[LIVE DECK STATE — GROUND TRUTH]\n"
-                            "Use ONLY this data. Do not invent objects/images.\n"
-                            + json.dumps(full, ensure_ascii=False)
-                        )
-                except Exception:
-                    sys_p += f"\n\n[LIVE DECK STATE]:\n{str(deck_state)[:6000]}"
-            if model == "deepseek-reasoner":
-                sys_p = sys_p.replace("search_images tool bilan", "tayyor rasm ro'yxatidan").replace("search_images", "(rasm qidirish)") + _NO_TOOLS_NOTE
-            messages = [{"role": "system", "content": sys_p}]
-            messages.extend(build_history(chat_history))
-            user_content = prompt or "Buyruqni bajaring."
-            if images_meta:
-                tags = []
-                for m in images_meta:
-                    if isinstance(m, dict):
-                        n = m.get("number") or m.get("globalNum")
-                        if n is not None:
-                            tags.append(f"[User Image #{n}]")
-                if tags:
-                    user_content = " ".join(tags) + "\n" + user_content
-            messages.append({"role": "user", "content": user_content})
-            full_reply = ""
-            usage_meta = None
-            stream_err = None
-            finish_reason = None
-            client = None
-            client_gone = False
             try:
-
-                client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
-                async with _ds_slot(websocket):
-                    tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
-                    if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
-                        try:
-                            _ctx, _want = user_content or "", _wants_images(prompt or "")
-                            if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
-                                _cur = plan_slides[int(plan_index)] or {}
-                                _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
-                                _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
-                            if _want:
-                                _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket)
-                                if _extra:
-                                    messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
-                        except Exception as _pe:
-                            print(f"[DEEP-IMG] {type(_pe).__name__}: {str(_pe)[:80]}")
-                    msgs = messages
-                    n_searches = 0
-                    _dsml_retried = False
-                    agg_in = agg_out = agg_tot = 0
-                    # v29: qidiruvdan oldin yozilgan matn (PART A) O'CHIRILMAYDI va qayta yozdirilmaydi
-                    shown_text = False      # foydalanuvchi allaqachon matn ko'rdi
-                    sep_pending = False     # keyingi raundning matni oldiga bo'sh qator qo'yiladi
+                token = data.get("token", "")
+                prompt = (data.get("prompt") or "").strip()
+                deck_state = data.get("deck_state") or data.get("slide_context") or ""
+                images_meta: List[Dict] = data.get("images_meta") or []
+                chat_history = data.get("chat_history") or []
+                scope = data.get("scope", "all_slides")
+                active_slide = data.get("active_slide_index", 1)
+                mode = (data.get("mode") or "").strip().lower()
+                plan_slides = data.get("plan_slides") or []
+                plan_index = data.get("plan_index")
+                model = resolve_model(data.get("model"), config.get("model_name", "deepseek-chat"))
+                if DEV_MODE and DEV_TOKEN and token and token == DEV_TOKEN:
+                    uid, email = "dev-user", "dev@local"
+                else:
+                    if not supabase:
+                        print("[AUTH] ❌ supabase=None — server tomonida auth sozlanmagan.")
+                        await websocket.send_json({"type": "error", "code": "server_auth_misconfigured",
+                                                   "message": "Serverda avtorizatsiya sozlanmagan. Administratorga murojaat qiling."})
+                        continue
+                    if not token or token == "dev-token":
+                        await websocket.send_json({"type": "error", "code": "auth_required",
+                                                   "message": "AI bilan yozishish uchun tizimga kiring."})
+                        continue
                     try:
-                        for _round in range(MAX_TOOL_ROUNDS + 1):
-                            kwargs = {
-                                "model": model,
-                                "messages": msgs,
-                                "stream": True,
-                                "stream_options": {"include_usage": True},
-                                "max_tokens": 16384,
-                            }
-                            if model != "deepseek-reasoner":
-                                kwargs["temperature"] = 0.7
-                            if tools_on and _round < MAX_TOOL_ROUNDS and n_searches < MAX_SEARCHES_PER_TURN:
-                                kwargs["tools"] = SEARCH_TOOLS
-                                kwargs["tool_choice"] = "auto"
+                        _tk = hash_user_id(token)
+                        _hit = _TOK_CACHE.get(_tk)
+                        if _hit and time.time() - _hit[2] < TOK_TTL:
+                            uid, email = _hit[0], _hit[1]
+                        else:
+                            user_res = await asyncio.to_thread(supabase.auth.get_user, token)
+                            if not user_res or not user_res.user:
+                                _TOK_CACHE.pop(_tk, None)
+                                await websocket.send_json({"type": "error", "code": "invalid_token",
+                                                           "message": "Sessiya tugagan. Qayta kiring."})
+                                continue
+                            uid = user_res.user.id
+                            email = user_res.user.email or ""
+                            _TOK_CACHE[_tk] = (uid, email, time.time())
+                            while len(_TOK_CACHE) > 5000:
+                                _TOK_CACHE.popitem(last=False)
+                    except Exception as e:
+                        await websocket.send_json({"type": "error", "code": "invalid_token",
+                                                   "message": "Kirishni tekshirib bo'lmadi. Qayta kiring."})
+                        continue
+                _wait = _user_rate_hit(str(uid), "plan" if mode == "plan" else ("generate" if mode == "generate" else "chat"))
+                if _wait:
+                    await websocket.send_json({"type": "error", "code": "RATE_LIMITED", "retry_after": _wait,
+                                               "message": f"Juda tez-tez so'rov yuboryapsiz. {_wait} soniyadan keyin qayta urinib ko'ring."})
+                    continue
+                usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
+                if usage.get("blocked"):
+                    await websocket.send_json({"type": "error", "message": "Akkaunt bloklangan."})
+                    continue
+                if appsettings.get("maintenance") and not is_unlimited(usage):
+                    await websocket.send_json({"type": "error", "code": "maintenance", "message": appsettings.get("maintenance_text")})
+                    continue
 
+                usage = apply_24h_reset(usage)
+                bill_mode = mode_for_model(model)
+                bal_units = total_credits(usage)
+                if not can_afford(usage, bill_mode):
+                    payload = usage_payload(usage)
+                    _alt = ""
+                    if bill_mode == "deep" and can_afford(usage, "fast"):
+                        _alt = " Chuqur AI uchun balans yetmaydi — Tez AI ga o'tib davom eting."
+                    await websocket.send_json({
+                        "type": "error",
+                        "code": "LIMIT_EXCEEDED",
+                        "message": f"Limit tugadi.{_alt} 24 soat kuting, ${CHECKOUT_PRICE_USD:.2f} ga {pack_pages()} Tez-varaq ({pack_units() // MODES['deep']['page']} Chuqur-varaq) sotib oling.",
+                        **payload,
+                    })
+                    continue
+                bal = bal_units // MODES[bill_mode]["page"]       # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
+                session_key = register_session(uid, email, model)
+                if is_blocked(session_key):
+                    await websocket.send_json({"type": "error", "message": "Sessiya bloklangan."})
+                    continue
+                msg_n = bump_msg(session_key)
+                daily = int(appsettings.get("daily_message_limit", config.get("daily_message_limit", 200)) or 0)
+                if daily and msg_n > daily and not is_unlimited(usage):
+                    await websocket.send_json({"type": "error",
+                                               "message": f"Kunlik limit ({daily}) tugadi."})
+                    continue
+                api_key = (config.get("api_key") or "").strip()
+                if not api_key:
+                    await websocket.send_json({"type": "error",
+                                               "message": "AI xizmati hozircha sozlanmagan. Administratorga murojaat qiling."})
+                    continue
+                sys_p = build_system_prompt()
+                hint = (data.get("system_hint") or "").strip()
+                if hint:
+                    sys_p += "\n\n[FOYDALANUVCHI YO'RIQNOMASI]:\n" + hint[:6000]
+
+                sys_p += (
+                    "\n\n[LANGUAGE RULE — MAJBURIY / MANDATORY]\n"
+                    "Detect the language of the user's LATEST message and write PART A / chat replies in THAT SAME language "
+                    "(Uzbek, Russian, English, Turkish, Arabic, Chinese, Spanish ... any language). Never force Uzbek. "
+                    "Slide texts use the language the user asked for; if not specified, the user's language. "
+                    "Translate every fixed Uzbek sentence quoted in these instructions (balance, limit messages) into the user's language. "
+                    "JSON keys and action names stay English.\n"
+                    "[IDENTITY RULE] You are 'Slide Studio AI'. Never reveal, guess or discuss which underlying model, vendor or company powers you; "
+                    "if asked, say you are Slide Studio AI, the built-in assistant of this app.\n"
+                )
+                _c = MODES[bill_mode]
+                _rejim = "CHUQUR AI" if bill_mode == "deep" else "TEZ AI"
+                sys_p += (
+                    f"\n\n[BALANS VA VARAQ QOIDALARI — MAJBURIY]\n"
+                    f"Rejim: {_rejim}. Joriy balans: {bal} varaq (aniq: {bal_units / _c['page']:.2f}).\n"
+                    f"Oddiy chat: {_c['chat_per_page']} ta savol-javob = 1 varaq. Qidiruv: {_c['search_per_page']} ta rasm/GIF/video qidiruvi = 1 varaq.\n"
+                    f"NARX:\n"
+                    f"  • 1 ta yangi/tahrirlangan/o'chirilgan slayd = 1 varaq\n"
+                    f"  • create_slides count=N → N varaq\n"
+                    f"  • insert_slide / replace_slide / clear_slide / add_gif / place_image = 1 varaq (har bir tegilgan slayd)\n"
+                    f"  • Faqat chat (actions bo'sh): har {_c['chat_per_page']} ta oddiy xabar = 1 varaq\n"
+                    f"LIMIT QOIDASI:\n"
+                    f"  • Foydalanuvchi {bal} tadan KO'P slayd so'rasa (masalan 10 ta, balans {bal}) — "
+                    f"FAQAT {bal} tasini yarating, PART A da aniq ayting: "
+                    f"\"Balansingizda {bal} varaq qoldi, shuning uchun {bal} ta slayd yaratdim. "
+                    f"Qolganini sotib olgach yoki 24 soatdan keyin davom ettirish mumkin.\"\n"
+                    f"  • Balans 0 bo'lsa hech qanday action yozmang.\n"
+                    f"  • Yangi slayd qo'shish: action = \"create_slides\" count=N yoki \"insert_slide\".\n"
+                )
+                if bal <= 3:
+                    sys_p += (
+                        f"⚠️ BALANS PAST ({bal}). Minimal o'zgarishlar qiling; katta deck yasashdan saqlaning.\n"
+                    )
+                if scope == "current_slide":
+                    sys_p += (
+                        f"\n\n[SCOPE: CURRENT_SLIDE]\nJoriy varoq: {active_slide}-slayd.\n"
+                        "Agar foydalanuvchi shu slaydga tegishli o'zgartirish so'rasa, shu slaydda ishlang.\n"
+                        "Boshqa slaydga tegishli buyruq bo'lsa ham swap/move_image_to_slide ishlating.\n"
+                        "MUHIM: Agar foydalanuvchi shunchaki salomlashsa yoki umumiy savol bersa "
+                        "(slaydni o'zgartirishni so'ramasa), hech qanday action yaratmang — "
+                        "shunchaki tabiiy matnda javob bering va \"actions\": [] qoldiring.\n"
+                    )
+                if mode == "plan":
+                    sys_p += (
+                        "\n\n[MODE: PLAN — REJA BOSQICHI]\n"
+                        "Faqat REJA tuzing, to'liq slayd kontentini YOZMANg.\n"
+                        "Javob formati (faqat shu JSON):\n"
+                        '{"reply_text":"<qisqa izoh>","plan":[{"title":"<slayd sarlavhasi>",'
+                        '"summary":"<1 jumla mazmun>","has_image":true|false}, ...]}\n'
+                        "QOIDALAR:\n"
+                        "- `plan` massivida foydalanuvchi so'ragan ANIQ sondagi slayd bo'lsin.\n"
+                        "- Har bir elementda faqat `title`, `summary`, `has_image` bo'lsin. `has_image` — foydalanuvchi rasmni taqiqlamagan bo'lsa va rasm slaydga foyda beradigan bo'lsa true (titul va mavzuni ko'rsatadigan slaydlarda odatda true); taqiqlagan bo'lsa hammasi false.\n"
+                        "- `actions` massivini YOZMANg (rejada kerak emas).\n"
+                        "- Hech qanday `replace_slide`/`insert_slide` chiqarmang.\n"
+                    )
+                elif mode == "generate":
+                    try:
+                        total = len(plan_slides) if isinstance(plan_slides, list) else 0
+                        idx = int(plan_index) if plan_index is not None else 0
+                    except Exception:
+                        total, idx = 0, 0
+                    cur = plan_slides[idx] if (isinstance(plan_slides, list) and 0 <= idx < len(plan_slides)) else {}
+                    slide_no = idx + 1
+                    action_name = "replace_slide" if slide_no == 1 else "insert_slide"
+                    after_no = slide_no - 1
+                    sys_p += (
+                        f"\n\n[MODE: GENERATE — {slide_no}/{total or '?'} SLAYDNI YARATISH]\n"
+                        f"Faqat {slide_no}-slaydni to'liq yarating. Boshqa slaydlarni YOZMANg.\n"
+                        f"Reja ma'lumoti: {json.dumps(cur, ensure_ascii=False)}\n"
+                        "QOIDALAR:\n"
+                        f"- Faqat BITTA asosiy action chiqaring: `{action_name}`"
+                        + (f' bilan `"slide": 1`' if slide_no == 1 else f' bilan `"after": {after_no}`') + ".\n"
+                        "- `elements` massivida sarlavha + matn/kartalar bo'lsin (reja mazmuniga mos).\n"
+                        "- RASM: foydalanuvchi rasm/GIF'ni TAQIQLAMAGAN bo'lsa va reja `has_image` true bo'lsa — AVVAL search_images tool bilan mavzuga 100% mos rasm toping va {\"type\":\"image\",\"src\":URL,...} element qiling. Rasm taqiqlangan bo'lsa — rasm QO'SHMANG.\n"
+                        "- Rang mavzusi barcha slaydlarda BIR XIL: 1-slayddagi `background` va ranglarni (deck state'dan) takrorlang.\n"
+                        "- Professional ko'rinish uchun maqsadli shakllardan foydalaning: sarlavha ostida chiziq/aksent, raqamli doira, galochka (check), strelka/chevron, pill. Tasodifiy shakl sochmang.\n"
+                        "- Jami actionlar soni 4 tadan OSHMASIN. Tool (search_images) chaqiruvlari bu hisobga kirmaydi.\n"
+                        "- JSON toza va to'liq bo'lsin (trailing comma yo'q, qo'shtirnoqlar yopilgan).\n"
+                    )
+                imgs = extract_images_from_deck_state(deck_state)
+                meta_desc = {}
+                for m in images_meta:
+                    if isinstance(m, dict) and m.get("number") is not None and m.get("description"):
+                        meta_desc[m["number"]] = m["description"]
+                if imgs["pending"]:
+                    lines = []
+                    for p in imgs["pending"]:
+                        n = p.get("number")
+                        if n is None:
+                            continue
+                        d = meta_desc.get(n, "")
+                        dim = ""
+                        if p.get("width") and p.get("height"):
+                            dim = f" [{p['width']}x{p['height']}]"
+                        lines.append(f"  • Rasm #{n}: {d}{dim}")
+                    sys_p += "\n\n[FOYDALANUVCHI YUKLAGAN RASMLAR — PENDING]\n" + "\n".join(lines) + "\n"
+                    sys_p += (
+                        "Bu rasmlar hali slaydda EMAS — faqat metadata (raqam, o'lcham) berilgan.\n"
+                        "Ularni ishlatish uchun ANIQ action chiqaring:\n"
+                        "  • place_image (slide, image_number, image_index, left, top, width, height) — slaydga qo'yish.\n"
+                        "  • set_background_url (slide, image_number) — to'liq fon qilish (url SHART EMAS).\n"
+                        "  • duplicate_image (to_slide, image_number, left, top, width, height) — bir rasmni 2+ slaydga nusxalash.\n"
+                        "Rasm ishlatilgach panel'dan AVTOMATIK o'chiriladi — qayta ishlatmang.\n"
+                    )
+                if imgs["placed"]:
+                    lines = []
+                    gif_lines = []
+                    for img in imgs["placed"]:
+                        is_gif = (img.get("kind") == "gif")
+                        label = "GIF" if is_gif else "Rasm"
+                        line = f"  • {label} #{img.get('number')}"
+                        if img.get("slide") is not None:
+                            line += f" — {img['slide']}-VAROQDA"
+                        if img.get("left") is not None:
+                            line += f", joy=({img['left']},{img['top']})"
+                        if img.get("width"):
+                            line += f", {img['width']}×{img['height']}"
+                        if is_gif:
+                            gif_lines.append(line)
+                        else:
+                            lines.append(line)
+                    if lines:
+                        sys_p += "\n\n[ALLAQACHON JOYLASHTIRILGAN RASMLAR]\n" + "\n".join(lines) + "\n"
+                    if gif_lines:
+                        sys_p += "\n\n[JONLI GIF'LAR — ALLAQACHON SLAYDLARDA]\n" + "\n".join(gif_lines) + "\n"
+                        sys_p += (
+                            "Bu elementlar JONLI GIF (animatsiyali). Ular #raqam-GIF bilan belgilangan.\n"
+                            "GIF'lar oddiy rasmlardan farq qiladi — ular animatsiyali va o'lchamga ega.\n"
+                            "GIF'ni ko'chirish/almashtirish uchun move_image_to_slide yoki swap_images ishlating.\n"
+                            "GIF'ni fon qilish uchun set_background_url (image_number bilan) ishlating.\n"
+                        )
+
+                sys_p += (
+                    "\n\n[RASM/GIF ALMASHTIRISH — swap_images]\n"
+                    "Ikki xil rasmni (yoki GIFni) almashtirish uchun `swap_images` action ishlating.\n"
+                    "SXEMA: {\"action\":\"swap_images\",\"image_a\":<1-rasm raqami>,\"slide_a\":<a slayd>,\n"
+                    "        \"image_b\":<2-rasm raqami>,\"slide_b\":<b slayd>,\"swap_position\":true|false}\n"
+                    "QOIDALAR:\n"
+                    "- `image_a` va `image_b` — global rasm/GIF raqamlari (yuqoridagi ro'yxatdan).\n"
+                    "- `slide_a`/`slide_b` — o'sha rasmlar joylashgan slayd raqamlari (1-based).\n"
+                    "- `swap_position: true` (standart) — rasm TARKIBI almashtiriladi, joyi/o'lchami o'zgarmaydi.\n"
+                    "- `swap_position: false` — rasm JOYI/o'lchami almashtiriladi, tarkibi o'zgarmaydi.\n"
+                    "- Ikkala rasm ham mavjud va turli obyekt bo'lishi SHART.\n"
+                    "- GIF'lar ham xuddi rasm kabi almashtiriladi (raqami bo'yicha).\n"
+                )
+
+                sys_p += (
+                    "\n\n[AMALLAR HISOBOTI VA HALOLLIK]\n"
+                    "Sizga har safar oldingi javobingizdagi amallarning HAQIQIY bajarilish natijasi "
+                    "(✅ bajarilgan / ❌ bajarilmagan) berilishi mumkin.\n"
+                    "QOIDALAR:\n"
+                    "- Agar amal ✅ bo'lsa — u TUGALLANGAN. Uni QAYTA bajarmang va qayta so'ramang.\n"
+                    "- Agar amal ❌ bo'lsa — u BAJARILMAGAN. Foydalanuvchiga bajarildi deb AYTMANG; "
+                    "sababini tushuntiring yoki to'g'rilab qayta urinib ko'ring.\n"
+                    "- `reply_text` da faqat HAQIQATDA bajarilgan ishni tasvirlang. Yolg'on da'vo qilmang.\n"
+                    "- Foydalanuvchi \"bajarilmadi\" desa va hisobotda ✅ bo'lsa — ish aslida bajarilgan; "
+                    "muloyimlik bilan tasdiqlang va nima o'zgarganini tushuntiring.\n"
+                )
+                if deck_state:
+                    try:
+                        d = json.loads(deck_state) if isinstance(deck_state, str) else deck_state
+                        if isinstance(d, dict):
+                            def _obj_brief(o, z_index=0):
+                                if not isinstance(o, dict):
+                                    return None
+                                is_gif = bool(o.get("isGif") or o.get("gifUrl") or o.get("type") in ("gif", "gifImage") or o.get("kind") == "gif")
+                                is_img = is_gif or o.get("type") in ("image", "videoImage", "video", "embedVideo") or o.get("kind") == "image" or o.get("isVideo")
+                                is_text = o.get("type") in ("textbox", "i-text", "text") or o.get("kind") == "text"
+                                brief = {
+                                    "type": "gif" if is_gif else (o.get("type") or o.get("kind")),
+                                    "id": o.get("id") or o.get("_oid"),
+                                    "left": o.get("left"), "top": o.get("top"),
+                                    "width": o.get("width"), "height": o.get("height"),
+                                    "angle": o.get("angle") or 0,
+                                    "zIndex": z_index,
+                                }
+                                if o.get("fill") is not None:
+                                    brief["fill"] = o.get("fill")
+                                if o.get("stroke") is not None:
+                                    brief["stroke"] = o.get("stroke")
+                                if o.get("strokeWidth") is not None:
+                                    brief["strokeWidth"] = o.get("strokeWidth")
+                                if o.get("opacity") is not None:
+                                    brief["opacity"] = o.get("opacity")
+                                if is_text:
+                                    brief["text"] = (o.get("text") or "")[:120]
+                                    if o.get("fontSize") is not None:
+                                        brief["fontSize"] = o.get("fontSize")
+                                    if o.get("fontFamily"):
+                                        brief["fontFamily"] = o.get("fontFamily")
+                                    if o.get("fontWeight") is not None:
+                                        brief["fontWeight"] = o.get("fontWeight")
+                                    if o.get("fontStyle") is not None:
+                                        brief["fontStyle"] = o.get("fontStyle")
+                                    if o.get("textAlign") is not None:
+                                        brief["textAlign"] = o.get("textAlign")
+                                    if o.get("underline"):
+                                        brief["underline"] = True
+                                if is_img and o.get("imageNumber") is not None:
+                                    brief["imageNumber"] = o.get("imageNumber")
+                                if o.get("animation") or o.get("animName"):
+                                    brief["animation"] = o.get("animation") or o.get("animName")
+                                if o.get("type") == "video" or o.get("type") == "embedVideo":
+                                    brief["type"] = "video"
+                                    brief["url"] = (o.get("url") or o.get("embedUrl") or "")[:160]
+                                if o.get("type") in ("button", "slideButton"):
+                                    brief["type"] = "button"
+                                    brief["text"] = (o.get("buttonText") or o.get("text") or o.get("btnLabel") or "")[:60]
+                                    brief["click"] = o.get("click") or o.get("btnAction")
+                                if is_gif:
+                                    brief["kind"] = "gif"
+                                    if o.get("gifUrl"):
+                                        brief["gifUrl"] = (o.get("gifUrl") or "")[:120]
+                                return brief
+
+                            full = {
+                                "active_slide": d.get("active_slide"),
+                                "total_slides": d.get("total_slides") or len(d.get("presentation") or []) or 1,
+                                "title": d.get("title"),
+                                "pending_images": d.get("slide_images_pending") or [],
+                            }
+
+                            pres = d.get("presentation") or []
+                            slides_out = []
+                            if isinstance(pres, list) and pres:
+                                for s in pres[:30]:
+                                    if not isinstance(s, dict):
+                                        continue
+                                    entry = {
+                                        "slide": s.get("slide") or s.get("slide_index"),
+                                        "background": s.get("background") or "#ffffff",
+                                        "objects": [],
+                                    }
+                                    if s.get("backgroundGif"):
+                                        entry["backgroundGif"] = True
+                                    if s.get("backgroundImage"):
+                                        entry["backgroundImage"] = True
+                                    for zi, o in enumerate((s.get("objects") or s.get("elements") or [])[:50]):
+                                        b = _obj_brief(o, z_index=zi)
+                                        if b:
+                                            entry["objects"].append(b)
+                                    slides_out.append(entry)
+                            else:
+
+                                sd = d.get("slide_data") or {}
+                                if isinstance(sd, dict):
+                                    entry = {
+                                        "slide": d.get("active_slide") or 1,
+                                        "background": sd.get("background") or "#ffffff",
+                                        "objects": [],
+                                    }
+                                    if sd.get("backgroundGif"):
+                                        entry["backgroundGif"] = True
+                                    for zi, o in enumerate((sd.get("objects") or sd.get("elements") or [])[:50]):
+                                        b = _obj_brief(o, z_index=zi)
+                                        if b:
+                                            entry["objects"].append(b)
+                                    slides_out.append(entry)
+                            full["slides"] = slides_out
+                            sys_p += (
+                                "\n\n[LIVE DECK STATE — GROUND TRUTH]\n"
+                                "Use ONLY this data. Do not invent objects/images.\n"
+                                + json.dumps(full, ensure_ascii=False)
+                            )
+                    except Exception:
+                        sys_p += f"\n\n[LIVE DECK STATE]:\n{str(deck_state)[:6000]}"
+                if model == "deepseek-reasoner":
+                    sys_p = sys_p.replace("search_images tool bilan", "tayyor rasm ro'yxatidan").replace("search_images", "(rasm qidirish)") + _NO_TOOLS_NOTE
+                messages = [{"role": "system", "content": sys_p}]
+                messages.extend(build_history(chat_history))
+                user_content = prompt or "Buyruqni bajaring."
+                if images_meta:
+                    tags = []
+                    for m in images_meta:
+                        if isinstance(m, dict):
+                            n = m.get("number") or m.get("globalNum")
+                            if n is not None:
+                                tags.append(f"[User Image #{n}]")
+                    if tags:
+                        user_content = " ".join(tags) + "\n" + user_content
+                messages.append({"role": "user", "content": user_content})
+                full_reply = ""
+                usage_meta = None
+                stream_err = None
+                finish_reason = None
+                client = None
+                client_gone = False
+                try:
+
+                    client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
+                    async with _ds_slot(websocket):
+                        tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
+                        if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
                             try:
-                                kwargs["extra_body"] = {"user_id": hash_user_id(uid)}
-                            except Exception:
-                                kwargs["extra_body"] = {"user_id": str(uid or "anon")[:32]}
-                            round_text = ""
-                            calls: Dict[int, dict] = {}
-                            stream = await client.chat.completions.create(**kwargs)
-                            async for chunk in stream:
+                                _ctx, _want = user_content or "", _wants_images(prompt or "")
+                                if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
+                                    _cur = plan_slides[int(plan_index)] or {}
+                                    _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
+                                    _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
+                                if _want:
+                                    _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket)
+                                    if _extra:
+                                        messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
+                            except Exception as _pe:
+                                print(f"[DEEP-IMG] {type(_pe).__name__}: {str(_pe)[:80]}")
+                        msgs = messages
+                        n_searches = 0
+                        _dsml_retried = False
+                        agg_in = agg_out = agg_tot = 0
+                        # v29: qidiruvdan oldin yozilgan matn (PART A) O'CHIRILMAYDI va qayta yozdirilmaydi
+                        shown_text = False      # foydalanuvchi allaqachon matn ko'rdi
+                        sep_pending = False     # keyingi raundning matni oldiga bo'sh qator qo'yiladi
+                        try:
+                            for _round in range(MAX_TOOL_ROUNDS + 1):
+                                kwargs = {
+                                    "model": model,
+                                    "messages": msgs,
+                                    "stream": True,
+                                    "stream_options": {"include_usage": True},
+                                    "max_tokens": 16384,
+                                }
+                                if model != "deepseek-reasoner":
+                                    kwargs["temperature"] = 0.7
+                                if tools_on and _round < MAX_TOOL_ROUNDS and n_searches < MAX_SEARCHES_PER_TURN:
+                                    kwargs["tools"] = SEARCH_TOOLS
+                                    kwargs["tool_choice"] = "auto"
+
                                 try:
-                                    choice = chunk.choices[0] if chunk.choices else None
-                                    if choice is not None:
-                                        fr = getattr(choice, "finish_reason", None)
-                                        if fr:
-                                            finish_reason = fr
-                                        delta = choice.delta
-                                        txt = getattr(delta, "content", None) if delta else None
-                                        if txt:
-                                            if sep_pending and txt.strip():
-                                                sep_pending = False
-                                                full_reply += "\n\n"
+                                    kwargs["extra_body"] = {"user_id": hash_user_id(uid)}
+                                except Exception:
+                                    kwargs["extra_body"] = {"user_id": str(uid or "anon")[:32]}
+                                round_text = ""
+                                calls: Dict[int, dict] = {}
+                                stream = await client.chat.completions.create(**kwargs)
+                                async for chunk in stream:
+                                    try:
+                                        choice = chunk.choices[0] if chunk.choices else None
+                                        if choice is not None:
+                                            fr = getattr(choice, "finish_reason", None)
+                                            if fr:
+                                                finish_reason = fr
+                                            delta = choice.delta
+                                            txt = getattr(delta, "content", None) if delta else None
+                                            if txt:
+                                                if sep_pending and txt.strip():
+                                                    sep_pending = False
+                                                    full_reply += "\n\n"
+                                                    try:
+                                                        await websocket.send_json({"type": "chunk", "text": "\n\n"})
+                                                    except (WebSocketDisconnect, RuntimeError):
+                                                        raise WebSocketDisconnect()
+                                                round_text += txt
+                                                full_reply += txt
                                                 try:
-                                                    await websocket.send_json({"type": "chunk", "text": "\n\n"})
+                                                    await websocket.send_json({"type": "chunk", "text": txt})
                                                 except (WebSocketDisconnect, RuntimeError):
                                                     raise WebSocketDisconnect()
-                                            round_text += txt
-                                            full_reply += txt
-                                            try:
-                                                await websocket.send_json({"type": "chunk", "text": txt})
-                                            except (WebSocketDisconnect, RuntimeError):
-                                                raise WebSocketDisconnect()
-                                        for tc in (getattr(delta, "tool_calls", None) or []):
-                                            slot = calls.setdefault(int(getattr(tc, "index", 0) or 0), {"id": "", "name": "", "args": ""})
-                                            if getattr(tc, "id", None):
-                                                slot["id"] = tc.id
-                                            fn = getattr(tc, "function", None)
-                                            if fn is not None:
-                                                if getattr(fn, "name", None):
-                                                    slot["name"] += fn.name
-                                                if getattr(fn, "arguments", None):
-                                                    slot["args"] += fn.arguments
-                                    if getattr(chunk, "usage", None):
-                                        u_ = chunk.usage
-                                        agg_in += getattr(u_, "prompt_tokens", 0) or 0
-                                        agg_out += getattr(u_, "completion_tokens", 0) or 0
-                                        agg_tot += getattr(u_, "total_tokens", 0) or ((getattr(u_, "prompt_tokens", 0) or 0) + (getattr(u_, "completion_tokens", 0) or 0))
-                                except WebSocketDisconnect:
-                                    raise
-                                except Exception:
+                                            for tc in (getattr(delta, "tool_calls", None) or []):
+                                                slot = calls.setdefault(int(getattr(tc, "index", 0) or 0), {"id": "", "name": "", "args": ""})
+                                                if getattr(tc, "id", None):
+                                                    slot["id"] = tc.id
+                                                fn = getattr(tc, "function", None)
+                                                if fn is not None:
+                                                    if getattr(fn, "name", None):
+                                                        slot["name"] += fn.name
+                                                    if getattr(fn, "arguments", None):
+                                                        slot["args"] += fn.arguments
+                                        if getattr(chunk, "usage", None):
+                                            u_ = chunk.usage
+                                            agg_in += getattr(u_, "prompt_tokens", 0) or 0
+                                            agg_out += getattr(u_, "completion_tokens", 0) or 0
+                                            agg_tot += getattr(u_, "total_tokens", 0) or ((getattr(u_, "prompt_tokens", 0) or 0) + (getattr(u_, "completion_tokens", 0) or 0))
+                                    except WebSocketDisconnect:
+                                        raise
+                                    except Exception:
+                                        continue
+                                if not calls and model == "deepseek-reasoner" and not _dsml_retried and _DSML_RE.search(round_text or "") and "```json" not in (round_text or ""):
+                                    _dsml_retried = True           # model mavjud bo'lmagan tool'ni chaqirmoqchi bo'ldi — JSON'siz to'xtab qolmasin
+                                    print("[DEEP] DSML/tool matni — qayta so'raladi")
+                                    msgs = list(msgs) + [
+                                        {"role": "assistant", "content": _DSML_RE.split(round_text)[0].strip()[:1500] or "Rasmlar tayyor."},
+                                        {"role": "user", "content": "Tool mavjud emas. Rasm kerak bo'lsa [TAYYOR RASMLAR] dagi URL'dan foydalaning, bo'lmasa rasmsiz yozing. "
+                                                                    "Hozir FAQAT bitta ```json blok bilan javob bering (actions bilan), qidirishni eslatmang."}]
+                                    sep_pending = True
                                     continue
-                            if not calls and model == "deepseek-reasoner" and not _dsml_retried and _DSML_RE.search(round_text or "") and "```json" not in (round_text or ""):
-                                _dsml_retried = True           # model mavjud bo'lmagan tool'ni chaqirmoqchi bo'ldi — JSON'siz to'xtab qolmasin
-                                print("[DEEP] DSML/tool matni — qayta so'raladi")
-                                msgs = list(msgs) + [
-                                    {"role": "assistant", "content": _DSML_RE.split(round_text)[0].strip()[:1500] or "Rasmlar tayyor."},
-                                    {"role": "user", "content": "Tool mavjud emas. Rasm kerak bo'lsa [TAYYOR RASMLAR] dagi URL'dan foydalaning, bo'lmasa rasmsiz yozing. "
-                                                                "Hozir FAQAT bitta ```json blok bilan javob bering (actions bilan), qidirishni eslatmang."}]
-                                sep_pending = True
-                                continue
-                            if not calls:
-                                break
+                                if not calls:
+                                    break
 
-                            # v29: eski kod bu yerda matnni o'chirib ("reset") qidiruvdan keyin QAYTA yozdirardi —
-                            # javob yo'qolib, keyin sezdirmasdan ikkinchi marta chiqardi. Endi matn qoladi.
-                            if round_text.strip():
-                                shown_text = True
-                                sep_pending = True
-                            ordered = [calls[k] for k in sorted(calls)]
-                            msgs = list(msgs) + [{
-                                "role": "assistant",
-                                "content": round_text or None,
-                                "tool_calls": [{"id": c["id"] or f"call_{i}", "type": "function",
-                                                "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
-                                               for i, c in enumerate(ordered)],
-                            }]
-                            for i, c in enumerate(ordered):
-                                try:
-                                    a = json.loads(c["args"] or "{}")
-                                except Exception:
-                                    a = {}
-                                q_ = str(a.get("query") or "").strip()
-                                _k0 = str(a.get("kind") or "").lower()
-                                kind_ = "gif" if _k0 == "gif" else ("video" if _k0 == "video" else "photo")
-
-                                _ql = q_.lower()
-                                if kind_ == "photo" and any(w in _ql for w in (
-                                    "gif", "animation", "animated", "loop", "motion",
-                                    "spinner", "particles", "globe rotating", "loading",
-                                )):
-                                    kind_ = "gif"
-                                if c["name"] != "search_images" or not q_ or n_searches >= MAX_SEARCHES_PER_TURN:
-                                    result = {"error": "qidiruv bajarilmadi", "results": []}
-                                else:
-                                    n_searches += 1
+                                # v29: eski kod bu yerda matnni o'chirib ("reset") qidiruvdan keyin QAYTA yozdirardi —
+                                # javob yo'qolib, keyin sezdirmasdan ikkinchi marta chiqardi. Endi matn qoladi.
+                                if round_text.strip():
+                                    shown_text = True
+                                    sep_pending = True
+                                ordered = [calls[k] for k in sorted(calls)]
+                                msgs = list(msgs) + [{
+                                    "role": "assistant",
+                                    "content": round_text or None,
+                                    "tool_calls": [{"id": c["id"] or f"call_{i}", "type": "function",
+                                                    "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                                                   for i, c in enumerate(ordered)],
+                                }]
+                                for i, c in enumerate(ordered):
                                     try:
-                                        await websocket.send_json({"type": "search_start", "query": q_, "kind": kind_, "n": n_searches})
-                                    except (WebSocketDisconnect, RuntimeError):
-                                        raise WebSocketDisconnect()
-                                    found = []
-                                    if data.get("client_search") and kind_ != "video":
-                                        found = await _client_side_search(websocket, q_, kind_, n_searches)
-                                    if not found:
+                                        a = json.loads(c["args"] or "{}")
+                                    except Exception:
+                                        a = {}
+                                    q_ = str(a.get("query") or "").strip()
+                                    _k0 = str(a.get("kind") or "").lower()
+                                    kind_ = "gif" if _k0 == "gif" else ("video" if _k0 == "video" else "photo")
+
+                                    _ql = q_.lower()
+                                    if kind_ == "photo" and any(w in _ql for w in (
+                                        "gif", "animation", "animated", "loop", "motion",
+                                        "spinner", "particles", "globe rotating", "loading",
+                                    )):
+                                        kind_ = "gif"
+                                    if c["name"] != "search_images" or not q_ or n_searches >= MAX_SEARCHES_PER_TURN:
+                                        result = {"error": "qidiruv bajarilmadi", "results": []}
+                                    else:
+                                        n_searches += 1
                                         try:
-                                            found = await asyncio.wait_for(asyncio.to_thread(_search_images_sync, q_, kind_, 12), timeout=25)
-                                        except Exception as _se:
-                                            print(f"[IMG-SEARCH] {q_!r}: {_se}")
-                                            found = []
-
-                                    if kind_ == "gif":
-                                        if not found and _search_images_sync:
-                                            for alt_q in (q_, " ".join(q_.split()[:2]), "funny animation", "happy", "nature"):
-                                                if not alt_q:
-                                                    continue
-                                                try:
-                                                    found = await asyncio.wait_for(
-                                                        asyncio.to_thread(_search_images_sync, alt_q, "gif", 12),
-                                                        timeout=12)
-                                                except Exception:
-                                                    found = []
-                                                if found:
-                                                    break
+                                            await websocket.send_json({"type": "search_start", "query": q_, "kind": kind_, "n": n_searches})
+                                        except (WebSocketDisconnect, RuntimeError):
+                                            raise WebSocketDisconnect()
+                                        found = []
+                                        if data.get("client_search") and kind_ != "video":
+                                            found = await _client_side_search(websocket, q_, kind_, n_searches)
                                         if not found:
-                                            found = [
-                                                {"url": "https://media.giphy.com/media/3o7aCTPPm4OHfRLSH6/giphy.gif",
-                                                 "title": "safe", "source": "safe_pool"},
-                                                {"url": "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
-                                                 "title": "safe", "source": "safe_pool"},
-                                                {"url": "https://media.giphy.com/media/26BRv0ThxKQihlNO0/giphy.gif",
-                                                 "title": "safe", "source": "safe_pool"},
-                                                {"url": "https://media.giphy.com/media/xT9IgG50Fb7Mi0prBC/giphy.gif",
-                                                 "title": "safe", "source": "safe_pool"},
-                                                {"url": "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
-                                                 "title": "safe", "source": "safe_pool"},
-                                                {"url": "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif",
-                                                 "title": "safe", "source": "safe_pool"},
-                                            ]
-                                    note = (
-                                        "MAJBURIY QOIDALAR (GIF): results[].url ni TO'G'RIDAN-TO'G'RI "
-                                        "gifUrl yoki src ga yozing (https://media... bilan boshlanadi). "
-                                        "Qidiruv matnini URL o'rniga YOZMANG. Har bir GIF uchun "
-                                        "results dan bittadan boshqa URL tanlang. URL yo'q deb o'tkazib yubormang."
-                                        if kind_ == "gif" and found else
-                                        ("Eng mos videoni tanlang va uning 'url' ini add_video (yoki orqa fon uchun set_background_video) ga bering. URL ni o'zgartirmang."
-                                         if kind_ == "video" and found else
-                                        "Eng mos rasmni tanlang va uning 'url' ini ishlating. "
-                                         "Natija mos bo'lmasa, boshqa so'rov bilan qayta qidiring."
-                                         if found else
-                                         "Hech narsa topilmadi — boshqa (soddaroq) inglizcha so'rov bilan qayta qidiring.")
-                                    )
-                                    result = {"query": q_, "kind": kind_, "results": found, "note": note}
-                                    try:
-                                        await websocket.send_json({"type": "search_done", "query": q_, "kind": kind_, "count": len(found or [])})
-                                    except (WebSocketDisconnect, RuntimeError):
-                                        raise WebSocketDisconnect()
-                                msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
-                                             "content": json.dumps(result, ensure_ascii=False)[:6000]})
+                                            try:
+                                                found = await asyncio.wait_for(asyncio.to_thread(_search_images_sync, q_, kind_, 12), timeout=25)
+                                            except Exception as _se:
+                                                print(f"[IMG-SEARCH] {q_!r}: {_se}")
+                                                found = []
 
-                            if n_searches > 0:
-                                if shown_text:
-                                    _text_rule = (
-                                        "Foydalanuvchi PART A matnini ALLAQACHON ko'rdi — uni va boshqa hech qanday matnni QAYTA YOZMANG. "
-                                        "Faqat bitta ```json blok chiqaring. "
-                                    )
-                                else:
-                                    _text_rule = (
-                                        "Avval 1–2 jumlalik PART A matn, undan keyin bitta ```json blok yozing. "
-                                    )
-                                msgs.append({
-                                    "role": "user",
-                                    "content": (
-                                        "Qidiruv yakunlandi. Endi HECH QANDAY tool chaqirmang. "
-                                        + _text_rule +
-                                        "Topilgan rasm/GIF URL laridan FAOLIYAT bilan foydalanib, foydalanuvchi so'roviga TO'LIQ mos "
-                                        "```json\n{\"actions\":[...]}\n``` blokini yozing. "
-                                        "Majburiy actionlar: replace_slide yoki insert_slide (har bir so'ralgan slayd uchun alohida), "
-                                        "set_background_url (fon uchun), place_image_url yoki add_gif (har bir rasm/GIF uchun). "
-                                        "Har bir slaydda so'ralgan miqdorda rasm va GIF bo'lsin. "
-                                        "Kamida so'ralgan slaydlar sonicha insert/replace action bo'lsin."
-                                    ),
-                                })
-                            finish_reason = None
-                        if agg_tot or agg_in or agg_out:
-                            from types import SimpleNamespace as _NS
-                            usage_meta = _NS(prompt_tokens=agg_in, completion_tokens=agg_out, total_tokens=agg_tot or (agg_in + agg_out))
-                    except WebSocketDisconnect:
-                        client_gone = True
-                    except Exception as e:
-                        stream_err = e
-            except WebSocketDisconnect:
-                client_gone = True
-            except Exception as e:
-                stream_err = stream_err or e
-            if client_gone and not full_reply.strip():
-                raise WebSocketDisconnect()
-            if stream_err and not full_reply.strip():
-                err = str(stream_err).lower()
-                if "429" in err or "rate" in err or "quota" in err:
-                    msg = "AI xizmati limiti tugadi. Birozdan so'ng qayta urinib ko'ring."
-                elif "401" in err or "auth" in err or "api key" in err:
-                    msg = "API kalit xato. Admin panel orqali tekshiring."
-                elif "503" in err or "overloaded" in err:
-                    msg = "AI serveri band. Keyinroq urinib ko'ring."
-                else:
-                    print(f"[AI] stream xatosi: {str(stream_err)[:300]}")
-                    msg = "AI xizmatida xatolik yuz berdi. Qayta urinib ko'ring."
-                await websocket.send_json({"type": "error", "message": msg})
-                continue
+                                        if kind_ == "gif":
+                                            if not found and _search_images_sync:
+                                                for alt_q in (q_, " ".join(q_.split()[:2]), "funny animation", "happy", "nature"):
+                                                    if not alt_q:
+                                                        continue
+                                                    try:
+                                                        found = await asyncio.wait_for(
+                                                            asyncio.to_thread(_search_images_sync, alt_q, "gif", 12),
+                                                            timeout=12)
+                                                    except Exception:
+                                                        found = []
+                                                    if found:
+                                                        break
+                                            if not found:
+                                                found = [
+                                                    {"url": "https://media.giphy.com/media/3o7aCTPPm4OHfRLSH6/giphy.gif",
+                                                     "title": "safe", "source": "safe_pool"},
+                                                    {"url": "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
+                                                     "title": "safe", "source": "safe_pool"},
+                                                    {"url": "https://media.giphy.com/media/26BRv0ThxKQihlNO0/giphy.gif",
+                                                     "title": "safe", "source": "safe_pool"},
+                                                    {"url": "https://media.giphy.com/media/xT9IgG50Fb7Mi0prBC/giphy.gif",
+                                                     "title": "safe", "source": "safe_pool"},
+                                                    {"url": "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
+                                                     "title": "safe", "source": "safe_pool"},
+                                                    {"url": "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif",
+                                                     "title": "safe", "source": "safe_pool"},
+                                                ]
+                                        note = (
+                                            "MAJBURIY QOIDALAR (GIF): results[].url ni TO'G'RIDAN-TO'G'RI "
+                                            "gifUrl yoki src ga yozing (https://media... bilan boshlanadi). "
+                                            "Qidiruv matnini URL o'rniga YOZMANG. Har bir GIF uchun "
+                                            "results dan bittadan boshqa URL tanlang. URL yo'q deb o'tkazib yubormang."
+                                            if kind_ == "gif" and found else
+                                            ("Eng mos videoni tanlang va uning 'url' ini add_video (yoki orqa fon uchun set_background_video) ga bering. URL ni o'zgartirmang."
+                                             if kind_ == "video" and found else
+                                            "Eng mos rasmni tanlang va uning 'url' ini ishlating. "
+                                             "Natija mos bo'lmasa, boshqa so'rov bilan qayta qidiring."
+                                             if found else
+                                             "Hech narsa topilmadi — boshqa (soddaroq) inglizcha so'rov bilan qayta qidiring.")
+                                        )
+                                        result = {"query": q_, "kind": kind_, "results": found, "note": note}
+                                        try:
+                                            await websocket.send_json({"type": "search_done", "query": q_, "kind": kind_, "count": len(found or [])})
+                                        except (WebSocketDisconnect, RuntimeError):
+                                            raise WebSocketDisconnect()
+                                    msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
+                                                 "content": json.dumps(result, ensure_ascii=False)[:6000]})
 
-            try:
-                if _extract_bad_gif_urls(full_reply):
-                    fixed = await _fix_gif_urls_in_reply(model, full_reply)
-                    if fixed and fixed != full_reply:
-                        full_reply = fixed
-                        print("[GIF-FIX] URL'lar Tenor orqali tuzatildi (AI so'rovsiz)")
-            except Exception as e:
-                print(f"[GIF-FIX] umumiy xato: {e}")
-            inp_t = getattr(usage_meta, "prompt_tokens", 0) or 0 if usage_meta else 0
-            out_t = getattr(usage_meta, "completion_tokens", 0) or 0 if usage_meta else 0
-            tot = getattr(usage_meta, "total_tokens", 0) or (inp_t + out_t) if usage_meta else 0
-            cost = calc_cost(model, inp_t, out_t)
-            add_tokens(session_key, tot)
+                                if n_searches > 0:
+                                    if shown_text:
+                                        _text_rule = (
+                                            "Foydalanuvchi PART A matnini ALLAQACHON ko'rdi — uni va boshqa hech qanday matnni QAYTA YOZMANG. "
+                                            "Faqat bitta ```json blok chiqaring. "
+                                        )
+                                    else:
+                                        _text_rule = (
+                                            "Avval 1–2 jumlalik PART A matn, undan keyin bitta ```json blok yozing. "
+                                        )
+                                    msgs.append({
+                                        "role": "user",
+                                        "content": (
+                                            "Qidiruv yakunlandi. Endi HECH QANDAY tool chaqirmang. "
+                                            + _text_rule +
+                                            "Topilgan rasm/GIF URL laridan FAOLIYAT bilan foydalanib, foydalanuvchi so'roviga TO'LIQ mos "
+                                            "```json\n{\"actions\":[...]}\n``` blokini yozing. "
+                                            "Majburiy actionlar: replace_slide yoki insert_slide (har bir so'ralgan slayd uchun alohida), "
+                                            "set_background_url (fon uchun), place_image_url yoki add_gif (har bir rasm/GIF uchun). "
+                                            "Har bir slaydda so'ralgan miqdorda rasm va GIF bo'lsin. "
+                                            "Kamida so'ralgan slaydlar sonicha insert/replace action bo'lsin."
+                                        ),
+                                    })
+                                finish_reason = None
+                            if agg_tot or agg_in or agg_out:
+                                from types import SimpleNamespace as _NS
+                                usage_meta = _NS(prompt_tokens=agg_in, completion_tokens=agg_out, total_tokens=agg_tot or (agg_in + agg_out))
+                        except WebSocketDisconnect:
+                            client_gone = True
+                        except Exception as e:
+                            stream_err = e
+                except WebSocketDisconnect:
+                    client_gone = True
+                except Exception as e:
+                    stream_err = stream_err or e
+                if client_gone and not full_reply.strip():
+                    raise WebSocketDisconnect()
+                if stream_err and not full_reply.strip():
+                    err = str(stream_err).lower()
+                    if "429" in err or "rate" in err or "quota" in err:
+                        msg = "AI xizmati limiti tugadi. Birozdan so'ng qayta urinib ko'ring."
+                    elif "401" in err or "auth" in err or "api key" in err:
+                        msg = "API kalit xato. Admin panel orqali tekshiring."
+                    elif "503" in err or "overloaded" in err:
+                        msg = "AI serveri band. Keyinroq urinib ko'ring."
+                    else:
+                        print(f"[AI] stream xatosi: {str(stream_err)[:300]}")
+                        msg = "AI xizmatida xatolik yuz berdi. Qayta urinib ko'ring."
+                    await websocket.send_json({"type": "error", "message": msg})
+                    continue
 
-            pages_from_actions, pages_breakdown = 0, []
-            try:
-                pages_from_actions, pages_breakdown = calculate_page_cost_from_reply(
-                    full_reply or "", _deck_slide_count(deck_state), active_slide
-                )
-            except Exception as _me:
-                print(f"[MONITORING] cost calc: {_me}")
-            pages_charged, charge_reason = 0, "none"
-            try:
-                async with _user_lock(uid):
+                try:
+                    if _extract_bad_gif_urls(full_reply):
+                        fixed = await _fix_gif_urls_in_reply(model, full_reply)
+                        if fixed and fixed != full_reply:
+                            full_reply = fixed
+                            print("[GIF-FIX] URL'lar Tenor orqali tuzatildi (AI so'rovsiz)")
+                except Exception as e:
+                    print(f"[GIF-FIX] umumiy xato: {e}")
+                inp_t = getattr(usage_meta, "prompt_tokens", 0) or 0 if usage_meta else 0
+                out_t = getattr(usage_meta, "completion_tokens", 0) or 0 if usage_meta else 0
+                tot = getattr(usage_meta, "total_tokens", 0) or (inp_t + out_t) if usage_meta else 0
+                cost = calc_cost(model, inp_t, out_t)
+                add_tokens(session_key, tot)
+
+                pages_from_actions, pages_breakdown = 0, []
+                try:
+                    pages_from_actions, pages_breakdown = calculate_page_cost_from_reply(
+                        full_reply or "", _deck_slide_count(deck_state), active_slide
+                    )
+                except Exception as _me:
+                    print(f"[MONITORING] cost calc: {_me}")
+                pages_charged, charge_reason = 0, "none"
+                try:
+                    async with _user_lock(uid):
+                        usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
+                        usage["total_tokens"] = (usage.get("total_tokens") or 0) + tot
+                        usage["daily_tokens"] = (usage.get("daily_tokens") or 0) + tot
+                        try:
+                            _n_search_turn = int(n_searches)
+                        except Exception:
+                            _n_search_turn = 0
+                        usage, pages_charged, charge_reason = charge_for_ai_turn(usage, int(pages_from_actions), _n_search_turn, mode_for_model(model))
+                        await asyncio.to_thread(save_user_credits, uid, usage, 0)
+                        if int(pages_charged) > 0:
+                            await asyncio.to_thread(
+                                ledger_log, uid, str(charge_reason), -int(pages_charged), usage, _n_search_turn,
+                                {"pages_needed": int(pages_from_actions), "breakdown": pages_breakdown[:20]})
+                        usage["spent_24h"] = await asyncio.to_thread(ledger_spent, uid, usage.get("last_reset_time"))
+                except Exception as _ce:
+                    print(f"[MONITORING] charge: {_ce}")
+                    charge_reason = "charge_error"
                     usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
-                    usage["total_tokens"] = (usage.get("total_tokens") or 0) + tot
-                    usage["daily_tokens"] = (usage.get("daily_tokens") or 0) + tot
-                    try:
-                        _n_search_turn = int(n_searches)
-                    except Exception:
-                        _n_search_turn = 0
-                    usage, pages_charged, charge_reason = charge_for_ai_turn(usage, int(pages_from_actions), _n_search_turn, mode_for_model(model))
-                    await asyncio.to_thread(save_user_credits, uid, usage, 0)
-                    if int(pages_charged) > 0:
-                        await asyncio.to_thread(
-                            ledger_log, uid, str(charge_reason), -int(pages_charged), usage, _n_search_turn,
-                            {"pages_needed": int(pages_from_actions), "breakdown": pages_breakdown[:20]})
-                    usage["spent_24h"] = await asyncio.to_thread(ledger_spent, uid, usage.get("last_reset_time"))
-            except Exception as _ce:
-                print(f"[MONITORING] charge: {_ce}")
-                charge_reason = "charge_error"
-                usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
-            if client_gone:
-                raise WebSocketDisconnect()
-            bal_payload = usage_payload(usage)
-            if stream_err:
-                finish_reason = "error"
-            elif finish_reason in (None, "", "stop"):
-                finish_reason = "stop"
-            await websocket.send_json({
-                "type": "end",
-                "finish_reason": finish_reason,
-                "interrupted": finish_reason != "stop",
-                "ai_msg": {"role": "assistant", "content": full_reply},
-                "tokens_used": tot,
-                "input_tokens": inp_t,
-                "output_tokens": out_t,
-                "cost_usd": cost,
-                "user_total_tokens": usage.get("total_tokens", 0),
-                "pages_charged": int(pages_charged),             # BIRLIK (frontend varaqqa o'giradi)
-                "units_charged": int(pages_charged),
-                "pages_needed": int(pages_from_actions),
-                "limit_reached": not can_afford(usage, mode_for_model(model)),
-                "billing_mode": mode_for_model(model),
-                "pages_breakdown": pages_breakdown[:40],
-                "charge_reason": charge_reason,
-                **bal_payload,
-            })
+                if client_gone:
+                    raise WebSocketDisconnect()
+                bal_payload = usage_payload(usage)
+                if stream_err:
+                    finish_reason = "error"
+                elif finish_reason in (None, "", "stop"):
+                    finish_reason = "stop"
+                await websocket.send_json({
+                    "type": "end",
+                    "finish_reason": finish_reason,
+                    "interrupted": finish_reason != "stop",
+                    "ai_msg": {"role": "assistant", "content": full_reply},
+                    "tokens_used": tot,
+                    "input_tokens": inp_t,
+                    "output_tokens": out_t,
+                    "cost_usd": cost,
+                    "user_total_tokens": usage.get("total_tokens", 0),
+                    "pages_charged": int(pages_charged),             # BIRLIK (frontend varaqqa o'giradi)
+                    "units_charged": int(pages_charged),
+                    "pages_needed": int(pages_from_actions),
+                    "limit_reached": not can_afford(usage, mode_for_model(model)),
+                    "billing_mode": mode_for_model(model),
+                    "pages_breakdown": pages_breakdown[:40],
+                    "charge_reason": charge_reason,
+                    **bal_payload,
+                })
+            except WebSocketDisconnect:
+                raise
+            except Exception as e:
+                # v53: bitta xabardagi kutilmagan xato ulanishni YOPMAYDI — xato aytiladi va keyingi xabar kutiladi
+                if (websocket.client_state != WebSocketState.CONNECTED
+                        or websocket.application_state != WebSocketState.CONNECTED):
+                    raise WebSocketDisconnect()
+                _ws_errs += 1
+                print(f"[WS] xabar xatosi ({_ws_errs}): {type(e).__name__}: {str(e)[:300]}")
+                try:
+                    await websocket.send_json({"type": "error", "message": "Ichki xatolik. Qayta urinib ko'ring."})
+                except Exception:
+                    raise WebSocketDisconnect()
+                if _ws_errs >= 5:                   # ketma-ket ko'p xato — ulanish yopiladi (cheksiz sikl bo'lmasin)
+                    break
+                continue
+            _ws_errs = 0
     except WebSocketDisconnect:
         pass
     except Exception as e:
