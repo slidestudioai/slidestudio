@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"     # Dockerfile bilan bir xil
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt -r requirements-dev.txt pyflakes
+      - name: Python syntax / undefined names
+        run: python -m pyflakes main.py backend/*.py | grep -vE "imported but unused|redefinition of unused|f-string is missing|assigned to but never used" && exit 1 || true
+      - name: JS syntax
+        run: for f in js/*.js; do node --check "$f"; done
+      - name: Tests
+        run: pytest

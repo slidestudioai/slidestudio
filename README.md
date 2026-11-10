@@ -61,3 +61,14 @@ pip install -r requirements.txt
 cp .env.example .env      # to'ldiring
 python main.py            # http://localhost:8080
 ```
+
+## Testlar
+Testlar haqiqiy Supabase / AI / Telegram ga ulanmaydi (`tests/fake_supabase.py` — xotiradagi soxta baza).
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest
+```
+GitHub'da har PR va `main` ga push'da avtomatik ishlaydi (`.github/workflows/tests.yml`).
+
+## Yangilanganda (v53)
+`SUPABASE_SCHEMA.sql` ni Supabase SQL Editor'da **qayta ishga tushiring** (13-bo'lim: `transfer_paid_credits`). Qayta bosish xavfsiz.
