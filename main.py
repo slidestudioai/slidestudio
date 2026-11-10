@@ -879,10 +879,17 @@ async def _security_middleware(request: Request, call_next):
     h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
         h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    if path.startswith("/js/") or path.endswith((".css", ".png", ".ico", ".woff2")):
-        h.setdefault("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
+    # v52: JS/CSS. index.html ichidagi ?v=<hash> fayl o'zgarganda AVTOMATIK o'zgaradi (qarang _render_index),
+    # shuning uchun ?v= li fayl abadiy keshlansa bo'ladi; ?v= siz so'rov har safar tekshiriladi (ETag -> 304).
+    if path.startswith("/js/") or path.endswith((".css", ".png", ".ico", ".woff2", ".js")):
+        if path.endswith((".png", ".ico", ".woff2")):
+            h.setdefault("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
+        elif request.query_params.get("v"):
+            h.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+        else:
+            h.setdefault("Cache-Control", "no-cache")
     elif path in ("/", "/index.html"):
-        h.setdefault("Cache-Control", "no-cache")
+        h.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
     return resp
 
 @app.get("/healthz")
@@ -977,11 +984,33 @@ async def _housekeeping_loop():
         except Exception as e:
             print(f"[HOUSEKEEPING] {str(e)[:120]}")
 
+async def _keepalive_loop():
+    """KEEPALIVE=1 bo'lsa: Render free reja 15 daqiqada uxlab qolmasligi uchun o'z /healthz ini har 9 daqiqada chaqiradi
+    (uxlagan serverda bot birinchi javobni 30-60 soniyada beradi — eng katta «sekinlik» sababi shu)."""
+    import httpx
+    base = (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+    if not base.startswith("https://"):
+        return
+    async with httpx.AsyncClient(timeout=15) as c:
+        while True:
+            await asyncio.sleep(540)
+            try:
+                await c.get(base + "/healthz")
+            except Exception:
+                pass
+
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def _lifespan_v43(_app):
     """Start/stop: yangi FastAPI/Starlette'da add_event_handler yo'q, shuning uchun lifespan ishlatiladi."""
+    # v52: asyncio.to_thread standart hovuzi kichik serverda atigi ~5 ta ip — har bir Supabase so'rovi navbat kutardi (bot sekin javob berardi)
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        asyncio.get_running_loop().set_default_executor(
+            ThreadPoolExecutor(max_workers=int(os.environ.get("THREAD_POOL_SIZE", "32")), thread_name_prefix="ss-io"))
+    except Exception as e:
+        print(f"[POOL] {str(e)[:100]}")
     try:
         admin_core.configure(loop=asyncio.get_running_loop())
         await asyncio.to_thread(appsettings.load, True)
@@ -990,6 +1019,10 @@ async def _lifespan_v43(_app):
     t = asyncio.create_task(_housekeeping_loop())
     _bg_tasks.add(t)
     t.add_done_callback(_bg_tasks.discard)
+    if os.environ.get("KEEPALIVE", "").strip().lower() in ("1", "true", "yes", "on"):
+        _kt = asyncio.create_task(_keepalive_loop())
+        _bg_tasks.add(_kt)
+        _kt.add_done_callback(_bg_tasks.discard)
     if tgbot is not None:
         try:
             await tgbot.startup()
@@ -1015,12 +1048,48 @@ _js_dir = os.path.join(BASE_DIR, "js")
 if os.path.isdir(_js_dir):
     app.mount("/js", StaticFiles(directory=_js_dir), name="js_modules")
 
+# v52: index.html dagi  js/xx.js?v=N  va  xx.css?v=N  havolalari fayl tarkibi (mtime+hajm) bo'yicha avtomatik
+# yangilanadi. Kodni o'zgartirsangiz ?v= raqamini qo'lda oshirish SHART EMAS — eski nusxa brauzer/Telegram keshida qolmaydi.
+import re as _re_idx
+import hashlib as _hashlib
+_ASSET_RE = _re_idx.compile(r'((?:href|src)=")((?:js/[\w.\-]+\.js)|(?:[\w.\-]+\.css))\?v=[\w.\-]*(")')
+_index_cache: Dict[str, Any] = {"sig": None, "html": ""}
+
+def _render_index() -> Optional[str]:
+    path = os.path.join(BASE_DIR, "index.html")
+    try:
+        raw = open(path, "r", encoding="utf-8").read()
+    except OSError:
+        return None
+    stamps: Dict[str, str] = {}
+    def _ver(rel: str) -> str:
+        if rel not in stamps:
+            try:
+                st = os.stat(os.path.join(BASE_DIR, rel))
+                stamps[rel] = f"{st.st_mtime_ns}-{st.st_size}"
+            except OSError:
+                stamps[rel] = "0"
+        return stamps[rel]
+    rels = [m.group(2) for m in _ASSET_RE.finditer(raw)]
+    sig = (_ver("index.html"),) + tuple(_ver(r) for r in rels)
+    if _index_cache["sig"] == sig and _index_cache["html"]:
+        return _index_cache["html"]
+    def _sub(m):
+        v = _hashlib.md5(_ver(m.group(2)).encode()).hexdigest()[:10]
+        return f"{m.group(1)}{m.group(2)}?v={v}{m.group(3)}"
+    html = _ASSET_RE.sub(_sub, raw)
+    _index_cache["sig"], _index_cache["html"] = sig, html
+    return html
+
+def _index_response():
+    html = _render_index()
+    if html is None:
+        return HTMLResponse("<h2>Slide Studio ishlamoqda. index.html topilmadi.</h2>")
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
 @app.get("/")
 def root():
-    for name in ("index.html", os.path.join(BASE_DIR, "index.html")):
-        if os.path.exists(name):
-            return FileResponse(name)
-    return HTMLResponse("<h2>Slide Studio ishlamoqda. index.html topilmadi.</h2>")
+    return _index_response()
 
 @app.get("/api/config/public")
 def public_config():
@@ -1931,6 +2000,8 @@ PUBLIC_STATIC_FILES = {
 def static_file(filename: str):
     if filename not in PUBLIC_STATIC_FILES:
         raise HTTPException(404, "Fayl topilmadi")
+    if filename == "index.html":
+        return _index_response()
     path = os.path.join(BASE_DIR, filename)
     if os.path.isfile(path):
         return FileResponse(path)

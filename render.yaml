@@ -26,6 +26,8 @@ services:
         value: auto
       - key: LOG_LEVEL
         value: warning
+      - key: KEEPALIVE          # free rejada server uxlab qolmasligi uchun (bot birinchi javobi sekin bo'lmaydi)
+        value: "1"
       - key: SLIDE_STUDIO_HMAC_SECRET
         generateValue: true
       - key: AI_BASE_URL

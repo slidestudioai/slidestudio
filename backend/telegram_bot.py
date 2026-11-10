@@ -490,7 +490,38 @@ def _ensure_uid_sync(user: dict) -> Tuple[str, str]:
     return res
 
 
+UID_STALE_MAX = 900.0          # v52: shu muddat ichida eskirgan kesh DARHOL ishlatiladi, yangilash fonda bajariladi
+_uid_refreshing: set = set()
+
+
+async def _refresh_uid_bg(user: dict) -> None:
+    tid = int(user["id"])
+    try:
+        await asyncio.to_thread(_ensure_uid_sync, user)
+    except Exception as e:
+        _warn("uid-refresh", f"akkaunt yangilanmadi: {str(e)[:100]}")
+    finally:
+        _uid_refreshing.discard(tid)
+
+
 async def _ensure_uid(user: dict) -> Tuple[str, str]:
+    """v52: stale-while-revalidate. Har 45 soniyada har bir xabar 2-3 ta Supabase so'rovini (tg_links, auth, user_usage)
+    kutib qolardi. Endi kesh eskirgan bo'lsa ham javob darhol beriladi, tekshiruv fonda — Google uzilsa keyingi xabardan ishlaydi."""
+    tid = int(user["id"])
+    hit = _uids.get(tid)
+    if hit:
+        ts = _uid_ts.get(tid)
+        if ts is None:
+            _uid_ts[tid] = time.time()          # to'g'ridan-to'g'ri yozilgan kesh (link) — yangi deb hisoblanadi
+            return hit
+        age = time.time() - ts
+        if age < UID_TTL:
+            return hit
+        if age < UID_STALE_MAX:
+            if tid not in _uid_refreshing:
+                _uid_refreshing.add(tid)
+                _spawn(_refresh_uid_bg(user))
+            return hit
     return await asyncio.to_thread(_ensure_uid_sync, user)
 
 
@@ -2384,7 +2415,11 @@ def _summary(deck: dict) -> str:
 # ----------------------------------------------------------------------------------------------
 # Generatsiya / tahrirlash vazifalari (alohida task'larda — webhook darhol 200 qaytaradi)
 # ----------------------------------------------------------------------------------------------
-_gen_sem = asyncio.Semaphore(3)
+try:
+    _GEN_PARALLEL = max(2, min(16, int(_env("TG_AI_PARALLEL", "6"))))      # v52: 3 -> 6 (AI so'rovlari tarmoq kutishi, CPU emas)
+except Exception:
+    _GEN_PARALLEL = 6
+_gen_sem = asyncio.Semaphore(_GEN_PARALLEL)
 _gen_waiting = 0
 GEN_QUEUE_MAX = 30          # v51: navbatda 30 tadan ko'p AI so'rovi bo'lsa — yangisi rad etiladi (server qotmasin)
 _bg: set = set()
@@ -3386,17 +3421,24 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
     msg_id: Optional[int] = None
     try:
         mode = st.get("mode", "fast")
-        uid, email = await _ensure_uid(user)
-        usage = await asyncio.to_thread(_usage_now_sync, uid, email)
+        # v52: «O'ylayapman…» darhol yuboriladi va akkaunt/balans tekshiruvi PARALLEL ketadi (avval ketma-ket kutilardi)
+        sent_task = asyncio.create_task(_send(chat_id, "💬 <i>O'ylayapman…</i>"))
+        _spawn(tg("sendChatAction", chat_id=chat_id, action="typing"))
+        try:
+            uid, email = await _ensure_uid(user)
+            usage = await asyncio.to_thread(_usage_now_sync, uid, email)
+        except Exception:
+            sent = await sent_task
+            msg_id = (sent or {}).get("message_id") if isinstance(sent, dict) else None
+            raise
+        sent = await sent_task
+        msg_id = (sent or {}).get("message_id") if isinstance(sent, dict) else None
         if usage.get("blocked"):
-            await _send(chat_id, "⛔ Akkauntingiz bloklangan.")
+            await _edit(chat_id, msg_id, "⛔ Akkauntingiz bloklangan.")
             return
         if _deps["total_credits"](usage) < _deps["MODES"][mode]["chat"]:
-            await _send(chat_id, _no_credit_text(mode, usage), _kb_buy())
+            await _edit(chat_id, msg_id, _no_credit_text(mode, usage), _kb_buy())
             return
-        sent = await _send(chat_id, "💬 <i>O'ylayapman…</i>")
-        msg_id = (sent or {}).get("message_id") if isinstance(sent, dict) else None
-        await tg("sendChatAction", chat_id=chat_id, action="typing")
         async with _gen_sem:
             data, tokens = await _ai_json(CHAT_SYSTEM, text[:1500], mode)
         await _charge(uid, email, 0, tokens, mode, {"src": "telegram", "kind": "chat"})

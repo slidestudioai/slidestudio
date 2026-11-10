@@ -17,8 +17,8 @@
 .presentation-overlay.pres-v40 .close-pres-btn { display: none !important; }
 .presentation-overlay.pres-v40 { overflow: hidden; }
 #ssPrepOverlay { z-index: 2147483100 !important; }
-/* Minimalist interfeys: takrorlanuvchi tugmalar yashirildi (menyuda bor) */
-#btnReferral { display: none !important; }
+/* v52: referal (+15) tugmasi yana ko'rinadi (sayt, telefon va Telegram Mini App'da) */
+#btnReferral { display: inline-flex !important; flex-shrink: 0; }
 /* Chap panel: miniatyuralar harakatsiz va silliq */
 #sidebar .slide-thumb img { pointer-events: none; }
 #sidebar .sidebar-slides-scroll { overscroll-behavior: contain; scroll-behavior: auto; }
