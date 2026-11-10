@@ -321,6 +321,13 @@
             </svg>
           </button>
         </div>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #e8eaed;">
+          <a href="/terms.html" target="_blank" rel="noopener" id="sidebarTermsLink"
+            style="display:flex;align-items:center;gap:6px;font-size:11px;color:#5f6368;text-decoration:none;padding:4px 2px;border-radius:6px;">
+            <span class="material-symbols-outlined" style="font-size:16px;color:#5f6368;">gavel</span>
+            <span>Terms of Service</span>
+          </a>
+        </div>
       `;
       sidebar.appendChild(section);
       const gear = section.querySelector('#sidebarSettingsBtn');
@@ -335,6 +342,10 @@
         gear.style.touchAction = 'manipulation';
         gear.style.pointerEvents = 'auto';
         gear.style.zIndex = '20';
+      }
+      const termsLink = section.querySelector('#sidebarTermsLink');
+      if (termsLink) {
+        termsLink.addEventListener('click', function (e) { e.stopPropagation(); });
       }
     }
 

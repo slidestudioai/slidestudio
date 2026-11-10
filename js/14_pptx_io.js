@@ -79,8 +79,19 @@
   function cleanFont(f) {
     var first = String(f || 'Arial').split(',')[0].replace(/["']/g, '').trim();
     if (!first) first = 'Arial';
-    var g = { 'sans-serif': 'Arial', 'serif': 'Times New Roman', 'monospace': 'Courier New', 'system-ui': 'Arial', 'cursive': 'Comic Sans MS', 'fantasy': 'Impact' };
-    return g[first.toLowerCase()] || first;
+    var low = first.toLowerCase();
+    var g = {
+      'sans-serif': 'Arial', 'serif': 'Times New Roman', 'monospace': 'Courier New',
+      'system-ui': 'Arial', 'cursive': 'Comic Sans MS', 'fantasy': 'Impact',
+      'montserrat': 'Arial', 'roboto': 'Arial', 'inter': 'Arial', 'poppins': 'Arial',
+      'opensans': 'Arial', 'open sans': 'Arial', 'nunito': 'Arial', 'lato': 'Arial',
+      'source sans pro': 'Arial', 'helvetica': 'Arial', 'helvetica neue': 'Arial'
+    };
+    // Maxsus shriftlar ko'p kompyuterda yo'q — Arial/Calibri ishlatiladi (oʻ gʻ harflari yaxshi chiqadi)
+    if (g[low]) return g[low];
+    // Faqat Windows/macOS standartlari qolsin
+    var safe = /^(arial|calibri|cambria|georgia|times new roman|courier new|verdana|tahoma|trebuchet ms|comic sans ms|impact|segoe ui|consolas)$/i;
+    return safe.test(first) ? first : 'Arial';
   }
 
   function placeBox(el, w, h) {
@@ -260,7 +271,9 @@
 
     var lh = Math.max(0.8, Math.min(3, num(el.lineHeight, 1.16)));
 
-    var hBoost = Math.max(b.h, r4((pt / 72) * lh * (text.split('\n').length || 1) * 1.15));
+    // Qatorlar soniga qarab balandlikni biroz oshirib, matn kesilib qolmasin
+    var lines = (text.split('\n').length || 1);
+    var hBoost = Math.max(b.h, r4((pt / 72) * lh * lines * 1.28 + 0.06));
     var opts = {
       x: r4(b.x - pad / 2), y: b.y, w: r4(b.w + pad), h: r4(Math.max(b.h, hBoost)),
       fontSize: pt, fontFace: cleanFont(el.fontFamily), color: col.hex,
@@ -713,11 +726,17 @@
     }
     var th = await onlineThumb(info);
     var cover = await composeCover(th && th.data, w, h, info.kind === 'youtube' ? 'youtube' : 'generic', th && th.crop);
-    if (await addOnlineVideo(slide, info, b, cover, el.embedAutoplay)) { addVideoLinkPill(slide, b, info.watch, false); stats.onlineVideo = (stats.onlineVideo || 0) + 1; if (!th && stats) stats.noThumb = (stats.noThumb || 0) + 1; return true; }
+    if (await addOnlineVideo(slide, info, b, cover, el.embedAutoplay)) {
+      stats.onlineVideo = (stats.onlineVideo || 0) + 1;
+      if (!th && stats) stats.noThumb = (stats.noThumb || 0) + 1;
+      return true;
+    }
+    // Onlayn video ishlamasa: muqova + havola (WPS / eski PowerPoint uchun)
     var o = { data: cover, x: b.x, y: b.y, w: b.w, h: b.h };
     if (b.rotate) o.rotate = b.rotate;
     if (info.watch) o.hyperlink = { url: info.watch, tooltip: 'Videoni ochish' };
     slide.addImage(o);
+    addVideoLinkPill(slide, b, info.watch, false);
     if (!th && stats) stats.noThumb = (stats.noThumb || 0) + 1;
     return true;
   }
@@ -1009,10 +1028,15 @@
               var binfo = parseOnline({ embedUrl: bvu });
               var bth = await onlineThumb(binfo);
               var bcover = await composeCover(bth && bth.data, 960, 540, binfo.kind === 'youtube' ? 'youtube' : 'generic', bth && bth.crop);
-              if (await addOnlineVideo(slide, binfo, { x: 0, y: 0, w: 10, h: 5.625 }, bcover, true)) { addVideoLinkPill(slide, { x: 0, y: 0, w: 10, h: 5.625 }, binfo.watch, true); stats.onlineVideo = (stats.onlineVideo || 0) + 1; continue_bg = true; }
-              var bo = { data: bcover, x: 0, y: 0, w: 10, h: 5.625 };
-              if (binfo.watch) bo.hyperlink = { url: binfo.watch, tooltip: 'Fon videosini ochish' };
-              if (!continue_bg) slide.addImage(bo);
+              if (await addOnlineVideo(slide, binfo, { x: 0, y: 0, w: 10, h: 5.625 }, bcover, true)) {
+                stats.onlineVideo = (stats.onlineVideo || 0) + 1;
+                continue_bg = true;
+              } else {
+                var bo = { data: bcover, x: 0, y: 0, w: 10, h: 5.625 };
+                if (binfo.watch) bo.hyperlink = { url: binfo.watch, tooltip: 'Fon videosini ochish' };
+                slide.addImage(bo);
+                addVideoLinkPill(slide, { x: 0, y: 0, w: 10, h: 5.625 }, binfo.watch, true);
+              }
             }
           }
         } catch (e) { stats.errors++; console.warn('PPTX fon video:', e); }
