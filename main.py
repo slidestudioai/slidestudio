@@ -485,13 +485,10 @@ try:
         _active_sessions as active_sessions,
         _sessions_lock as sessions_lock,
     )
-    # v52-fix: scaling moduli bilan BIR XIL kalitni ishlatamiz — aks holda hash_user_id
-    # natijasi main.py fallback'i bilan farq qilib, tok-kesh/session kalitlari buziladi.
-    if (_env("SLIDE_STUDIO_HMAC_SECRET", "HMAC_SECRET", default="") != _SCALING_HMAC_SECRET
-            and getattr(__import__("backend.scaling", fromlist=["scaling"]), "HMAC_SECRET", "") != _SCALING_HMAC_SECRET):
-        def hash_user_id(uid: str, _sec=_SCALING_HMAC_SECRET) -> str:  # noqa: F811
-            import hashlib, hmac as _hmac
-            return _hmac.new(_sec.encode("utf-8"), (uid or "anon").encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    # v52-fix: main.py da hash_user_id DOIM yagona barqaror kalit (_stable_hmac_secret) bilan ishlaydi.
+    def hash_user_id(uid: str, _sec=_SCALING_HMAC_SECRET) -> str:  # noqa: F811
+        import hashlib, hmac as _hmac
+        return _hmac.new(_sec.encode("utf-8"), (uid or "anon").encode("utf-8"), hashlib.sha256).hexdigest()[:32]
     MAX_WS = _SCALING_MAX_WS
     print(f"[SCALING] concurrency={DEEPSEEK_CONCURRENCY} MAX_WS={MAX_WS}")
 except Exception as _sc_err:
@@ -602,7 +599,7 @@ def _get_or_create_user_usage_raw(user_id: str, email: str) -> dict:
         return apply_24h_reset(default)
     try:
         res = supabase.table("user_usage").select("*").eq("user_id", user_id).execute()
-        if res.
+        if res.data:
             u = normalize_user_row(res.data[0])
             u_before = dict(u)
             u = apply_24h_reset(u)
@@ -1200,7 +1197,7 @@ async def import_pdf(request: Request):
     if ctype and ctype not in ("application/pdf", "application/octet-stream"):
         raise HTTPException(status_code=415, detail="Faqat PDF fayl qabul qilinadi")
     data = await _read_body_limited(request)
-    if not 
+    if not data:
         raise HTTPException(status_code=400, detail="Fayl bo'sh")
     if not data.startswith(b"%PDF"):
         raise HTTPException(status_code=400, detail="Bu PDF emas")
@@ -1229,9 +1226,9 @@ async def analyze_images(payload: Dict[str, Any]):
             continue
         number = item.get("number")
         src = item.get("src") or ""
-        if isinstance(src, str) and src.startswith("") and len(src) > int(MAX_UPLOAD_BYTES * 1.4):     # base64 ~ 1.33x
+        if isinstance(src, str) and src.startswith("data:") and len(src) > int(MAX_UPLOAD_BYTES * 1.4):     # base64 ~ 1.33x
             raise HTTPException(status_code=413, detail="Rasm 10 MB dan oshmasin")
-        if not isinstance(src, str) or not src.lower().startswith(tuple("" + m + ";" for m in ALLOWED_IMAGE_MIME)):
+        if not isinstance(src, str) or not src.lower().startswith(tuple("data:" + m + ";" for m in ALLOWED_IMAGE_MIME)):
             results.append({"number": number, "description": "Rasm ma'lumoti mavjud emas."})
             continue
         image_desc = "Rasm tarkibiy qismlari va asosiy ob'ektlari aniqlanmoqda."
@@ -1398,7 +1395,7 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     return_url = ls["base_url"] or str(return_url_hint or "").strip().rstrip("/")
     if return_url and not return_url.startswith(("http://", "https://")):
         return_url = ""
-    checkout_ Dict[str, Any] = {"custom": {"user_id": str(user_id), "product": "pack"}}
+    checkout_data: Dict[str, Any] = {"custom": {"user_id": str(user_id), "product": "pack"}}
     if user_email:
         checkout_data["email"] = user_email
     product_options: Dict[str, Any] = {"name": f"Slide Studio — {pack_pages()} varaq"}
@@ -1697,9 +1694,9 @@ def _is_public_host(host: str) -> bool:
     except Exception:
         return False
 
-def _sniff_image_mime( bytes, fallback: str = "") -> str:
+def _sniff_image_mime(data: bytes, fallback: str = "") -> str:
     """Magic-bytes asosida MIME. GIF har doim image/gif — animatsiya yo'qolmasin."""
-    if not 
+    if not data:
         return fallback if fallback.startswith("image/") else ""
     if data[:6] in (b"GIF87a", b"GIF89a"):
         return "image/gif"
@@ -1928,12 +1925,12 @@ async def proxy_image(url: str, raw: int = 0):
                 "Cache-Control": "public, max-age=86400, immutable",
                 "Access-Control-Allow-Origin": "*",
                 "Cross-Origin-Resource-Policy": "cross-origin",
-                "Content-Security-Policy": "sandbox; default-src 'none'; img-src ; style-src 'unsafe-inline'",
+                "Content-Security-Policy": "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
                 "X-Content-Type-Options": "nosniff",
             },
         )
     return JSONResponse({
-        "data_url": f"{ctype};base64," + base64.b64encode(data).decode(),
+        "data_url": f"data:{ctype};base64," + base64.b64encode(data).decode(),
         "content_type": ctype,
         "final_url": res.get("final_url") or url,
     })
