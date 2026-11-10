@@ -26,6 +26,7 @@ CACHE_TTL = 20.0
 MAX_DATA_URL = 1_600_000          # ~1.2 MB rasm (base64)
 _DATA_IMG = re.compile(r"^data:image/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$")
 _bot_last: Dict[str, float] = {}
+KINDS = ("ad", "notice")          # v55: notice = e'lon — reklamadek ko'rinadi, lekin «Reklama» yozuvisiz va hammaga (VIP ham)
 
 
 def configure(supabase_getter: Callable[[], Any]) -> None:
@@ -62,6 +63,9 @@ def clean_ad(data: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[s
     murl = str(d.get("media_url") or "").strip()
     link = str(d.get("link_url") or "").strip()
     btn = (str(d.get("button_text") or "Batafsil").strip() or "Batafsil")[:24]
+    kind = str(d.get("kind") or "ad").lower()
+    if kind not in KINDS:
+        kind = "ad"
     place = str(d.get("placement") or "both").lower()
     if place not in ("both", "site", "bot"):
         place = "both"
@@ -87,7 +91,7 @@ def clean_ad(data: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[s
         weight = 1
     row = {
         "title": title, "body": body, "media_type": mtype, "media_url": murl, "link_url": link,
-        "button_text": btn, "placement": place, "active": bool(d.get("active", True)), "weight": weight,
+        "button_text": btn, "placement": place, "active": bool(d.get("active", True)), "weight": weight, "kind": kind,
         "starts_at": (str(d.get("starts_at")).strip() or None) if d.get("starts_at") else None,
         "ends_at": (str(d.get("ends_at")).strip() or None) if d.get("ends_at") else None,
         "updated_at": _now().isoformat(),
@@ -113,7 +117,12 @@ def _load(force: bool = False) -> List[Dict[str, Any]]:
     if sb:
         try:
             # ro'yxat uchun og'ir `media_url` (base64) ni olmaymiz faqat data: bo'lganda ham kerak emas — media alohida endpointdan
-            rows = sb.table("ads").select("id,title,body,media_type,media_url,link_url,button_text,placement,active,weight,starts_at,ends_at").eq("active", True).execute().data or []
+            cols = "id,title,body,media_type,media_url,link_url,button_text,placement,active,weight,starts_at,ends_at"
+            try:
+                rows = sb.table("ads").select(cols + ",kind").eq("active", True).execute().data or []
+            except Exception:
+                # eski baza (kind ustuni hali qo'shilmagan) — reklamalar baribir ishlaydi
+                rows = sb.table("ads").select(cols).eq("active", True).execute().data or []
         except Exception as e:
             print(f"[ADS] o'qilmadi (SUPABASE_SCHEMA.sql?): {str(e)[:100]}")
             rows = []
@@ -142,12 +151,20 @@ def surface_enabled(surface: str) -> bool:
     return bool(appsettings.get("ads_site" if surface == "site" else "ads_bot", True))
 
 
-def pick(surface: str, ad_free: bool, exclude_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-    """Mos reklamani tanlaydi yoki None (Pro/VIP/admin, o'chirilgan, reklama yo'q)."""
-    if ad_free or surface not in ("site", "bot") or not surface_enabled(surface):
+def kind_of(row: Optional[Dict[str, Any]]) -> str:
+    k = str((row or {}).get("kind") or "ad").lower()
+    return k if k in KINDS else "ad"
+
+
+def pick(surface: str, ad_free: bool, exclude_id: Optional[int] = None, kind: str = "ad") -> Optional[Dict[str, Any]]:
+    """Mos reklamani (kind="ad") yoki e'lonni (kind="notice") tanlaydi. Reklama Pro/VIP/admin'ga ko'rsatilmaydi,
+    e'lon esa hammaga (u reklama emas — sayt/bot yangiliklari)."""
+    if surface not in ("site", "bot"):
+        return None
+    if kind == "ad" and (ad_free or not surface_enabled(surface)):
         return None
     now = _now()
-    pool = [r for r in _load() if _eligible(r, surface, now)]
+    pool = [r for r in _load() if _eligible(r, surface, now) and kind_of(r) == kind]
     if exclude_id is not None and len(pool) > 1:
         pool = [r for r in pool if int(r["id"]) != int(exclude_id)] or pool
     if not pool:
@@ -170,6 +187,8 @@ def public(row: Dict[str, Any], surface: str) -> Dict[str, Any]:
         "button_text": row.get("button_text") or "Batafsil",
         "has_link": bool(row.get("link_url")),
         "click_url": f"/api/ads/click/{int(row['id'])}?s={surface}",
+        "kind": kind_of(row),
+        "label": kind_of(row) == "ad",           # «Reklama» yozuvi faqat reklamada
     }
 
 

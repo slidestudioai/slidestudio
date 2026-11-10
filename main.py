@@ -8,7 +8,7 @@ import signal
 import threading
 import secrets
 from collections import OrderedDict
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta, timezone
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
@@ -280,11 +280,7 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
         return ""
     if stats is not None:
         stats["searches"] = len(qs)                 # v53: bu qidiruvlar ham varaq hisobiga kiradi (avval bepul edi)
-    for n, q in enumerate(qs, 1):
-        await _ev({"type": "search_start", "query": q, "kind": kind, "n": n})
-    res = await asyncio.gather(*[asyncio.wait_for(asyncio.to_thread(_search_images_sync, q, kind, 8), timeout=25) for q in qs], return_exceptions=True)
-    for q, f in zip(qs, res):
-        await _ev({"type": "search_done", "query": q, "kind": kind, "count": len(f) if isinstance(f, list) else 0})
+    res = await _search_batch(websocket, [(q, kind) for q in qs], per_query=8)     # v55: Tez AI bilan bir xil to'plamli qidiruv
     blocks = []
     for q, f in zip(qs, res):
         if isinstance(f, list):
@@ -1756,6 +1752,19 @@ async def ads_next(request: Request, surface: str = "site", token: str = "", exc
         asyncio.get_running_loop().run_in_executor(None, ads_mod.bump, int(row["id"]), "impression")
     return JSONResponse({"ad": ads_mod.public(row, "site")}, headers={"Cache-Control": "no-store"})
 
+@app.get("/api/notice/next")
+async def notice_next(exclude: str = ""):
+    """v55: sayt e'loni (reklamasiz popup). Hammaga ko'rsatiladi (VIP ham) — brauzer ko'rganlarini o'zi eslab qoladi."""
+    seen = {int(x) for x in (exclude or "").split(",")[:50] if x.strip().isdigit()}
+    rows = await asyncio.to_thread(ads_mod._load)
+    now = ads_mod._now()
+    pool = [r for r in rows if ads_mod._eligible(r, "site", now) and ads_mod.kind_of(r) == "notice" and int(r["id"]) not in seen]
+    if not pool:
+        return JSONResponse({"notice": None}, headers={"Cache-Control": "no-store"})
+    row = max(pool, key=lambda r: int(r["id"]))           # eng yangisi birinchi
+    asyncio.get_running_loop().run_in_executor(None, ads_mod.bump, int(row["id"]), "impression")
+    return JSONResponse({"notice": ads_mod.public(row, "site")}, headers={"Cache-Control": "no-store"})
+
 @app.get("/api/ads/click/{ad_id}")
 async def ads_click(ad_id: int, s: str = "site"):
     row = await asyncio.to_thread(ads_mod.get_row, ad_id)
@@ -2236,6 +2245,172 @@ def _fetch_json_sync(url: str, headers: Optional[Dict[str, str]] = None) -> dict
         return {"data": json.loads(raw.decode("utf-8", "replace"))}
     except Exception as e:
         return {"error": f"Qidiruv xatosi: {e}"}
+
+
+# ----------------------------------------------------------------------------------------------
+# v55: to'plamli rasm/GIF/video qidiruvi (Tez va Chuqur AI uchun BIR XIL)
+# ----------------------------------------------------------------------------------------------
+GIF_SAFE_POOL = [
+    "https://media.giphy.com/media/3o7aCTPPm4OHfRLSH6/giphy.gif",
+    "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
+    "https://media.giphy.com/media/26BRv0ThxKQihlNO0/giphy.gif",
+    "https://media.giphy.com/media/xT9IgG50Fb7Mi0prBC/giphy.gif",
+    "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
+    "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif",
+]
+_ANIM_WORDS = ("gif", "animation", "animated", "loop", "motion", "spinner", "particles", "globe rotating", "loading")
+SEARCH_STAGGER = 0.09          # qatorlar orasidagi kichik pauza (soniya) — «birma-bir» ko'rinish, lekin tez
+
+
+def _tool_search_kind(query: str, kind: Any) -> str:
+    k = str(kind or "").lower()
+    k = "gif" if k == "gif" else ("video" if k == "video" else "photo")
+    if k == "photo" and any(w in (query or "").lower() for w in _ANIM_WORDS):
+        k = "gif"
+    return k
+
+
+def _search_note(kind: str, found: bool) -> str:
+    if kind == "gif" and found:
+        return ("MAJBURIY QOIDALAR (GIF): results[].url ni TO'G'RIDAN-TO'G'RI gifUrl yoki src ga yozing (https://media... bilan "
+                "boshlanadi). Qidiruv matnini URL o'rniga YOZMANG. Har bir GIF uchun results dan bittadan boshqa URL tanlang. "
+                "URL yo'q deb o'tkazib yubormang.")
+    if kind == "video" and found:
+        return ("Eng mos videoni tanlang va uning 'url' ini add_video (yoki orqa fon uchun set_background_video) ga bering. "
+                "URL ni o'zgartirmang.")
+    if found:
+        return "Eng mos rasmni tanlang va uning 'url' ini ishlating. Natija mos bo'lmasa, boshqa so'rov bilan qayta qidiring."
+    return "Hech narsa topilmadi — rasmsiz davom eting yoki boshqa (soddaroq) inglizcha so'rov bilan qayta qidiring."
+
+
+def _retry_queries(q: str, kind: str) -> List[str]:
+    """Topilmagan so'rov uchun soddaroq variantlar (birinchisi — eng yaqini)."""
+    words = (q or "").split()
+    alts = []
+    if len(words) > 2:
+        alts.append(" ".join(words[:2]))
+    if len(words) > 1:
+        alts.append(words[-1] if kind != "gif" else words[0])
+    if kind == "gif":
+        alts += ["funny animation", "happy"]
+    out, seen = [], {(q or "").lower()}
+    for a in alts:
+        if a and a.lower() not in seen:
+            seen.add(a.lower())
+            out.append(a)
+    return out[:3]
+
+
+async def _client_side_search_many(websocket, jobs: List[Tuple[int, str, str]], timeout: float = 14.0) -> Dict[int, list]:
+    """Brauzerga hamma so'rovlarni BIRDANIGA yuboradi va javoblarni yig'adi. jobs: [(idx, query, kind)]."""
+    if not jobs:
+        return {}
+    ids, out = {}, {}
+    stamp = int(time.time() * 1000)
+    for idx, q, kind in jobs:
+        sid = f"b{idx}_{stamp}"
+        ids[sid] = (idx, q)
+        try:
+            await websocket.send_json({"type": "search_request", "id": sid, "query": q, "kind": kind})
+        except Exception:
+            return out
+    deadline = time.time() + timeout
+    while len(out) < len(ids):
+        left = deadline - time.time()
+        if left <= 0:
+            break
+        try:
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=left)
+        except asyncio.TimeoutError:
+            break
+        try:
+            msg = json.loads(raw)
+        except Exception:
+            continue
+        hit = ids.get(msg.get("id")) if msg.get("type") == "search_result" else None
+        if not hit:
+            continue
+        idx, q = hit
+        res = []
+        for r in (msg.get("results") or [])[:12]:
+            u = str((r or {}).get("url") or "")
+            if u.startswith("http"):
+                res.append({"url": u[:600], "thumb": str(r.get("thumb") or "")[:600],
+                            "title": str(r.get("title") or q)[:120], "source": "client"})
+        out[idx] = res
+    return out
+
+
+async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: bool = False, n0: int = 0,
+                        per_query: int = 12, stagger: float = None) -> List[list]:
+    """jobs: [(query, kind)] -> har biri uchun natijalar ro'yxati (tartib saqlanadi).
+    1) hamma qidiruv parallel; 2) bo'sh qolganlar soddaroq so'rov bilan YANA parallel; 3) GIF uchun xavfsiz zaxira.
+    WebSocket'ga search_start / search_done yuboriladi — kichik pauza bilan ketma-ket (chiroyli, «birma-bir»)."""
+    if not jobs:
+        return []
+    stagger = SEARCH_STAGGER if stagger is None else stagger
+
+    async def ev(payload: dict) -> None:
+        if websocket is None:
+            return
+        try:
+            await websocket.send_json(payload)
+        except (WebSocketDisconnect, RuntimeError):
+            raise WebSocketDisconnect()
+        except Exception:
+            pass
+
+    async def server_one(q: str, kind: str) -> list:
+        if not _search_images_sync:
+            return []
+        try:
+            r = await asyncio.wait_for(asyncio.to_thread(_search_images_sync, q, kind, per_query), timeout=25)
+            return r if isinstance(r, list) else []
+        except Exception as e:
+            print(f"[IMG-SEARCH] {q!r}: {type(e).__name__}")
+            return []
+
+    results: List[list] = [[] for _ in jobs]
+    # 1-bosqich: brauzer qidiruvi (agar yoqilgan bo'lsa) — hammasi birdaniga
+    if client_search and websocket is not None:
+        got = await _client_side_search_many(websocket, [(i, q, k) for i, (q, k) in enumerate(jobs) if k != "video"])
+        for i, r in got.items():
+            results[i] = r
+    # server qidiruvlari fonda boshlanadi, «qidirilmoqda» qatorlari esa ketma-ket chiqadi
+    tasks = {i: asyncio.ensure_future(server_one(q, k)) for i, (q, k) in enumerate(jobs) if not results[i]}
+    for i, (q, k) in enumerate(jobs):
+        await ev({"type": "search_start", "query": q, "kind": k, "n": n0 + i + 1})
+        if stagger and i < len(jobs) - 1:
+            await asyncio.sleep(stagger)
+    if tasks:
+        done = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        for i, r in zip(tasks.keys(), done):
+            results[i] = r if isinstance(r, list) else []
+    # 2-bosqich: topilmaganlar — soddaroq so'rovlar bilan YANA bitta parallel to'plam
+    missing = [i for i, r in enumerate(results) if not r]
+    if missing:
+        retry = {i: _retry_queries(jobs[i][0], jobs[i][1]) for i in missing}
+
+        async def first_hit(i: int) -> list:
+            alts = retry[i]
+            if not alts:
+                return []
+            outs = await asyncio.gather(*[server_one(a, jobs[i][1]) for a in alts], return_exceptions=True)
+            for o in outs:
+                if isinstance(o, list) and o:
+                    return o
+            return []
+        again = await asyncio.gather(*[first_hit(i) for i in missing], return_exceptions=True)
+        for i, r in zip(missing, again):
+            results[i] = r if isinstance(r, list) else []
+    for i, (q, k) in enumerate(jobs):
+        if k == "gif" and not results[i]:
+            results[i] = [{"url": u, "title": "safe", "source": "safe_pool"} for u in GIF_SAFE_POOL]
+    for i, (q, k) in enumerate(jobs):
+        await ev({"type": "search_done", "query": q, "kind": k, "count": len(results[i])})
+        if stagger and i < len(jobs) - 1:
+            await asyncio.sleep(stagger / 2)
+    return results
 
 
 async def _client_side_search(websocket, q: str, kind: str, n: int, timeout: float = 14.0):
@@ -3040,85 +3215,29 @@ async def ws_chat(websocket: WebSocket):
                                                     "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
                                                    for i, c in enumerate(ordered)],
                                 }]
+                                # v55: HAMMA qidiruvlar bir vaqtda (parallel), topilmaganlari ham bitta to'plamda qayta qidiriladi.
+                                # Foydalanuvchiga esa qatorlar ketma-ket (tez) paydo bo'ladi — 1 tadan qidirayotgandek.
+                                _jobs, _job_of = [], {}
                                 for i, c in enumerate(ordered):
                                     try:
                                         a = json.loads(c["args"] or "{}")
                                     except Exception:
                                         a = {}
                                     q_ = str(a.get("query") or "").strip()
-                                    _k0 = str(a.get("kind") or "").lower()
-                                    kind_ = "gif" if _k0 == "gif" else ("video" if _k0 == "video" else "photo")
-
-                                    _ql = q_.lower()
-                                    if kind_ == "photo" and any(w in _ql for w in (
-                                        "gif", "animation", "animated", "loop", "motion",
-                                        "spinner", "particles", "globe rotating", "loading",
-                                    )):
-                                        kind_ = "gif"
-                                    if c["name"] != "search_images" or not q_ or n_searches >= MAX_SEARCHES_PER_TURN:
+                                    kind_ = _tool_search_kind(q_, a.get("kind"))
+                                    if c["name"] == "search_images" and q_ and n_searches < MAX_SEARCHES_PER_TURN:
+                                        n_searches += 1
+                                        _job_of[i] = len(_jobs)
+                                        _jobs.append((q_, kind_))
+                                _found_all = await _search_batch(websocket, _jobs, client_search=bool(data.get("client_search")),
+                                                                 n0=n_searches - len(_jobs))
+                                for i, c in enumerate(ordered):
+                                    if i not in _job_of:
                                         result = {"error": "qidiruv bajarilmadi", "results": []}
                                     else:
-                                        n_searches += 1
-                                        try:
-                                            await websocket.send_json({"type": "search_start", "query": q_, "kind": kind_, "n": n_searches})
-                                        except (WebSocketDisconnect, RuntimeError):
-                                            raise WebSocketDisconnect()
-                                        found = []
-                                        if data.get("client_search") and kind_ != "video":
-                                            found = await _client_side_search(websocket, q_, kind_, n_searches)
-                                        if not found:
-                                            try:
-                                                found = await asyncio.wait_for(asyncio.to_thread(_search_images_sync, q_, kind_, 12), timeout=25)
-                                            except Exception as _se:
-                                                print(f"[IMG-SEARCH] {q_!r}: {_se}")
-                                                found = []
-
-                                        if kind_ == "gif":
-                                            if not found and _search_images_sync:
-                                                for alt_q in (q_, " ".join(q_.split()[:2]), "funny animation", "happy", "nature"):
-                                                    if not alt_q:
-                                                        continue
-                                                    try:
-                                                        found = await asyncio.wait_for(
-                                                            asyncio.to_thread(_search_images_sync, alt_q, "gif", 12),
-                                                            timeout=12)
-                                                    except Exception:
-                                                        found = []
-                                                    if found:
-                                                        break
-                                            if not found:
-                                                found = [
-                                                    {"url": "https://media.giphy.com/media/3o7aCTPPm4OHfRLSH6/giphy.gif",
-                                                     "title": "safe", "source": "safe_pool"},
-                                                    {"url": "https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
-                                                     "title": "safe", "source": "safe_pool"},
-                                                    {"url": "https://media.giphy.com/media/26BRv0ThxKQihlNO0/giphy.gif",
-                                                     "title": "safe", "source": "safe_pool"},
-                                                    {"url": "https://media.giphy.com/media/xT9IgG50Fb7Mi0prBC/giphy.gif",
-                                                     "title": "safe", "source": "safe_pool"},
-                                                    {"url": "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif",
-                                                     "title": "safe", "source": "safe_pool"},
-                                                    {"url": "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif",
-                                                     "title": "safe", "source": "safe_pool"},
-                                                ]
-                                        note = (
-                                            "MAJBURIY QOIDALAR (GIF): results[].url ni TO'G'RIDAN-TO'G'RI "
-                                            "gifUrl yoki src ga yozing (https://media... bilan boshlanadi). "
-                                            "Qidiruv matnini URL o'rniga YOZMANG. Har bir GIF uchun "
-                                            "results dan bittadan boshqa URL tanlang. URL yo'q deb o'tkazib yubormang."
-                                            if kind_ == "gif" and found else
-                                            ("Eng mos videoni tanlang va uning 'url' ini add_video (yoki orqa fon uchun set_background_video) ga bering. URL ni o'zgartirmang."
-                                             if kind_ == "video" and found else
-                                            "Eng mos rasmni tanlang va uning 'url' ini ishlating. "
-                                             "Natija mos bo'lmasa, boshqa so'rov bilan qayta qidiring."
-                                             if found else
-                                             "Hech narsa topilmadi — boshqa (soddaroq) inglizcha so'rov bilan qayta qidiring.")
-                                        )
-                                        result = {"query": q_, "kind": kind_, "results": found, "note": note}
-                                        try:
-                                            await websocket.send_json({"type": "search_done", "query": q_, "kind": kind_, "count": len(found or [])})
-                                        except (WebSocketDisconnect, RuntimeError):
-                                            raise WebSocketDisconnect()
+                                        q_, kind_ = _jobs[_job_of[i]]
+                                        found = _found_all[_job_of[i]]
+                                        result = {"query": q_, "kind": kind_, "results": found, "note": _search_note(kind_, bool(found))}
                                     msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
                                                  "content": json.dumps(result, ensure_ascii=False)[:6000]})
 

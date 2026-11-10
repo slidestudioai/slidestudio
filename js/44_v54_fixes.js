@@ -153,3 +153,72 @@
   document.addEventListener('DOMContentLoaded', sync);
   setInterval(sync, 800);           // kirish/chiqish ko'p joydan bo'ladi — arzon tekshiruv (faqat o'zgarganda DOM'ga tegadi)
 })();
+
+/* v55 — E'lon (reklamasiz) popup.
+ * Admin «📣 E'lon» joylasa — saytda chiroyli popup bo'lib chiqadi («Reklama» yozuvisiz, VIP'ga ham).
+ * Har bir e'lon bir marta ko'rsatiladi (brauzer eslab qoladi); yangisi bo'lsa keyingi tekshiruvda chiqadi.
+ */
+(function () {
+  'use strict';
+  // Sayt maxfiylik uchun oddiy localStorage'ni o'chirgan (index.html) — faqat «ss-auth-v39» prefiksli kalitlar saqlanadi.
+  // Ko'rilgan e'lonlar ro'yxati (faqat raqamlar) shu ruxsat etilgan omborda; bo'lmasa — RAM'da (sahifa yopilguncha).
+  var KEY = 'ss-auth-v39-notice-seen', mem = [];
+  var store = window.__ssAuthStorage || null;
+  function seen() {
+    try { var v = store && store.getItem(KEY); if (v) return (JSON.parse(v) || []).filter(function (x) { return typeof x === 'number'; }).slice(-50); } catch (e) {}
+    return mem.slice(-50);
+  }
+  function markSeen(id) {
+    var a = seen(); if (a.indexOf(id) < 0) a.push(id);
+    mem = a.slice(-50);
+    try { if (store) store.setItem(KEY, JSON.stringify(mem)); } catch (e) {}
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  var open = false;
+
+  function show(n) {
+    if (open || !n || document.getElementById('ssNotice')) return;
+    open = true;
+    var media = '';
+    if (n.media_url && n.media_type === 'image') media = '<img class="ssn-media" src="' + esc(n.media_url) + '" alt="" referrerpolicy="no-referrer">';
+    else if (n.media_url && n.media_type === 'video') media = '<video class="ssn-media" src="' + esc(n.media_url) + '" autoplay muted loop playsinline></video>';
+    var ov = document.createElement('div');
+    ov.id = 'ssNotice'; ov.className = 'ssn-ov';
+    ov.innerHTML = '<div class="ssn" role="dialog" aria-modal="true" aria-label="' + esc(n.title || "E'lon") + '">' +
+      '<button type="button" class="ssn-x" aria-label="Yopish">×</button>' + media +
+      '<div class="ssn-body">' + (n.title ? '<h3>' + esc(n.title) + '</h3>' : '') + (n.body ? '<p>' + esc(n.body) + '</p>' : '') +
+      (n.has_link ? '<a class="ssn-go" target="_blank" rel="noopener" href="' + esc(n.click_url) + '">' + esc(n.button_text || 'Batafsil') + '</a>' : '') +
+      '</div></div>';
+    document.body.appendChild(ov);
+    requestAnimationFrame(function () { ov.classList.add('on'); });
+    function close() {
+      markSeen(n.id);
+      ov.classList.remove('on');
+      setTimeout(function () { try { ov.remove(); } catch (e) {} open = false; }, 220);
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    document.addEventListener('keydown', onKey);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('.ssn-x').onclick = close;
+    var go = ov.querySelector('.ssn-go');
+    if (go) go.addEventListener('click', function (e) {
+      var tgw = window.Telegram && window.Telegram.WebApp;
+      if (tgw && tgw.initData && tgw.openLink) { e.preventDefault(); try { tgw.openLink(location.origin + n.click_url); } catch (er) {} }
+      setTimeout(close, 50);
+    });
+  }
+
+  async function check() {
+    if (open || document.hidden) return;
+    try {
+      var r = await fetch('/api/notice/next?exclude=' + encodeURIComponent(seen().join(',')), { cache: 'no-store' });
+      if (!r.ok) return;
+      var j = await r.json();
+      if (j && j.notice && seen().indexOf(j.notice.id) < 0) show(j.notice);
+    } catch (e) {}
+  }
+  window.ssCheckNotice = check;
+  setTimeout(check, 2500);                 // sahifa ochilib, slayd chizilgandan keyin
+  setInterval(check, 10 * 60 * 1000);
+})();

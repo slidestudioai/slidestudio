@@ -129,7 +129,7 @@ let adCache=[];
 async function ads(m){
   m.innerHTML='<div class="row"><button class="btn" onclick="editAd()">＋ Yangi reklama</button></div><div class="card" id="alist" style="padding:0;margin-top:12px"><div class="empty">…</div></div><p style="color:var(--mut);font-size:12px;margin:10px 4px">Pro, VIP va admin akkauntlarga reklama hech qachon ko\'rsatilmaydi. Saytda — chap panelda slaydlar tagida; botda — taqdimot yuborilgach (oraliq «Sozlama»da).</p>';
   try{const r=await api('ads');adCache=r.ads;}catch(e){$('#alist').innerHTML='<div class="empty">'+esc(e.message)+'</div>';return;}
-  $('#alist').innerHTML=adCache.length?adCache.map(a=>`<div class="ad">${media(a)}<div class="t" style="flex:1;min-width:0"><b>${esc(a.title||'(sarlavhasiz)')}</b> ${a.active?'<span class="badge ok">faol</span>':'<span class="badge">o\'chiq</span>'}<br><small style="color:var(--mut)">${esc(a.body).slice(0,70)}</small><br><small style="color:var(--mut)">${{both:'Sayt+Bot',site:'Sayt',bot:'Bot'}[a.placement]} · 👁 ${num(a.impressions)} · 👆 ${num(a.clicks)}${a.impressions?' ('+(a.clicks*100/a.impressions).toFixed(1)+'%)':''}</small><div class="row" style="margin-top:6px"><button class="btn sec sm" onclick="editAd(${a.id})">Tahrir</button><button class="btn sec sm" onclick="toggleAd(${a.id},${!a.active})">${a.active?'O\'chirish':'Yoqish'}</button><button class="btn bad sm" onclick="delAd(${a.id})">🗑</button></div></div></div>`).join(''):'<div class="empty">Hali reklama yo\'q</div>';
+  $('#alist').innerHTML=adCache.length?adCache.map(a=>`<div class="ad">${media(a)}<div class="t" style="flex:1;min-width:0"><b>${esc(a.title||'(sarlavhasiz)')}</b> ${a.kind==='notice'?'<span class="badge">📣 e\'lon</span> ':''}${a.active?'<span class="badge ok">faol</span>':'<span class="badge">o\'chiq</span>'}<br><small style="color:var(--mut)">${esc(a.body).slice(0,70)}</small><br><small style="color:var(--mut)">${{both:'Sayt+Bot',site:'Sayt',bot:'Bot'}[a.placement]} · 👁 ${num(a.impressions)} · 👆 ${num(a.clicks)}${a.impressions?' ('+(a.clicks*100/a.impressions).toFixed(1)+'%)':''}</small><div class="row" style="margin-top:6px"><button class="btn sec sm" onclick="editAd(${a.id})">Tahrir</button><button class="btn sec sm" onclick="toggleAd(${a.id},${!a.active})">${a.active?'O\'chirish':'Yoqish'}</button><button class="btn bad sm" onclick="delAd(${a.id})">🗑</button></div></div></div>`).join(''):'<div class="empty">Hali reklama yo\'q</div>';
 }
 function media(a){const u=a.media_preview;if(!u)return '<div style="width:64px;height:64px;border-radius:10px;background:var(--card2);display:grid;place-items:center">📢</div>';return a.media_type==='video'?`<video src="${esc(u)}" muted></video>`:`<img src="${esc(u)}" alt="">`;}
 let upData=null;
@@ -137,6 +137,7 @@ function editAd(id){
   upData=null;const a=adCache.find(x=>x.id===id)||{title:'',body:'',media_type:'none',media_url:'',link_url:'',button_text:'Batafsil',placement:'both',active:true,weight:1};
   const loc=v=>v?new Date(new Date(v).getTime()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16):'';
   sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${id?'Reklamani tahrirlash':'Yangi reklama'}</h3>
+  <label>Turi</label><select id="a_k"><option value="ad">📢 Reklama («Reklama» yozuvi bilan, VIP ko'rmaydi)</option><option value="notice">📣 E'lon (yozuvsiz; saytda popup, hammaga)</option></select>
   <label>Sarlavha (80 belgi)</label><input id="a_t" maxlength="80" value="${esc(a.title)}" oninput="prev()">
   <label>Matn (400 belgi)</label><textarea id="a_b" maxlength="400" oninput="prev()">${esc(a.body)}</textarea>
   <label>Media turi</label><select id="a_mt" onchange="prev()"><option value="none">Yo'q (faqat matn)</option><option value="image">Rasm</option><option value="video">Video (mp4/webm havola)</option></select>
@@ -151,7 +152,7 @@ function editAd(id){
   <div class="row"><div><label>Ko'rsatish ustuvorligi (1–100)</label><input type="number" id="a_w" min="1" max="100" value="${a.weight||1}"></div><div><label>Holat</label><select id="a_a"><option value="1">Faol</option><option value="0">O'chiq</option></select></div></div>
   <label>Ko'rinishi</label><div class="preview" id="a_pv"></div>
   <div class="row" style="margin-top:14px"><button class="btn" onclick="saveAd(${id||0})">Saqlash</button></div>`);
-  $('#a_mt').value=a.media_type;$('#a_p').value=a.placement;$('#a_a').value=a.active?'1':'0';prev(a.media_is_upload?a.media_preview:null);
+  $('#a_mt').value=a.media_type;$('#a_p').value=a.placement;$('#a_k').value=a.kind==='notice'?'notice':'ad';$('#a_a').value=a.active?'1':'0';prev(a.media_is_upload?a.media_preview:null);
 }
 function setHrs(h){
   const f=d=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
@@ -174,7 +175,7 @@ function pickImg(inp){
 }
 async function saveAd(id){
   const mt=$('#a_mt').value;
-  const ad={id:id||undefined,title:$('#a_t').value,body:$('#a_b').value,media_type:mt,media_url:mt==='none'?'':(upData||$('#a_mu').value.trim()),link_url:$('#a_l').value.trim(),button_text:$('#a_bt').value,placement:$('#a_p').value,weight:+$('#a_w').value||1,active:$('#a_a').value==='1',starts_at:$('#a_s').value?new Date($('#a_s').value).toISOString():null,ends_at:$('#a_e').value?new Date($('#a_e').value).toISOString():null};
+  const ad={id:id||undefined,title:$('#a_t').value,body:$('#a_b').value,media_type:mt,media_url:mt==='none'?'':(upData||$('#a_mu').value.trim()),link_url:$('#a_l').value.trim(),button_text:$('#a_bt').value,placement:$('#a_p').value,kind:$('#a_k').value,weight:+$('#a_w').value||1,active:$('#a_a').value==='1',starts_at:$('#a_s').value?new Date($('#a_s').value).toISOString():null,ends_at:$('#a_e').value?new Date($('#a_e').value).toISOString():null};
   try{await api('ad_save',{ad});toast('✓ Saqlandi');closeSheet();ads($('#main'));}catch(e){}
 }
 async function toggleAd(id,v){try{await api('ad_toggle',{id,active:v});ads($('#main'));}catch(e){}}

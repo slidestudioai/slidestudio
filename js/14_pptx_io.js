@@ -1415,6 +1415,17 @@
     };
   }
 
+  /** v55: shakl/rasmdagi bosiladigan havola (a:hlinkClick) — http(s) bo'lsa URL, aks holda '' */
+  function ssShapeLink(nv, srels) {
+    try {
+      var cNv = nv && nv.firstElementChild;
+      var hl = cNv && cNv.getElementsByTagNameNS(NS_A, 'hlinkClick')[0];
+      var rid = hl && hl.getAttributeNS(NS_R, 'id');
+      var tg = rid && srels[rid] && srels[rid].target;
+      return (tg && /^https?:\/\//i.test(tg)) ? String(tg).slice(0, 500) : '';
+    } catch (e) { return ''; }
+  }
+
   async function importNativePptx(zip, file) {
     var presF = zip.file('ppt/presentation.xml');
     if (!presF) throw new Error('Bu to\'g\'ri PPTX fayl emas (ppt/presentation.xml topilmadi)');
@@ -1647,13 +1658,22 @@
               var l = src ? num(src.getAttribute('l'), 0) / 100000 : 0, t = src ? num(src.getAttribute('t'), 0) / 100000 : 0;
               var r = src ? num(src.getAttribute('r'), 0) / 100000 : 0, b = src ? num(src.getAttribute('b'), 0) / 100000 : 0;
               var cw = Math.max(1, md2.w * (1 - l - r)), ch = Math.max(1, md2.h * (1 - t - b));
-              out.objects.push({
+              var picObj = {
                 type: 'image', version: FAB_VER, originX: 'left', originY: 'top',
                 left: pos.left, top: pos.top, width: cw, height: ch,
                 scaleX: W / cw, scaleY: H / ch,
                 flipX: !!xf.flipH, flipY: !!xf.flipV, angle: xf.rot,
                 cropX: md2.w * l, cropY: md2.h * t, src: md2.src, crossOrigin: null, filters: []
-              });
+              };
+              // v55: animatsiyali GIF (Telegram bot slaydlari) muharrirda ham harakatlansin
+              if (/^data:image\/gif/i.test(md2.src || '')) {
+                picObj.type = 'gifImage'; picObj.isGif = true; picObj.gifUrl = md2.src;
+                picObj.width = md2.w; picObj.height = md2.h; picObj.scaleX = W / md2.w; picObj.scaleY = H / md2.h;
+                picObj.cropX = 0; picObj.cropY = 0;
+              }
+              var picLink = ssShapeLink(nv, srels);
+              if (picLink) picObj.linkUrl = picLink;
+              out.objects.push(picObj);
               continue;
             }
 
@@ -1737,6 +1757,8 @@
                   fontWeight: tb.bold ? 'bold' : 'normal', fontStyle: tb.italic ? 'italic' : 'normal',
                   underline: !!tb.underline, textAlign: tb.align, lineHeight: 1.16, splitByGrapheme: true
                 });
+                var spLink = ssShapeLink(nv, srels);         // v55: botdagi tugma/havola muharrirda ham bosiladi
+                if (spLink) out.objects[out.objects.length - 1].linkUrl = spLink;
               }
             }
           } catch (e) {

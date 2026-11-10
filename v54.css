@@ -6,7 +6,7 @@
   --ss-ctl-h: 34px;          /* yuqori panel tugmalari */
   --ss-tb: 32px;             /* asboblar paneli tugmalari */
   --ss-round: 40px;          /* suzuvchi dumaloq tugmalar (zoom, pastki boshqaruv) */
-  --ss-radius: 10px;
+  --ss-radius: 999px;       /* v55: yumshoq «pill» shakl (to'rtburchak emas) */
   --ss-border: #e2e8f0;
   --ss-ink: #1f2937;
 }
@@ -101,7 +101,7 @@
     height: 32px !important;
     min-height: 32px !important;
     min-width: 32px !important;
-    border-radius: 10px !important;
+    border-radius: 999px !important;
     box-sizing: border-box;
     display: inline-flex !important;
     align-items: center !important;
@@ -134,3 +134,53 @@ body.ss-auth-out #googleLoginBtn .material-symbols-outlined { color: #fff !impor
 body.ss-auth-out #googleLoginBtn:hover { background: #0a4cb8 !important; }
 /* Telegram ichida Google kirish yo'q (33_v43_telegram.js) — u yerda tugma yashirin qoladi */
 html.in-telegram body #googleLoginBtn { display: none !important; }
+
+/* ---------- v55: yumshoqroq, chiroyliroq yuqori tugmalar ---------- */
+.header-actions > button,
+.header-actions > #ssQuota {
+  transition: background-color .18s ease, box-shadow .18s ease, transform .12s ease !important;
+}
+@media (min-width: 769px) {
+  .header-actions > .btn-community,
+  .header-actions > .btn-login,
+  .header-actions > .btn-ribbon-toggle,
+  .header-actions > #ssQuota { box-shadow: 0 1px 2px rgba(15, 23, 42, .06); }
+  .header-actions > button:hover,
+  .header-actions > #ssQuota:hover { box-shadow: 0 3px 10px rgba(15, 23, 42, .10) !important; transform: translateY(-1px); }
+  .header-actions > button:active { transform: translateY(0) scale(.97); }
+  .header-actions > .btn-ai-toggle { box-shadow: 0 2px 8px rgba(124, 58, 237, .28); }
+  .header-actions > .btn-slideshow { box-shadow: 0 2px 8px rgba(11, 87, 208, .25); }
+  .header-actions > .btn-ribbon-toggle { border-radius: 50% !important; }
+}
+
+/* ---------- v55: chap panel biroz torroq (v40.css dagi 225/218/208 !important o'rniga), sozlamalar rejimi bundan mustasno ---------- */
+@media (min-width: 1400px) {
+  .sidebar:not(:has(.settings-panel-inner)) { width: 206px !important; }
+  .sidebar.collapsed { margin-left: -206px !important; }
+}
+@media (min-width: 1025px) and (max-width: 1399px) {
+  .sidebar:not(:has(.settings-panel-inner)) { width: 196px !important; }
+  .sidebar.collapsed { margin-left: -196px !important; }
+}
+@media (min-width: 769px) and (max-width: 1024px) {
+  .sidebar:not(:has(.settings-panel-inner)) { width: 186px !important; }
+  .sidebar.collapsed { margin-left: -186px !important; }
+}
+
+/* ---------- v55: E'lon popup (reklamasiz) ---------- */
+.ssn-ov { position: fixed; inset: 0; z-index: 20000; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(15, 23, 42, 0); transition: background .22s ease; }
+.ssn-ov.on { background: rgba(15, 23, 42, .45); backdrop-filter: blur(2px); }
+.ssn { position: relative; width: min(420px, 100%); max-height: 88vh; overflow: auto; background: #fff; border-radius: 22px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .28); transform: translateY(14px) scale(.97); opacity: 0;
+  transition: transform .25s cubic-bezier(.22, .8, .3, 1), opacity .2s ease; }
+.ssn-ov.on .ssn { transform: none; opacity: 1; }
+.ssn-media { display: block; width: 100%; max-height: 260px; object-fit: cover; background: #0f172a; }
+.ssn-body { padding: 18px 20px 20px; }
+.ssn-body h3 { margin: 0 0 6px; padding-right: 34px; font: 700 18px/1.3 'Roboto', system-ui, sans-serif; color: #0f172a; }
+.ssn-body p { margin: 0 0 14px; font: 400 14px/1.5 'Roboto', system-ui, sans-serif; color: #475569; white-space: pre-line; }
+.ssn-go { display: flex; align-items: center; justify-content: center; height: 42px; border-radius: 999px; background: #0b57d0; color: #fff;
+  font: 600 14px 'Roboto', system-ui, sans-serif; text-decoration: none; box-shadow: 0 4px 14px rgba(11, 87, 208, .3); }
+.ssn-go:hover { background: #0a4cb8; }
+.ssn-x { position: absolute; top: 10px; right: 10px; z-index: 2; width: 32px; height: 32px; border: 0; border-radius: 50%;
+  background: rgba(15, 23, 42, .55); color: #fff; font-size: 20px; line-height: 30px; cursor: pointer; }

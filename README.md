@@ -78,6 +78,14 @@ npx playwright install --with-deps chromium
 npm test
 ```
 
+## Yangilanganda (v55)
+`SUPABASE_SCHEMA.sql` ni Supabase SQL Editor'da **qayta ishga tushiring** (`ads.kind` ustuni — e'lonlar uchun). Qayta bosish xavfsiz.
+- **E'lon (reklamasiz):** bot admin → «📢 Reklamalar» → «📣 Yangi e'lon» (yoki veb admin panelda «Turi: E'lon»). «Reklama» yozuvisiz; saytda popup bo'lib chiqadi, botda hammaga (VIP ham) boradi.
+- **Rasm qidiruvi:** Tez va Chuqur AI'da hamma qidiruvlar bir vaqtda; topilmaganlari ham bitta to'plamda qayta qidiriladi. Chatda qatorlar ketma-ket (tez) chiqadi.
+- **Bot slaydlari:** tugma / havola, GIF (PPTX va HTML'da harakatlanadi), YouTube va video (HTML'da slayd ichida o'ynaydi, PPTX/PDF'da bosiladigan muqova). «Muharrirda ochish» da GIF va havolalar saqlanadi.
+- **Bot AI balansni biladi:** «balansim qancha?» deb so'rasa aniq raqamni aytadi; balansdan ko'p slayd taklif qilmaydi.
+- Yuqori tugmalar yumaloq (pill), chap panel biroz torroq.
+
 ## Yangilanganda (v54)
 - Fon rangi / rasm o'zgarganda kanvas darhol yangilanadi (avval boshqa elementni bosish kerak edi).
 - Sozlamalar paneli ochilganda slayd qayta sig'diriladi (o'ng panel ostiga kirib ketmaydi).

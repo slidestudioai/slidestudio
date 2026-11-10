@@ -169,6 +169,11 @@ create table if not exists public.ads (
   updated_at    timestamptz not null default now()
 );
 create index if not exists ads_active_idx on public.ads (active, placement);
+-- v55: 'ad' = reklama (pastida «Reklama» yozuvi, VIP ko'rmaydi), 'notice' = e'lon (yozuvsiz, saytda popup, hammaga)
+alter table public.ads add column if not exists kind text not null default 'ad';
+do $$ begin
+  alter table public.ads add constraint ads_kind_chk check (kind in ('ad','notice'));
+exception when duplicate_object then null; end $$;
 
 -- Reklama hisoblagichi (race-condition yo'q: bitta atomik UPDATE)
 create or replace function public.ad_bump(p_id bigint, p_kind text)
