@@ -1,0 +1,121 @@
+/* v54 — bir xil o'lchamli, toza tugmalar.
+ * Avvalgi qatlamlar (styles.css, v38–v40) har tugmaga har xil balandlik / radius / rang bergan edi
+ * (28, 32, 36 px; doira, pill, kvadrat). Bu fayl OXIRIDA yuklanadi va hammasini bitta tizimga keltiradi.
+ */
+:root {
+  --ss-ctl-h: 34px;          /* yuqori panel tugmalari */
+  --ss-tb: 32px;             /* asboblar paneli tugmalari */
+  --ss-round: 40px;          /* suzuvchi dumaloq tugmalar (zoom, pastki boshqaruv) */
+  --ss-radius: 10px;
+  --ss-border: #e2e8f0;
+  --ss-ink: #1f2937;
+}
+
+/* ---------- Yuqori panel: hamma tugma bir xil balandlik, bir xil shakl ---------- */
+@media (min-width: 769px) {
+  .header-actions { gap: 8px !important; align-items: center; }
+  .header-actions > button,
+  .header-actions > a,
+  .header-actions > #ssQuota {
+    height: var(--ss-ctl-h) !important;
+    min-height: var(--ss-ctl-h) !important;
+    width: auto !important;
+    padding: 0 12px !important;
+    border-radius: var(--ss-radius) !important;
+    font: 600 12.5px/1 'Roboto', system-ui, sans-serif !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center;
+    gap: 6px !important;
+    box-sizing: border-box;
+    white-space: nowrap;
+  }
+  .header-actions > button .material-symbols-outlined,
+  .header-actions > #ssQuota .material-symbols-outlined { font-size: 18px !important; }
+  /* oddiy (ikkinchi darajali) tugmalar — oq, ingichka chegara */
+  .header-actions > .btn-community,
+  .header-actions > .btn-login,
+  .header-actions > .btn-ribbon-toggle,
+  .header-actions > #ssQuota {
+    background: #fff !important;
+    border: 1px solid var(--ss-border) !important;
+    color: var(--ss-ink) !important;
+  }
+  .header-actions > .btn-gift { background: #fffbeb !important; border-color: #fde68a !important; color: #92400e !important; }
+  .header-actions > .btn-ribbon-toggle { width: var(--ss-ctl-h) !important; padding: 0 !important; }
+  /* asosiy tugmalar: AI (binafsha) va Namoyish (ko'k) — bir xil shakl */
+  .header-actions > .btn-ai-toggle { border: 1px solid transparent !important; }
+  .header-actions > .btn-slideshow { background: #0b57d0 !important; color: #fff !important; border: 1px solid #0b57d0 !important; }
+  .header-actions > .btn-slideshow:hover { background: #0a4cb8 !important; }
+  .header-actions > button:hover { filter: brightness(.98); }
+}
+
+/* ---------- Asboblar paneli ---------- */
+.toolbar-container .tb-btn {
+  width: var(--ss-tb) !important;
+  height: var(--ss-tb) !important;
+  min-height: var(--ss-tb) !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+}
+.toolbar-container .tb-btn .material-symbols-outlined { font-size: 19px !important; }
+.font-size-control { height: var(--ss-tb) !important; border-radius: 8px; overflow: hidden; }
+.font-size-btn { width: 28px !important; height: 100% !important; }
+.toolbar-container select { height: var(--ss-tb) !important; border-radius: 8px !important; }
+
+/* ---------- Suzuvchi tugmalar: zoom (o'ngda) va pastki boshqaruv — bir xil diametr ---------- */
+#mzIn, #mzOut, #mzFit, #mzHand {
+  width: var(--ss-round) !important;
+  height: var(--ss-round) !important;
+  border-radius: 50% !important;
+}
+@media (min-width: 769px) {
+  .bottom-ctrl-btn { width: var(--ss-round) !important; height: var(--ss-round) !important; }
+}
+
+/* ---------- AI yozish qutilari: yuborish / biriktirish tugmalari bir xil ---------- */
+.ai-sidebar-input-box .send-btn,
+.ai-sidebar-input-box .attach-btn,
+.bottom-ai-btn {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px;
+  border-radius: 50% !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Sozlamalar paneli: slayd ustiga chiqmasin ---------- */
+.sidebar:has(.settings-panel-inner) { box-shadow: 4px 0 18px rgba(15, 23, 42, .08); }
+
+/* ---------- Pro AI «o'ylayapti» qatori ---------- */
+.ai-search-row.thinking .material-symbols-outlined { color: #7c3aed; }
+
+/* ---------- Telefon / Telegram Mini App: yuqori tugmalar ham bir xil ---------- */
+@media (max-width: 768px) {
+  .header-actions { gap: 6px !important; }
+  .header-actions > button,
+  .header-actions > #ssQuota {
+    height: 32px !important;
+    min-height: 32px !important;
+    min-width: 32px !important;
+    border-radius: 10px !important;
+    box-sizing: border-box;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  .header-actions > .btn-community,
+  .header-actions > .btn-login,
+  .header-actions > .btn-ribbon-toggle,
+  .header-actions > #ssQuota { background: #fff !important; border: 1px solid var(--ss-border) !important; }
+  .header-actions > .btn-gift { background: #fffbeb !important; border-color: #fde68a !important; }
+  /* barmoq bilan bosish uchun kamida 40px (Apple/Google tavsiyasi) */
+  .mab-btn { min-height: 44px; }
+  .bottom-ctrl-btn { width: 36px !important; height: 36px !important; }
+}
+
+/* ---------- Telegram to'liq ekran: chelka / Telegram tugmalari ostida qolmasin ---------- */
+body.tg-inset { padding-top: var(--tg-inset-top, 0px); padding-bottom: var(--tg-inset-bottom, 0px); box-sizing: border-box; }

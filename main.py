@@ -237,7 +237,22 @@ def _wants_images(raw: str) -> bool:
     return bool(_IMG_INTENT_RE.search(t))
 
 
-async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: Any = None, stats: Optional[dict] = None) -> str:
+_GIF_WANT_RE = _re.compile(r"\bgif|animats|animation|animated|анимац|гиф", _re.I)
+_VIDEO_WANT_RE = _re.compile(r"\bvideo|видео|\bclip\b|klip", _re.I)
+
+
+def _presearch_kind(text: str) -> str:
+    """v54: Chuqur AI ham Tez AI kabi GIF / video qidira olsin — foydalanuvchi matnidan media turini aniqlaydi."""
+    t = text or ""
+    if _GIF_WANT_RE.search(t):
+        return "gif"
+    if _VIDEO_WANT_RE.search(t):
+        return "video"
+    return "photo"
+
+
+async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: Any = None, stats: Optional[dict] = None,
+                          kind: str = "photo") -> str:
     """Chuqur AI (deepseek-reasoner) tool chaqira olmaydi — shuning uchun rasmlarni OLDINDAN topib, tayyor URL ro'yxatini beramiz.
     Kichik tez model inglizcha so'rovlarni yozadi, qidiruv parallel ishlaydi. Xatoda bo'sh matn (oqim buzilmaydi)."""
     if not _search_images_sync:
@@ -253,7 +268,7 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     try:
         r = await asyncio.wait_for(client.chat.completions.create(
             model="deepseek-chat", temperature=0, max_tokens=160, response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": "You write photo search queries for slides. Return only JSON (json): {\"queries\": [\"2-4 word ENGLISH query\", ...]}. "
+            messages=[{"role": "system", "content": f"You write {'animated GIF' if kind == 'gif' else ('short video clip' if kind == 'video' else 'photo')} search queries for slides. Return only JSON (json): {{\"queries\": [\"2-4 word ENGLISH query\", ...]}}. "
                                                     f"At most {max_q} queries, each a concrete photographable subject. If the request needs no pictures return an empty list."},
                       {"role": "user", "content": context[:1500]}]), timeout=20)
         qs = json.loads(r.choices[0].message.content or "{}").get("queries") or []
@@ -266,10 +281,10 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     if stats is not None:
         stats["searches"] = len(qs)                 # v53: bu qidiruvlar ham varaq hisobiga kiradi (avval bepul edi)
     for n, q in enumerate(qs, 1):
-        await _ev({"type": "search_start", "query": q, "kind": "photo", "n": n})
-    res = await asyncio.gather(*[asyncio.wait_for(asyncio.to_thread(_search_images_sync, q, "photo", 8), timeout=25) for q in qs], return_exceptions=True)
+        await _ev({"type": "search_start", "query": q, "kind": kind, "n": n})
+    res = await asyncio.gather(*[asyncio.wait_for(asyncio.to_thread(_search_images_sync, q, kind, 8), timeout=25) for q in qs], return_exceptions=True)
     for q, f in zip(qs, res):
-        await _ev({"type": "search_done", "query": q, "kind": "photo", "count": len(f) if isinstance(f, list) else 0})
+        await _ev({"type": "search_done", "query": q, "kind": kind, "count": len(f) if isinstance(f, list) else 0})
     blocks = []
     for q, f in zip(qs, res):
         if isinstance(f, list):
@@ -279,8 +294,10 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     if not blocks:
         return ""
     print(f"[DEEP-IMG] {len(blocks)} ta so'rov uchun rasm topildi")
-    return ("\n\n[TAYYOR RASMLAR — server allaqachon qidirib topdi]\n"
-            "Rasm kerak bo'lsa FAQAT shu URL'lardan birini ishlating: {\"type\":\"image\",\"src\":URL,...}. URL o'ylab topmang, tool chaqirmang, "
+    how = {"gif": "GIF uchun: {\"type\":\"gif\",\"gifUrl\":URL,...} (yoki orqa fon GIF)",
+           "video": "Video uchun: add_video (yoki set_background_video) ga URL bering"}.get(kind, "{\"type\":\"image\",\"src\":URL,...}")
+    return ("\n\n[TAYYOR " + {"gif": "GIFLAR", "video": "VIDEOLAR"}.get(kind, "RASMLAR") + " — server allaqachon qidirib topdi]\n"
+            "Kerak bo'lsa FAQAT shu URL'lardan birini ishlating: " + how + ". URL o'ylab topmang, tool chaqirmang, "
             "qidirishga va'da bermang — rasmlar tayyor.\n" + "\n".join(blocks))
 SEARCH_TOOLS = [{
     "type": "function",
@@ -2302,7 +2319,7 @@ except Exception as _cm_err:
     print(f"[COMMUNITY] yuklanmadi: {_cm_err}")
 
 PUBLIC_STATIC_FILES = {
-        "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css",
+        "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css", "v54.css",
         "favicon.ico", "logo.png", "manifest.json",
         "terms.html", "privacy.html", "refund.html",
     }
@@ -2907,7 +2924,8 @@ async def ws_chat(websocket: WebSocket):
                                     _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
                                     _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                                 if _want:
-                                    _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket, _pre_stats)
+                                    _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket, _pre_stats,
+                                                                   kind=_presearch_kind(prompt or ""))
                                     if _extra:
                                         messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
                             except Exception as _pe:
@@ -2918,6 +2936,8 @@ async def ws_chat(websocket: WebSocket):
                         agg_in = agg_out = agg_tot = 0
                         # v29: qidiruvdan oldin yozilgan matn (PART A) O'CHIRILMAYDI va qayta yozdirilmaydi
                         shown_text = False      # foydalanuvchi allaqachon matn ko'rdi
+                        _think_chars, _think_t0 = 0, time.monotonic()
+                        _think_last = 0.0
                         sep_pending = False     # keyingi raundning matni oldiga bo'sh qator qo'yiladi
                         try:
                             for _round in range(MAX_TOOL_ROUNDS + 1):
@@ -2949,6 +2969,18 @@ async def ws_chat(websocket: WebSocket):
                                             if fr:
                                                 finish_reason = fr
                                             delta = choice.delta
+                                            _rc = getattr(delta, "reasoning_content", None) if delta else None
+                                            if _rc:
+                                                # v54: Chuqur AI avval uzoq «o'ylaydi» — Tez AI kabi jonli holat ko'rinsin (sukut bo'lmasin)
+                                                _think_chars += len(_rc)
+                                                _now_t = time.monotonic()
+                                                if _now_t - _think_last >= 1.0:
+                                                    _think_last = _now_t
+                                                    try:
+                                                        await websocket.send_json({"type": "thinking", "chars": _think_chars,
+                                                                                   "sec": int(_now_t - _think_t0)})
+                                                    except (WebSocketDisconnect, RuntimeError):
+                                                        raise WebSocketDisconnect()
                                             txt = getattr(delta, "content", None) if delta else None
                                             if txt:
                                                 if sep_pending and txt.strip():
