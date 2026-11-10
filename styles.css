@@ -1242,3 +1242,10 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
 .btn-about-bot { background: #f1f3f4; border: 1px solid transparent; color: #3c4043; margin-bottom: 8px; }
 .btn-about-bot:hover { background: #e8eaed; }
 .btn-reset-canvas .material-symbols-outlined, .btn-about-bot .material-symbols-outlined { font-size: 18px; }
+
+/* v50: interfeys ixchamligi — noutbuklarda avtomatik biroz kichikroq (JS 43_v50_ui_scale.js bilan birga) */
+@media screen and (max-width: 1536px) and (min-width: 769px) {
+  html:not(.ss-no-ui-scale) {
+    /* JS zoom qo‘llanilmaguncha yumshoq fallback; JS keyin aniqroq qiymat beradi */
+  }
+}
