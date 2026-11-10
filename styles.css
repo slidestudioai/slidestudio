@@ -1256,33 +1256,38 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
 .btn-reset-canvas .material-symbols-outlined, .btn-about-bot .material-symbols-outlined { font-size: 18px; }
 
 /* v50: noutbuk / o‘rtacha monitorlarda interfeys ixchamroq (zoom SIZ — layout buzilmaydi) */
-@media screen and (max-width: 1600px) and (min-width: 769px) {
-  .top-header { height: 42px; min-height: 42px; padding: 0 8px; gap: 6px; }
-  .slide-logo { width: 26px; height: 26px; font-size: 15px; }
-  .doc-title { font-size: 13.5px; }
-  .top-menu-bar { font-size: 12px; }
-  .top-menu-item { padding: 1px 5px; }
-  .header-actions { gap: 5px; }
+@media screen and (max-width: 1680px) and (min-width: 769px) {
+  .top-header { height: 40px; min-height: 40px; padding: 0 6px; gap: 5px; }
+  .slide-logo { width: 24px; height: 24px; font-size: 14px; }
+  .doc-title { font-size: 13px; }
+  .top-menu-bar { font-size: 11.5px; margin-top: 0; }
+  .top-menu-item { padding: 1px 4px; }
+  .header-actions { gap: 4px; }
   @media screen and (min-width: 900px) {
-    .btn-slideshow, .btn-ai-toggle { padding: 4px 11px; font-size: 12px; }
-    .btn-ribbon-toggle, .btn-login { padding: 4px 10px; font-size: 12px; }
+    .btn-slideshow, .btn-ai-toggle { padding: 3px 10px; font-size: 11.5px; }
+    .btn-ribbon-toggle, .btn-login { padding: 3px 9px; font-size: 11.5px; }
   }
-  .toolbar-container { margin: 3px 8px; border-radius: 12px; }
-  .toolbar-container .tb-btn { width: 30px; height: 30px; }
-  .sidebar { width: 180px; }
-  .ai-sidebar.open { width: 300px; }
-  .ai-sidebar-header { padding: 8px 10px; }
-  .ai-sidebar-header h4 { font-size: 12.5px; }
-  .ai-sidebar-footer { padding: 6px 10px; }
-  .editor-container { padding: 0 6px 6px 6px; }
-  .sticky-slide-counter { margin-top: 4px; padding: 3px 12px; font-size: 11px; }
-  .sidebar-user-section { padding: 8px 6px !important; }
+  .toolbar-container { margin: 2px 6px; border-radius: 11px; padding: 2px 4px; }
+  .toolbar-container .tb-btn { width: 28px; height: 28px; }
+  .toolbar-container .tb-btn .material-symbols-outlined { font-size: 18px; }
+  .sidebar { width: 168px; }
+  .ai-sidebar.open { width: 280px; }
+  .ai-sidebar-header { padding: 7px 9px; }
+  .ai-sidebar-header h4 { font-size: 12px; }
+  .ai-sidebar-footer { padding: 5px 8px; }
+  .ai-sidebar-input-box { min-height: 38px; }
+  .ai-sidebar-input-box textarea { min-height: 38px; padding: 9px 4px; font-size: 12.5px; }
+  .editor-container { padding: 0 4px 4px 4px; }
+  .sticky-slide-counter { margin-top: 3px; padding: 2px 10px; font-size: 10.5px; }
+  .sidebar-user-section { padding: 6px 5px !important; }
+  .btn-add-slide-bottom { padding: 6px; font-size: 12px; margin-bottom: 4px; }
 }
 
 @media screen and (max-width: 1366px) and (min-width: 769px) {
-  .top-header { height: 40px; min-height: 40px; }
-  .sidebar { width: 168px; }
-  .ai-sidebar.open { width: 280px; }
-  .toolbar-container { margin: 2px 6px; }
-  .editor-container { padding: 0 4px 4px 4px; }
+  .top-header { height: 38px; min-height: 38px; }
+  .sidebar { width: 156px; }
+  .ai-sidebar.open { width: 260px; }
+  .toolbar-container { margin: 2px 4px; }
+  .toolbar-container .tb-btn { width: 26px; height: 26px; }
+  .editor-container { padding: 0 3px 3px 3px; }
 }
