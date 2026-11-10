@@ -3582,9 +3582,9 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
             return
         async with _gen_sem:
             data, tokens = await _ai_json(CHAT_SYSTEM, text[:1500], mode)
-        await _charge(uid, email, 0, tokens, mode, {"src": "telegram", "kind": "chat"})
+        usage2, _ch = await _charge(uid, email, 0, tokens, mode, {"src": "telegram", "kind": "chat"})
         reply = decks.clean((data or {}).get("reply") if isinstance(data, dict) else "", 1500) or "Tushunmadim, qayta yozing."
-        await _edit(chat_id, msg_id, f"💬 {esc(reply)}", kb_start())
+        await _edit(chat_id, msg_id, f"💬 {esc(reply)}{_balance_footer(usage2, mode, email, user)}", kb_start())
     except asyncio.TimeoutError:
         await _edit(chat_id, msg_id, "⌛ AI juda uzoq o'ylandi. Qayta urinib ko'ring.")
     except RuntimeError as e:
@@ -3627,6 +3627,32 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
     _spawn(_run_new(chat_id, user, " ".join(text.split())[:1500]))
 
 
+def _balance_footer(usage: Optional[dict], mode: str, email: str, user: dict) -> str:
+    """v54: har AI javobi ostida qolgan balans (foydalanuvchi oddiy yozganda ham balansini ko'radi)."""
+    try:
+        if not usage or (email == _tg_email(int(user["id"])) and not _is_admin(user)):
+            return ""                                   # Google ulanmagan — balans umuman ko'rsatilmaydi
+        if usage.get("unlimited") or _deps["total_credits"](usage) >= 10 ** 8:
+            return "\n\n<i>♾ Varaqlar: cheksiz</i>"
+        return f"\n\n<i>💳 Qoldi: {_fmt_pages(_pages_left(usage, mode))} varaq</i>"
+    except Exception:
+        return ""
+
+
+async def _late_balance(chat_id: int, user: dict) -> None:
+    """v54: baza sekin javob bersa (Render uyg'onishi) salomlashuvda balans yo'qolib qolardi — fonda olib, alohida yuboriladi."""
+    try:
+        info = await asyncio.wait_for(_balance_info(user), timeout=25)
+    except Exception:
+        info = None
+    if info and not info.get("locked"):
+        await _send(chat_id, f"💳 <b>Balans</b>\n{_balance_block(info)}")
+    elif info and not _is_admin(user):
+        await _send(chat_id, LINK_FIRST, {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
+    elif not info:
+        await _send(chat_id, "⚠️ Balansni hozir o'qib bo'lmadi. «💳 Balans» tugmasini bosib qayta urinib ko'ring.")
+
+
 async def _send_welcome(chat_id: int, user: dict) -> None:
     try:
         info = await asyncio.wait_for(_balance_info(user), timeout=6)
@@ -3634,6 +3660,8 @@ async def _send_welcome(chat_id: int, user: dict) -> None:
         info = None
     _state(chat_id)["ui"] = None
     await _send(chat_id, _welcome_text(user.get("first_name") or "", info), kb_reply())
+    if info is None:
+        _spawn(_late_balance(chat_id, user))
     if info and not info.get("linked") and not _is_admin(user):
         await _send(chat_id, "🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.", {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
 

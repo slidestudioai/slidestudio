@@ -1,0 +1,11 @@
+{
+  "name": "slidestudio-e2e",
+  "private": true,
+  "description": "Brauzer (Playwright) testlari: editor, mobil va Telegram Mini App rejimi",
+  "scripts": {
+    "test": "playwright test --trace off"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

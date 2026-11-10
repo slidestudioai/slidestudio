@@ -70,5 +70,21 @@ pytest
 ```
 GitHub'da har PR va `main` ga push'da avtomatik ishlaydi (`.github/workflows/tests.yml`).
 
+Brauzer testlari (Playwright: editor, telefon, Telegram Mini App):
+```bash
+cd e2e
+npm ci
+npx playwright install --with-deps chromium
+npm test
+```
+
+## Yangilanganda (v54)
+- Fon rangi / rasm o'zgarganda kanvas darhol yangilanadi (avval boshqa elementni bosish kerak edi).
+- Sozlamalar paneli ochilganda slayd qayta sig'diriladi (o'ng panel ostiga kirib ketmaydi).
+- Yuqori panel va asboblar paneli tugmalari bir xil o'lchamda (`v54.css`).
+- Pro (Chuqur) AI ham GIF/video qidiradi va «o'ylayapti» holatini jonli ko'rsatadi — Tez AI bilan bir xil oqim.
+- Telegram bot: har javob ostida qolgan balans; baza sekin bo'lsa balans keyinroq alohida yuboriladi.
+- Telegram Mini App: to'liq ekranda xavfsiz hudud (chelka) va Telegram «Orqaga» tugmasi.
+
 ## Yangilanganda (v53)
 `SUPABASE_SCHEMA.sql` ni Supabase SQL Editor'da **qayta ishga tushiring** (13-bo'lim: `transfer_paid_credits`). Qayta bosish xavfsiz.

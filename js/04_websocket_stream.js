@@ -38,7 +38,7 @@
         r.className = 'ai-search-row searching';
         r.dataset.q = q;
         r.innerHTML = '<span class="material-symbols-outlined spin">travel_explore</span><span class="asr-text"></span>';
-        r.querySelector('.asr-text').textContent = (kind === 'gif' ? 'GIF qidirilmoqda: «' : 'Internetdan rasm qidirilmoqda: «') + q + '»…';
+        r.querySelector('.asr-text').textContent = (kind === 'gif' ? 'GIF qidirilmoqda: «' : (kind === 'video' ? 'Video qidirilmoqda: «' : 'Internetdan rasm qidirilmoqda: «')) + q + '»…';
         c.appendChild(r);
         return r;
       }
@@ -72,6 +72,26 @@
             }
           }
           if (!active) { try { setMediaSearchStatus(null); } catch (e) {} }
+        },
+        // v54: Chuqur (Pro) AI o'ylayotganda ham Tez AI kabi jonli holat qatori
+        thinking: function (sec) {
+          const c = ensure();
+          if (!c) return;
+          let r = c.querySelector('.ai-search-row.thinking');
+          if (!r) {
+            r = document.createElement('div');
+            r.className = 'ai-search-row searching thinking';
+            r.innerHTML = '<span class="material-symbols-outlined spin">psychology</span><span class="asr-text"></span>';
+            c.insertBefore(r, c.firstChild);
+          }
+          r.querySelector('.asr-text').textContent = 'Chuqur o\u2018ylayapti' + (sec ? ' · ' + sec + ' s' : '') + '…';
+        },
+        thinkingDone: function () {
+          const r = chip && chip.querySelector('.ai-search-row.thinking.searching');
+          if (!r) return;
+          r.classList.remove('searching'); r.classList.add('ok');
+          const ic = r.querySelector('.material-symbols-outlined'); ic.classList.remove('spin'); ic.textContent = 'check_circle';
+          r.querySelector('.asr-text').textContent = 'O\u2018ylab bo\u2018ldi — javob yozilmoqda';
         },
         reset: function () { chip = null; active = 0; searchCount = 0; window._aiSearchBreakRaw = null; },
         chipEl: function () { return chip && chip.isConnected ? chip : null; },
@@ -119,7 +139,11 @@
           }
           if (data.type === 'chunk') {
             try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
+            try { AiSearchUI.thinkingDone(); } catch (e) {}
             handleAiResponseStream(data.text || data.content || '');
+          } else if (data.type === 'thinking') {
+            try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
+            try { AiSearchUI.thinking(data.sec); } catch (e) {}
           } else if (data.type === 'reset') {
             // v29: matn ENDI O'CHIRILMAYDI (avval qidiruv boshlanganda javob yo'qolib, keyin qaytadan yozilardi).
             // Server bu xabarni yubormaydi; eski server yuborsa ham ko'rinib turgan matn va bufer saqlanadi.
@@ -137,6 +161,7 @@
 
             console.log("[gif_fix] etiborsiz — qayta bajarish ochirilgan");
           } else if (data.type === 'end') {
+            try { AiSearchUI.thinkingDone(); } catch (e) {}
             try {
               if (typeof applyServerUsage === 'function') applyServerUsage(data);
               else if (window.Monitoring && typeof window.Monitoring.applyServerUsage === 'function') {
