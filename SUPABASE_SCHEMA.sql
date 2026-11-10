@@ -378,3 +378,48 @@ create policy "uploads_owner_insert" on storage.objects for insert to authentica
   with check (bucket_id = 'user-uploads' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "uploads_owner_delete" on storage.objects for delete to authenticated
   using (bucket_id = 'user-uploads' and (storage.foldername(name))[1] = auth.uid()::text);
+
+
+-- ============================================================================
+-- 13) v53: Telegram ulashda pullik varaqlarni ATOMIK ko'chirish.
+--     tg<ID>@t.me akkauntidagi paid_credits sayt akkauntiga BITTA tranzaksiyada o'tadi:
+--     yarim yo'lda xato bo'lsa hech narsa o'zgarmaydi (varaq yo'qolmaydi va ikki baravar bo'lmaydi).
+--     Qaytaradi: {"moved": <ko'chirilgan birlik>}
+-- ============================================================================
+create or replace function public.transfer_paid_credits(p_from text, p_to text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_paid int;
+begin
+  if p_from is null or p_to is null or p_from = p_to then
+    raise exception 'bad arguments';
+  end if;
+
+  -- ikkala qator ham bir xil tartibda qulflanadi (deadlock bo'lmasin)
+  perform 1 from public.user_usage where user_id in (p_from, p_to) order by user_id for update;
+
+  select greatest(0, coalesce(paid_credits, 0)) into v_paid from public.user_usage where user_id = p_from;
+  if v_paid is null or v_paid = 0 then
+    return jsonb_build_object('moved', 0);
+  end if;
+  if not exists (select 1 from public.user_usage where user_id = p_to) then
+    raise exception 'user_not_found';
+  end if;
+
+  update public.user_usage
+     set paid_credits = 0, slide_credits = free_credits, last_active = now()
+   where user_id = p_from;
+  update public.user_usage
+     set paid_credits = paid_credits + v_paid, slide_credits = free_credits + paid_credits + v_paid, last_active = now()
+   where user_id = p_to;
+
+  return jsonb_build_object('moved', v_paid);
+end;
+$$;
+
+revoke all on function public.transfer_paid_credits(text, text) from public, anon, authenticated;
+grant execute on function public.transfer_paid_credits(text, text) to service_role;
