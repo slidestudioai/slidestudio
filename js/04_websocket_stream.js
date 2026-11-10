@@ -1896,12 +1896,21 @@
         ? `[OLDINGI AMALLAR HISOBOTI — HAQIQIY NATIJA]\n` + reportLines.join('\n') +
           `\nBu — oldingi javobingizdagi amallarning HAQIQIY natijasi. ❌ = bajarilmagan (yolg'on aytmang), ✅ = bajarilgan (qayta bajarmang).`
         : '';
+      const _balLeft2 = (function () {
+        try {
+          if (window.Monitoring && typeof Monitoring.totalCredits === 'function') return Monitoring.totalCredits();
+        } catch (e) {}
+        return null;
+      })();
+      const balHint2 = (_balLeft2 !== null)
+        ? (`FOYDALANUVCHI BALANSI: ${_balLeft2} ta varaq qoldi.` + (_balLeft2 <= 0 ? ' Balans 0 — yangi slayd yarata olmaydi.' : (_balLeft2 <= 3 ? ' Balans kam.' : '')))
+        : '';
       const payload = {
         token: supabaseToken,
         chat_id: currentChatId,
         scope: 'current_slide',
         prompt: promptText,
-        system_hint: reportHint,
+        system_hint: [reportHint, balHint2].filter(Boolean).join('\n'),
         deck_state: JSON.stringify(deckState),
         active_slide_index: activeIndex + 1,
         images_base64: [],

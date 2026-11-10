@@ -309,25 +309,23 @@
       const initial = (email[0] || 'U').toUpperCase();
       section.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px;">
-          <span style="background:${isLoggedIn ? '#0b57d0' : '#9ca3af'};color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;font-size:12px;">${initial}</span>
+          <span style="background:${isLoggedIn ? '#0b57d0' : '#9ca3af'};color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;font-size:11px;">${initial}</span>
           <div style="min-width:0;flex:1;">
             <div style="font-size:11px;font-weight:600;color:#1f1f1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${isLoggedIn ? email : 'Tizimga kirmagan'}</div>
             <div style="font-size:10px;color:#9ca3af;">${isLoggedIn ? 'Tizimda' : 'Mehmon rejim'}</div>
           </div>
           <button type="button" class="btn-settings" id="sidebarSettingsBtn" title="Sozlamalar"
-            style="width:40px;height:40px;border-radius:10px;flex-shrink:0;position:relative;display:inline-flex;align-items:center;justify-content:center;border:none;background:#e8eaed;cursor:pointer;color:#3c4043;">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            style="width:32px;height:32px;border-radius:8px;flex-shrink:0;position:relative;display:inline-flex;align-items:center;justify-content:center;border:none;background:#e8eaed;cursor:pointer;color:#3c4043;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84a.48.48 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 0 0-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/>
             </svg>
           </button>
         </div>
-        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #e8eaed;">
-          <a href="/terms.html" target="_blank" rel="noopener" id="sidebarTermsLink"
-            style="display:flex;align-items:center;gap:6px;font-size:11px;color:#5f6368;text-decoration:none;padding:4px 2px;border-radius:6px;">
-            <span class="material-symbols-outlined" style="font-size:16px;color:#5f6368;">gavel</span>
-            <span>Terms of Service</span>
-          </a>
-        </div>
+        <a href="/terms.html" target="_blank" rel="noopener" id="sidebarTermsLink"
+          style="display:inline-flex;align-items:center;gap:3px;font-size:10px;color:#9ca3af;text-decoration:none;padding:3px 0 0;margin-top:2px;">
+          <span class="material-symbols-outlined" style="font-size:12px;color:#9ca3af;">gavel</span>
+          <span>Terms of Service</span>
+        </a>
       `;
       sidebar.appendChild(section);
       const gear = section.querySelector('#sidebarSettingsBtn');

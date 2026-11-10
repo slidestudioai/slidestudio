@@ -82,10 +82,17 @@
           `kerak bo'lsa qayta urinib ko'ring yoki xatoni tushuntiring. ` +
           `Agar hammasi ✅ bo'lsa, ish TUGALLANGAN — xuddi shu amalni QAYTA bajarmang.`
         : '';
+      const _balLeft = (function () {
+        try {
+          if (window.Monitoring && typeof Monitoring.totalCredits === 'function') return Monitoring.totalCredits();
+        } catch (e) {}
+        return null;
+      })();
       const dynamicHint = [
         `Faol slayd: ${activeIndex + 1}/${slides.length}.`,
         `Keyingi rasm #: ${globalImageCounter + 1}.`,
         gifCount > 0 ? `Slaydlarda ${gifCount} ta jonli GIF bor (ular #raqam-GIF bilan belgilangan).` : '',
+        (_balLeft !== null) ? (`FOYDALANUVCHI BALANSI: ${_balLeft} ta varaq qoldi.` + (_balLeft <= 0 ? ' Balans 0 — yangi slayd yarata olmaydi, faqat mavjudlarini tahrirlashi mumkin. Foydalanuvchiga xushmuomalalik bilan ayt.' : (_balLeft <= 3 ? ' Balans kam — ko\'p slayd so\'rasa ogohlantir.' : ''))) : '',
       ].filter(Boolean).join(' ') + reportHint;
       const payload = {
         token: supabaseToken,
