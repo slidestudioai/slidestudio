@@ -105,3 +105,37 @@ test('rasm qidiruvi natijalari birma-bir chiqadi, slayd yaratilayotganda skelet 
   expect(await page.evaluate(() => document.getElementById('ssSlideSkel'))).toBeNull();   // tugagach yo'qoladi
   expect((await deck(page)).length).toBe(5);
 });
+
+test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi', async ({ page }) => {
+  await openEditor(page);
+  await login(page);
+  // brauzer ichida har 30 ms holatni yozib boramiz (tez o'tishlar ham ushlanadi)
+  await page.evaluate(() => {
+    window.__ssTrace = [];
+    window.__ssTraceTimer = setInterval(() => {
+      if (!isAiStreaming) return;
+      const gen = document.querySelector('#sidebar .slide-item.ss-gen');
+      window.__ssTrace.push({
+        active: activeIndex,
+        done: window._ssSlidesDone | 0,
+        gen: gen ? Number(gen.dataset.idx) : null,
+        skel: !!document.getElementById('ssSlideSkel'),
+      });
+    }, 30);
+  });
+  await page.fill('#aiSidebarInput', 'sekin: 5 ta slayd yarat, 5 ta rasm bilan');
+  await page.evaluate(() => sendSidebarAiPrompt());
+  await page.waitForFunction(() => isAiStreaming, null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => !isAiStreaming, null, { timeout: 60_000 });
+  const trace = await page.evaluate(() => { clearInterval(window.__ssTraceTimer); return window.__ssTrace; });
+  expect(trace.length).toBeGreaterThan(10);
+  let maxActive = 0;
+  for (const t of trace) {
+    expect(t.active).toBeGreaterThanOrEqual(maxActive);              // ekran oldingi slaydga sakramaydi
+    maxActive = Math.max(maxActive, t.active);
+    if (t.gen != null) expect(t.gen).toBe(t.active);                  // effekt aynan ekrandagi slaydda
+    if (t.done === 0) expect(t.skel).toBe(false);                     // 1-slayd yasalayotganda «2-slayd yaratilmoqda» chiqmaydi
+  }
+  expect(maxActive).toBe(4);
+  expect((await deck(page)).length).toBe(5);
+});

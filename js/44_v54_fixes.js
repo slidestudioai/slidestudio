@@ -319,7 +319,9 @@
       return;
     }
     if (!last || started <= (window._ssSlidesDone | 0)) return;
-    var win = b.slice(Math.max(0, last.index - 60), last.index + 90);
+    // v59: raqam faqat SHU amal obyektidan olinadi (avval 60 belgi orqaga qarab, oldingi amalning "slide":N qiymatini olardi)
+    var objStart = b.lastIndexOf('{', last.index);
+    var win = b.slice(objStart >= 0 ? objStart : last.index, last.index + 90);
     var kind = last[1] === 'insert_slide' ? 'insert' : 'replace';
     var nm = kind === 'insert' ? /"after"\s*:\s*(\d+)/.exec(win) : /"slide"\s*:\s*(\d+)/.exec(win);
     var num = nm ? parseInt(nm[1], 10) : (kind === 'insert' ? nSlides() : activeIndex + 1);
@@ -336,6 +338,19 @@
     }).then(function () { focusBusy = false; }, function () { focusBusy = false; });
   }
 
+  // v59: skelet («N-slayd yaratilmoqda…») faqat hozir haqiqatan YANGI slayd qo'shilayotganda ko'rinadi.
+  // Avval 1-slayd (replace_slide) yasalayotganda ham pastda «2-slayd yaratilmoqda» chiqib, effekt 2-varaqda turgandek ko'rinardi.
+  function upcomingIsNew() {
+    var b = buf(), re = /"(replace_slide|insert_slide)"/g, m, last = null, started = 0;
+    while ((m = re.exec(b))) { started++; last = m; }
+    if (!last) return /"create_slides"/.test(b) && !window._ssSlidesDone;
+    if (started <= (window._ssSlidesDone | 0)) return false;
+    if (last[1] === 'insert_slide') return true;
+    var objStart = b.lastIndexOf('{', last.index);
+    var nm = /"slide"\s*:\s*(\d+)/.exec(b.slice(objStart >= 0 ? objStart : last.index, last.index + 90));
+    return !!nm && parseInt(nm[1], 10) > nSlides();
+  }
+
   function tick() {
     var st = streaming();
     if (st) { try { focusUpcoming(); } catch (e) {} } else { window._ssFocusKey = null; }
@@ -344,7 +359,7 @@
       building = on;
       document.body.classList.toggle('ss-ai-building', on);
     }
-    skel(on && st && !window._ssPH);
+    skel(on && st && !window._ssPH && upcomingIsNew());
     try { markPending(st); } catch (e) {}
     applyFx(on);
     var n = nSlides();

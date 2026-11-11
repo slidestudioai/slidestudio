@@ -69,6 +69,36 @@
     }
     window.ssFocusUpcomingSlide = ssFocusUpcomingSlide;
 
+    // v59: slayd QURILAYOTGAN paytda (rasm/GIF yuklanishi bir necha soniya olishi mumkin) ekran va effekt
+    // aynan shu slaydda turishi kerak. Avval vaqtinchalik varaq o'chirilib, activeIndex oldingi slaydga qaytib
+    // ketardi — natijada 2-slayd yasalayotganda ekran/effekt 1-slaydda turardi.
+    async function ssShowBuildSlot(idx) {
+      try {
+        if (!isAiStreaming || idx < 0 || idx >= slides.length) return;
+        const needLoad = activeIndex !== idx || _lastRenderedSlideIndex !== idx;
+        activeIndex = idx;
+        try { renderSidebar(); } catch (e) {}
+        try { updateSlideCounterUI(); } catch (e) {}
+        if (needLoad) { try { await loadSlideCanvasAsync(idx); _lastRenderedSlideIndex = idx; } catch (e) {} }
+      } catch (e) {}
+    }
+    // v59: yangi slayd uchun joy (vaqtinchalik bo'sh varaq) aynan qo'yiladigan indeksda ochiladi.
+    async function ssOpenInsertSlot(at, bg, reuse) {
+      if (!isAiStreaming) return null;
+      const ph = reuse || { json: JSON.stringify({ objects: [], background: bg || '#ffffff' }), thumb: '', imageNumbers: [], _ssPH: true };
+      slides.splice(at, 0, ph);
+      window._ssPH = ph;
+      if (reuse && _lastRenderedSlideIndex === at) {   // shu varaq ekranda allaqachon turibdi — qayta chizmaymiz
+        activeIndex = at;
+        try { renderSidebar(); } catch (e) {}
+        try { updateSlideCounterUI(); } catch (e) {}
+      } else {
+        _lastRenderedSlideIndex = -1;
+        await ssShowBuildSlot(at);
+      }
+      return ph;
+    }
+
     async function executeAiCommands(payload) {
       isAiApplyingCommands = true;
       let raw = payload;
@@ -346,7 +376,7 @@
             }
             case 'add_image':
             case 'place_image_url': {
-              const dest = (cmd.target_slide || cmd.slide || 1) - 1;
+              const dest = (cmd.target_slide || cmd.slide || (activeIndex + 1)) - 1;   // v59: raqam berilmasa — 1-slayd emas, hozirgi (yangi yasalgan) slayd
               const url = sanitizeImageUrl(cmd.url || cmd.src);
               if (dest < 0 || dest >= slides.length || !url) break;
               const oid = nextObjectId();
@@ -733,7 +763,7 @@
               break;
             }
             case 'add_gif': {
-              const dest = (cmd.target_slide || cmd.slide || 1) - 1;
+              const dest = (cmd.target_slide || cmd.slide || (activeIndex + 1)) - 1;   // v59: raqam berilmasa — 1-slayd emas, hozirgi (yangi yasalgan) slayd
               let url = sanitizeImageUrl(cmd.url || cmd.src);
               if (dest < 0 || dest >= slides.length || !url) break;
               const oid = nextObjectId();
@@ -801,7 +831,7 @@
                 await aiVideoAction(Object.assign({}, cmd, { as_background: true }));
                 break;
               }
-              const dest = (cmd.target_slide || cmd.slide || 1) - 1;
+              const dest = (cmd.target_slide || cmd.slide || (activeIndex + 1)) - 1;   // v59: raqam berilmasa — 1-slayd emas, hozirgi (yangi yasalgan) slayd
               if (dest < 0 || dest >= slides.length) break;
               const parsed = JSON.parse(slides[dest].json || '{}');
               const fallbackColor = cmd.color || parsed.background || parsed.backgroundColor || '#ffffff';
@@ -1039,6 +1069,8 @@
               break;
             }
             case 'insert_slide': {
+              const _oldPH = window._ssPH;
+              const _oldPHIdx = _oldPH ? slides.indexOf(_oldPH) : -1;
               ssDropPlaceholder();
               const _aNum = parseInt(cmd.after, 10);
               const _sNum = parseInt(cmd.slide, 10);
@@ -1053,7 +1085,6 @@
                 });
               }
               const insertAt = Math.max(0, Math.min(afterRaw, slides.length));
-              await ssPaceBeforeSlide(insertAt);
               const elements = Array.isArray(cmd.elements) ? cmd.elements : [];
 
               let _insBg = cmd.background;
@@ -1064,6 +1095,14 @@
                   if (_pj && typeof _pj.background === 'string' && _pj.background) _insBg = _pj.background;
                 } catch (e) {}
               }
+              // v59: slayd qurilguncha ekran + effekt aynan shu (yangi) varaqda turadi
+              let _slot = null;
+              if (_oldPH && _oldPHIdx === insertAt) {
+                _slot = await ssOpenInsertSlot(insertAt, _insBg, _oldPH);   // oldindan ochilgan joy — sinxron qaytariladi
+              } else {
+                await ssPaceBeforeSlide(insertAt);
+                _slot = await ssOpenInsertSlot(insertAt, typeof _insBg === 'string' && _insBg.startsWith('#') ? _insBg : '#ffffff', null);
+              }
               const newCanvas = await createFabricCanvasFromElements(elements, _insBg || '#ffffff');
               const _insSlide = {
                 json: JSON.stringify(newCanvas.toJSON(SERIALIZE_PROPS)),
@@ -1071,13 +1110,22 @@
                 imageNumbers: extractImageNumbers(elements),
               };
               markSlideAsNew(_insSlide);
-              slides.splice(insertAt, 0, _insSlide);
+              let _finalAt = insertAt;
+              const _slotIdx = _slot ? slides.indexOf(_slot) : -1;
+              if (_slotIdx >= 0) {             // vaqtinchalik joy haqiqiy slayd bilan almashtiriladi (indekslar siljimaydi)
+                slides[_slotIdx] = _insSlide;
+                _finalAt = _slotIdx;
+                if (window._ssPH === _slot) window._ssPH = null;
+              } else {
+                slides.splice(insertAt, 0, _insSlide);
+              }
               newCanvas.dispose();
               if (typeof cmd.activate === 'number') {
                 activeIndex = Math.max(0, Math.min(cmd.activate - 1, slides.length - 1));
               } else {
-                activeIndex = insertAt;
+                activeIndex = _finalAt;
               }
+              _lastRenderedSlideIndex = -1;
               try { renderSidebar(); } catch (e) {}
               try { updateSlideCounterUI(); } catch (e) {}
               try { await loadSlideCanvasAsync(activeIndex); } catch (e) {}
@@ -1085,6 +1133,7 @@
               break;
             }
             case 'replace_slide': {
+              const _rPHIdx = window._ssPH ? slides.indexOf(window._ssPH) : -1;
               ssDropPlaceholder();
               let idx = ((cmd.slide != null ? cmd.slide : (activeIndex + 1)) || 1) - 1;
               if (idx < 0) idx = 0;
@@ -1096,7 +1145,8 @@
                   imageNumbers: [],
                 });
               }
-              await ssPaceBeforeSlide(idx);
+              if (_rPHIdx !== idx) await ssPaceBeforeSlide(idx);
+              await ssShowBuildSlot(idx);   // v59: qurilish davomida ekran + effekt shu slaydda
               const elems = Array.isArray(cmd.elements) ? cmd.elements : [];
               const newCanvas = await createFabricCanvasFromElements(elems, cmd.background || '#ffffff');
 
@@ -1154,9 +1204,10 @@
               markSlideAsNew(slides[idx]);
               newCanvas.dispose();
               activeIndex = idx;
+              _lastRenderedSlideIndex = -1;
               try { renderSidebar(); } catch (e) {}
               try { updateSlideCounterUI(); } catch (e) {}
-              try { await loadSlideCanvasAsync(idx); } catch (e) { console.warn('replace_slide load:', e); }
+              try { await loadSlideCanvasAsync(idx); _lastRenderedSlideIndex = idx; } catch (e) { console.warn('replace_slide load:', e); }
               try {
                 const _pj = JSON.parse(slides[idx].json || '{}');
                 if (_pj.backgroundGif) GifBackground.applyFromSlide(slides[idx].json);

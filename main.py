@@ -1047,6 +1047,7 @@ try:
         ledger_log=lambda *a, **k: ledger_log(*a, **k),   # v44.1: ledger_log pastroqda e'lon qilingan -> kech bog'lanadi (NameError tuzatildi)
         total_credits=lambda u: (10 ** 9 if is_unlimited(u) else total_credits(u)),   # v47: cheksiz/VIP uchun bot hech qachon "varaq tugadi" demaydi
         MODES=MODES,
+        ai_sem=GEMINI_SEMAPHORE,                   # v59: bot va sayt bitta AI kalitini UMUMIY navbat bilan ishlatadi
         checkout=lambda *a, **k: _checkout_for_bot(*a, **k),   # v45: botdan to'lov havolasi (kech bog'lanadi — NameError bo'lmasin)
         ai=lambda: {
             "api_key": (config.get("api_key") or "").strip(),
