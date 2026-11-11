@@ -407,7 +407,8 @@
       }
       if (!supabaseClient) return false;
       try {
-        const { data: { session } } = await supabaseClient.auth.getSession();
+        let { data: { session } } = await supabaseClient.auth.getSession();
+        if (!session && typeof window.ssLateSession === 'function') session = await window.ssLateSession();   // v63: yangi sessiya kelayotgan bo'lishi mumkin
         if (!session) {
           showToast("Sessiya tugadi. Iltimos, qaytadan kiring.", 'error');
           supabaseToken = "dev-token";
@@ -450,12 +451,15 @@
           showToast("Google Login xatolik: " + ((error && error.message) || 'URL olinmadi'), 'error');
           return;
         }
-        // v49: kirgandan keyin hammasi 0 dan boshlanadi — ish bo'lsa avval ogohlantiramiz
+        // v63: mehmon slaydlari redirect'dan oldin vaqtincha saqlanadi va qaytgach muharrirga tiklanadi (45_v63_guest_carry.js).
+        // Faqat sig'masa (juda katta rasm/video) — avvalgidek ogohlantiramiz.
         try {
-          if (window.ssHasWork && window.ssHasWork()) {
+          if (window.ssHasWork && window.ssHasWork() && window.ssStashGuestDeck && window.ssStashGuestDeck()) {
+            showToast("Slaydlaringiz saqlandi — Google'dan qaytgach shu yerda bo'ladi.");
+          } else if (window.ssHasWork && window.ssHasWork()) {
             let ok = true;
             if (window.Swal && Swal.fire) {
-              const r = await Swal.fire({ title: 'Google bilan kirasizmi?', text: "Kirganingizda hozirgi barcha varaqlar o'chib, hammasi 0 dan boshlanadi. Avval PPTX/PDF qilib yuklab oling.", icon: 'warning', showCancelButton: true, confirmButtonText: 'Baribir kirish', cancelButtonText: 'Bekor qilish', confirmButtonColor: '#d93025', reverseButtons: true });
+              const r = await Swal.fire({ title: 'Google bilan kirasizmi?', text: "Slaydlaringiz juda katta (ko'p rasm/video) — ularni vaqtincha saqlab bo'lmadi, kirganingizda o'chadi. Avval PPTX/PDF qilib yuklab oling.", icon: 'warning', showCancelButton: true, confirmButtonText: 'Baribir kirish', cancelButtonText: 'Bekor qilish', confirmButtonColor: '#d93025', reverseButtons: true });
               ok = !!(r && r.isConfirmed);
             } else ok = window.confirm("Kirganingizda hozirgi barcha varaqlar o'chadi. Davom etasizmi?");
             if (!ok) return;
@@ -474,6 +478,11 @@
     window.handleGoogleLogin = handleGoogleLogin;
     async function handleLogout() {
       window.__ssUserLogout = true;
+      // v63: chiqishda hech narsa qolmasin — vaqtincha mehmon nusxasi, kanvas va slaydlar tozalanadi (keyin sahifa qayta yuklanadi)
+      try { if (window.ssDropGuestDeck) window.ssDropGuestDeck(); } catch (e) {}
+      try { if (typeof canvas !== 'undefined' && canvas) { canvas.discardActiveObject(); canvas.clear(); } } catch (e) {}
+      try { slides = [{ json: JSON.stringify({ objects: [], background: '#ffffff' }), thumb: '', imageNumbers: [] }]; activeIndex = 0; } catch (e) {}
+      try { if (typeof _clipboardStack !== 'undefined') _clipboardStack = null; } catch (e) {}
       try { if (window.__ssAuthStorage) { window.__ssAuthStorage.removeItem('ss-auth-v39'); window.__ssAuthStorage.removeItem('ss-auth-v39-backup'); } } catch (e) {}
       try {
         if (supabaseClient) await supabaseClient.auth.signOut();

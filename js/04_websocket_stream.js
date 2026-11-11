@@ -125,11 +125,15 @@
           if (data.type === 'error' &&
               (data.code === 'invalid_token' ||
                data.message.includes('token is expired') || data.message.includes('invalid JWT'))) {
-            showToast("Sessiya muddati tugadi. Yangilanmoqda...", 'error');
-            const ok = await refreshSupabaseToken();
+            // v63: avval jimgina yangilaymiz — qizil ogohlantirish faqat haqiqatan kira olmasa
+            let ok = await refreshSupabaseToken();
+            if (!ok && typeof window.ssLateSession === 'function') {
+              const s2 = await window.ssLateSession();
+              if (s2) { supabaseToken = s2.access_token; ok = true; }
+            }
             if (!ok) {
               updateAuthUI();
-              showToast("Iltimos, qaytadan tizimga kiring.", 'error');
+              showToast("Sessiya tugadi. Iltimos, qaytadan tizimga kiring.", 'error');
             } else {
               showToast("Sessiya yangilandi. Buyruqni qayta yuboring.");
             }

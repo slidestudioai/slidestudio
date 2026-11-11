@@ -82,9 +82,33 @@
     finally { _recovering = false; }
     return false;
   }
+  // v63: Telegram'dan / havola orqali ochilganda yangi sessiya bir-ikki soniyada keladi (Telegram avto-kirish, magic link).
+  // Shu payt eski sessiya «tugadi» deb qizil ogohlantirish chiqardi, keyin esa hammasi ishlardi. Endi biroz kutib qayta tekshiramiz.
+  function lateSession() {
+    return new Promise(function (res) {
+      var tries = 0;
+      (function tick() {
+        tries++;
+        var c = null; try { c = window.supabaseClient || (typeof supabaseClient !== 'undefined' ? supabaseClient : null); } catch (e) {}
+        if (!c) { if (tries < 8) return setTimeout(tick, 600); return res(null); }
+        c.auth.getSession().then(function (r) {
+          var s = r && r.data ? r.data.session : null;
+          if (s || tries >= 8) return res(s || null);
+          setTimeout(tick, 600);
+        }, function () { if (tries >= 8) res(null); else setTimeout(tick, 600); });
+      })();
+    });
+  }
+  window.ssLateSession = lateSession;
   window.ssRecoverSession = function () {
-    return recover().then(function (ok) {
+    return recover().then(async function (ok) {
       if (!ok) {
+        var s = await lateSession();
+        if (s) {
+          safe(function () { supabaseToken = s.access_token; currentUserEmail = (s.user && s.user.email) || currentUserEmail; window._ssAuthUid = s.user ? String(s.user.id) : ''; });
+          safe(function () { if (typeof updateAuthUI === 'function') updateAuthUI(); });
+          return true;
+        }
         // haqiqatan tugagan (masalan refresh token bekor qilingan) — endi UI'ni chiqish holatiga o'tkazamiz
         safe(function () { supabaseToken = 'dev-token'; currentUserEmail = ''; window._ssAuthUid = ''; });
         safe(function () { if (typeof updateAuthUI === 'function') updateAuthUI(); });

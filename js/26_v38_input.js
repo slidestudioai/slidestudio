@@ -55,11 +55,22 @@
     setTimeout(function () { try { deleteSelected(); } catch (x) {} }, 30);
   }, true);
 
+  // v63: telefon / planshet / Telegram Mini App — sensorli ekran
+  function isTouchUi() {
+    try {
+      return (window.matchMedia && matchMedia('(pointer: coarse)').matches) || window.innerWidth <= 900 ||
+        !!(window.Telegram && Telegram.WebApp && Telegram.WebApp.initData);
+    } catch (e) { return false; }
+  }
+  window.ssIsTouchUi = isTouchUi;
+
   /** Menyu/tugmadan "Nusxalash": eski funksiya + haqiqiy tizim clipboard'iga belgi yozish */
   const _origCopy = window.copyObject;
   window.copyObject = function () {
     if (typeof _origCopy === 'function') _origCopy.apply(this, arguments);
     if (inCopy) return;
+    // v63: telefonda tizim clipboard'iga majburan yozish (execCommand) katta rasm/GIF bilan ilovani qotirardi va xato berardi
+    if (isTouchUi()) { copySeq++; window.__ssCopyId = copySeq; return; }
     copySeq++; window.__ssCopyId = copySeq;
     inCopy = true;
     const once = function (e) {
@@ -70,6 +81,28 @@
     try { document.execCommand('copy'); } catch (x) {}
     document.removeEventListener('copy', once, true);
     inCopy = false;
+  };
+
+  /** v63: menyudagi «Nusxalash». Telefonda FAQAT matn nusxalanadi (rasm/GIF/video nusxasi telefonda qiyin va xato berardi). */
+  window.ssMenuCopy = function () {
+    let o = null;
+    try { o = canvas.getActiveObject(); } catch (e) {}
+    if (!isTouchUi()) { window.copyObject(); return; }
+    const t = o && /text/i.test(o.type || '') ? String(o.text || '') : '';
+    if (!t) {
+      toast(o ? 'Telefonda faqat matnni nusxalash mumkin. Rasm yoki shaklni takrorlash uchun uni tanlab media panelidagi «⧉ Nusxa» tugmasidan foydalaning.'
+              : 'Avval nusxalanadigan matnni tanlang.', 'error');
+      return;
+    }
+    try { if (typeof _origCopy === 'function') _origCopy(); } catch (e) {}
+    copySeq++; window.__ssCopyId = copySeq;
+    let done = false;
+    const ok = function () { if (!done) { done = true; toast('Matn nusxalandi'); } };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok, ok);
+      else ok();
+    } catch (e) { ok(); }
+    try { document.querySelectorAll('.context-menu, .dropdown-menu').forEach(function (m) { m.style.display = 'none'; }); } catch (e) {}
   };
 
   // ---------------------------------------------------------------- tashqi mazmunni slaydga qo'yish

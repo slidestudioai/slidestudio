@@ -28,9 +28,19 @@ def test_free_text_without_deck_goes_to_new(monkeypatch):
     assert _run(monkeypatch, {}, "Sun'iy intellekt haqida 5 ta slayd") == [("new", "Sun'iy intellekt haqida 5 ta slayd")]
 
 
-def test_free_text_with_deck_goes_to_edit(monkeypatch):
+def test_main_menu_does_not_see_old_deck(monkeypatch):
+    # v64: bosh menyuda (Tahrirlash bosilmagan) AI eski slaydni ko'rmaydi — yangi/suhbat sifatida ishlanadi
     deck = {"title": "AI", "slides": [{"layout": "title", "title": "AI"}]}
-    assert _run(monkeypatch, {"deck": deck}, "3-slaydni qisqartir") == [("edit", "3-slaydni qisqartir")]
+    assert _run(monkeypatch, {"deck": deck}, "Kosmos haqida taqdimot") == [("new", "Kosmos haqida taqdimot")]
+
+
+def test_edit_mode_sees_deck(monkeypatch):
+    deck = {"title": "AI", "slides": [{"layout": "title", "title": "AI"}]}
+    assert _run(monkeypatch, {"deck": deck, "ui": "edit"}, "3-slaydni qisqartir") == [("edit", "3-slaydni qisqartir")]
+
+
+def test_edit_prompt_handles_mixed_requests():
+    assert "MIXED REQUESTS" in tb.EDIT_SYSTEM and "Muharrirda ochish" in tb.EDIT_SYSTEM
 
 
 def test_edit_prompt_knows_start_over():

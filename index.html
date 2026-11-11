@@ -139,7 +139,7 @@
           <div id="editMenu" class="dropdown-menu">
             <div onclick="undo()"><span class="material-symbols-outlined">undo</span> Bekor qilish</div>
             <div onclick="redo()"><span class="material-symbols-outlined">redo</span> Qaytarish</div>
-            <div onclick="copyObject()"><span class="material-symbols-outlined">content_copy</span> Nusxalash</div>
+            <div onclick="ssMenuCopy()"><span class="material-symbols-outlined">content_copy</span> Nusxalash</div>
             <div onclick="ssPasteLatest()"><span class="material-symbols-outlined">content_paste</span> Joylashtirish</div>
             <div onclick="selectAll()"><span class="material-symbols-outlined">select_all</span> Barchasini tanlash</div>
           </div>
@@ -529,7 +529,7 @@
   </div>
 
   <div id="objectContextMenu" class="context-menu">
-    <div class="context-menu-item" onclick="copyObject()"><span class="material-symbols-outlined">content_copy</span> Nusxalash</div>
+    <div class="context-menu-item" onclick="ssMenuCopy()"><span class="material-symbols-outlined">content_copy</span> Nusxalash</div>
     <div class="context-menu-item" onclick="ssPasteLatest()"><span class="material-symbols-outlined">content_paste</span> Joylashtirish</div>
     <div class="context-menu-item" onclick="bringToFront()"><span class="material-symbols-outlined">flip_to_front</span> Eng tepaga</div>
     <div class="context-menu-item" onclick="sendToBack()"><span class="material-symbols-outlined">flip_to_back</span> Eng pastga</div>
@@ -542,8 +542,8 @@
   <script src="js/00_gif_decoder.js?v=2"></script>
   <script src="js/01_state.js?v=141"></script>
   <script src="js/02_gif_overlay.js?v=40"></script>
-  <script src="js/03_auth_project.js?v=148"></script>
-  <script src="js/04_websocket_stream.js?v=144"></script>
+  <script src="js/03_auth_project.js?v=149"></script>
+  <script src="js/04_websocket_stream.js?v=145"></script>
   <script src="js/05_ai_chat.js?v=39"></script>
   <script src="js/06_media_gif.js?v=37"></script>
   <script src="js/07_ai_commands.js?v=46"></script>
@@ -565,9 +565,9 @@
   <script src="js/23_v36_fixes.js?v=4"></script>
   <script src="js/24_v37_upgrade.js?v=2"></script>
   <script src="js/25_v38_media_fx.js?v=495"></script>
-  <script src="js/26_v38_input.js?v=2"></script>
+  <script src="js/26_v38_input.js?v=3"></script>
   <script src="js/27_v38_app.js?v=5"></script>
-  <script src="js/28_v39_fixes.js?v=2"></script>
+  <script src="js/28_v39_fixes.js?v=3"></script>
   <script src="js/29_v40_html_export.js?v=6"></script>
   <script src="js/30_v40_present_persist.js?v=8"></script>
   <script src="js/31_v42_responsive.js?v=2"></script>
@@ -584,5 +584,6 @@
   <script src="js/42_v50_tc_panel.js?v=2"></script>
   <script src="js/43_v50_ui_scale.js?v=1"></script>
   <script src="js/44_v54_fixes.js?v=6"></script>
+  <script src="js/45_v63_guest_carry.js?v=1"></script>
   </body>
 </html>
