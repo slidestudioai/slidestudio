@@ -92,9 +92,17 @@
         thinkingDone: function () {
           const r = chip && chip.querySelector('.ai-search-row.thinking.searching');
           if (!r) return;
-          r.classList.remove('searching'); r.classList.add('ok');
+          r.classList.remove('searching'); r.classList.add('ok', 'writing');
           const ic = r.querySelector('.material-symbols-outlined'); ic.classList.remove('spin'); ic.textContent = 'check_circle';
-          r.querySelector('.asr-text').textContent = 'O\u2018ylab bo\u2018ldi — javob yozilmoqda';
+          r.querySelector('.asr-text').textContent = 'O\u2018ylab bo\u2018ldi — javob yozilmoqda\u2026';
+        },
+        // v62: javob TUGAGACH «javob yozilmoqda» qolib ketmasin (avval doim shunday turardi)
+        thinkingFinal: function () {
+          document.querySelectorAll('.ai-search-row.thinking').forEach(function (r) {
+            r.classList.remove('searching', 'writing'); r.classList.add('ok');
+            const ic = r.querySelector('.material-symbols-outlined'); if (ic) { ic.classList.remove('spin'); ic.textContent = 'check_circle'; }
+            const t = r.querySelector('.asr-text'); if (t) t.textContent = 'O\u2018ylab bo\u2018ldi';
+          });
         },
         reset: function () { chip = null; active = 0; searchCount = 0; window._aiSearchBreakRaw = null; },
         chipEl: function () { return chip && chip.isConnected ? chip : null; },
@@ -164,7 +172,7 @@
 
             console.log("[gif_fix] etiborsiz — qayta bajarish ochirilgan");
           } else if (data.type === 'end') {
-            try { AiSearchUI.thinkingDone(); } catch (e) {}
+            try { AiSearchUI.thinkingDone(); AiSearchUI.thinkingFinal(); } catch (e) {}
             try {
               if (typeof applyServerUsage === 'function') applyServerUsage(data);
               else if (window.Monitoring && typeof window.Monitoring.applyServerUsage === 'function') {
@@ -202,6 +210,7 @@
               finishAiStream();
             }
           } else if (data.type === 'error') {
+            try { AiSearchUI.thinkingFinal(); } catch (e) {}
             showToast("Xatolik: " + data.message, 'error');
             const botEl = document.getElementById(currentBotMsgId);
             if (botEl) {
@@ -1686,6 +1695,7 @@
     window.recoverPendingAiActions = recoverPendingAiActions;
 
     async function finishAiStream() {
+      try { AiSearchUI.thinkingFinal(); } catch (e) {}
 
       // v58: avval navbatdagi (hali qo'llanmagan) slaydlar tugasin — keyin tekshiruv
       try { if (aiProcessingQueue && typeof aiProcessingQueue.then === 'function') await aiProcessingQueue; } catch (e) {}
