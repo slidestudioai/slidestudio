@@ -121,6 +121,7 @@ test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi'
         gen: gen ? Number(gen.dataset.idx) : null,
         skel: !!document.getElementById('ssSlideSkel'),
         ov: !!document.querySelector('#ssBuildOverlay.on'),
+        at: Date.now(),
       });
     }, 30);
   });
@@ -139,6 +140,10 @@ test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi'
   }
   expect(maxActive).toBe(4);
   expect(trace.some((t) => t.ov)).toBe(true);                         // qurilayotganda «N-slayd tayyorlanmoqda» kartasi chiqadi
+  const span = {};                                                     // har slaydda karta kamida ~2 soniya turadi
+  for (const t of trace) if (t.ov) { const r = span[t.active] || (span[t.active] = [t.at, t.at]); r[1] = t.at; }
+  for (const k of Object.keys(span)) expect(span[k][1] - span[k][0]).toBeGreaterThanOrEqual(1800);
+  expect(Object.keys(span).length).toBe(5);
   expect((await deck(page)).length).toBe(5);
   // birma-bir paydo bo'lish effekti slaydga yashirin (opacity 0) obyekt qoldirmaydi, karta oxirida yopiladi
   const low = await page.evaluate(() => slides.flatMap((s) => (JSON.parse(s.json).objects || []).map((o) => o.opacity)).filter((x) => x != null && x < 0.99));

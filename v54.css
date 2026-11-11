@@ -283,3 +283,15 @@ html.in-telegram body #googleLoginBtn { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .ss-bo-sk::after, .ss-bo-dot, .slide-item.ss-gen .slide-thumb::before { animation: none; }
 }
+
+/* v60: skelet BUTUN varaqni egallaydi (kichik karta emas), yozuv pastda kichik «pill» ichida */
+#ssBuildOverlay { background: #ffffff; -webkit-backdrop-filter: none; backdrop-filter: none; overflow: hidden; }
+#ssBuildOverlay .ss-bo-card { position: absolute; inset: 0; width: auto; display: block; }
+#ssBuildOverlay .ss-bo-sk { position: absolute; inset: 0; aspect-ratio: auto; border-radius: inherit; box-shadow: none;
+  padding: 7% 7% 15%; gap: 5.5%; background: #ffffff; }
+#ssBuildOverlay .ss-bo-sk .t { height: 9%; width: 46%; }
+#ssBuildOverlay .ss-bo-sk .l { height: 4.5%; }
+#ssBuildOverlay .ss-bo-sk .row { gap: 3.5%; }
+#ssBuildOverlay .ss-bo-sk .c { border-radius: 14px; }
+#ssBuildOverlay .ss-bo-label { position: absolute; left: 50%; bottom: 4.5%; transform: translateX(-50%); z-index: 2; white-space: nowrap;
+  background: #ffffff; padding: 8px 16px; border-radius: 999px; box-shadow: 0 4px 16px rgba(76, 29, 149, .14); font-size: 14px; }

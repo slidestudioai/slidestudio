@@ -12,11 +12,22 @@
     }
     // v59: hozir qaysi slayd QURILAYOTGANI (-1 = hech qaysi). Kanvas ustidagi «N-slayd tayyorlanmoqda» kartasi shunga qarab chiqadi.
     window._ssBuildingIdx = -1;
+    const SS_MIN_BUILD_MS = 2000;   // v60: «tayyorlanmoqda» kartasi har slaydda kamida 2 soniya turadi (miltillab o'tib ketmaydi)
+    window._ssBuildStartAt = 0;
     function ssSetBuilding(idx) {
-      window._ssBuildingIdx = (typeof idx === 'number') ? idx : -1;
+      const v = (typeof idx === 'number') ? idx : -1;
+      if (v >= 0 && v !== window._ssBuildingIdx) window._ssBuildStartAt = Date.now();
+      window._ssBuildingIdx = v;
       try { if (typeof window.ssBuildOverlayUpdate === 'function') window.ssBuildOverlayUpdate(); } catch (e) {}
     }
     window.ssSetBuilding = ssSetBuilding;
+    async function ssWaitMinBuild() {
+      try {
+        if (!isAiStreaming || !(window._ssBuildingIdx >= 0)) return;
+        const left = SS_MIN_BUILD_MS - (Date.now() - (window._ssBuildStartAt || 0));
+        if (left > 0) await new Promise((r) => setTimeout(r, left));
+      } catch (e) {}
+    }
     // v59: tayyor slayd elementlari birma-bir, silliq paydo bo'ladi (avval bo'sh fon turib, keyin hammasi birdan chiqardi).
     // Faqat ko'rinish: opacity/top oxirida aynan asl qiymatiga qaytariladi. rAF to'xtasa (yashirin tab) — taymer yakunlaydi.
     function ssRevealCanvasObjects() {
@@ -1189,6 +1200,7 @@
               try { updateSlideCounterUI(); } catch (e) {}
               try { await loadSlideCanvasAsync(activeIndex); _lastRenderedSlideIndex = activeIndex; } catch (e) {}
               if (activeIndex === _finalAt) {
+                await ssWaitMinBuild();
                 const _rv = ssRevealCanvasObjects();   // obyektlar darhol yashiriladi, keyin karta yo'qoladi
                 ssSetBuilding(-1);
                 await _rv;
@@ -1279,6 +1291,7 @@
 
               try { ensureSlideMediaLoaded(idx); } catch (e) {}
               {
+                await ssWaitMinBuild();
                 const _rv = ssRevealCanvasObjects();
                 ssSetBuilding(-1);
                 await _rv;
@@ -1684,7 +1697,115 @@
       if (!Array.isArray(elements)) return [];
       return elements.filter(e => isImageLike(e) && e.imageNumber != null).map(e => e.imageNumber);
     }
+    // v60: AI ba'zan kartalarni (rect) bir-biriga tegizib/kirgizib yoki ota-panel chetidan chiqarib joylaydi
+    // (masalan 2x2 grid: chap karta 75..560, o'ng karta 560..1045, panel ham 1045 da tugaydi).
+    // Bu yerda kod buni tuzatadi: qo'shni kartalar orasida kamida GAP bo'ladi, karta o'z paneli ichida qoladi,
+    // karta ichidagi matn/belgilar ham karta bilan birga siljiydi/torayadi.
+    function ssFixCardLayout(elements) {
+      const GAP = 20, MIN_W = 60, MIN_H = 40;
+      const num = (v) => (typeof v === 'number' && isFinite(v)) ? v : (typeof v === 'string' && v.trim() !== '' && isFinite(+v) ? +v : null);
+      const box = (e) => {
+        const l = num(e.left), t = num(e.top), w = num(e.width), h = num(e.height);
+        return (l == null || t == null || !(w > 0) || !(h > 0)) ? null : { l: l, t: t, w: w, h: h };
+      };
+      const list = elements.map((e) => (e && typeof e === 'object') ? Object.assign({}, e) : e);
+      const rects = [];
+      list.forEach((e, i) => {
+        if (!e || e.type !== 'rect' || (num(e.angle) || 0) !== 0) return;
+        const b = box(e);
+        if (b) rects.push({ i: i, e: e, b: b, o: Object.assign({}, b) });
+      });
+      if (rects.length < 2) return list;
+      const area = (b) => b.w * b.h;
+      const inter = (a, b) => Math.max(0, Math.min(a.l + a.w, b.l + b.w) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.t + a.h, b.t + b.h) - Math.max(a.t, b.t));
+      // har karta uchun eng kichik «ota-panel» (uni deyarli to'liq o'z ichiga olgan kattaroq rect)
+      rects.forEach((r) => {
+        let best = null;
+        rects.forEach((p) => {
+          if (p === r || area(p.o) < area(r.o) * 1.5) return;
+          if (inter(p.o, r.o) >= area(r.o) * 0.6 && (!best || area(p.o) < area(best.o))) best = p;
+        });
+        r.parent = best;
+      });
+      // 1) qo'shni kartalar (bir ota ostida) — gorizontal va vertikal oraliq kamida GAP
+      for (let pass = 0; pass < 2; pass++) {
+        for (let a = 0; a < rects.length; a++) {
+          for (let c = 0; c < rects.length; c++) {
+            const A = rects[a], B = rects[c];
+            if (A === B || A.parent !== B.parent || A.parent === B || B.parent === A) continue;
+            const x = A.b, y = B.b;
+            const vOver = Math.min(x.t + x.h, y.t + y.h) - Math.max(x.t, y.t);
+            const hOver = Math.min(x.l + x.w, y.l + y.w) - Math.max(x.l, y.l);
+            if (x.l < y.l && vOver > Math.min(x.h, y.h) * 0.5) {          // A chapda, B o'ngda — bir qatorda
+              const need = (x.l + x.w + GAP) - y.l;
+              if (need > 0 && need < Math.min(x.w, y.w) * 0.5) { x.w -= need / 2; y.l += need / 2; y.w -= need / 2; }
+            } else if (x.t < y.t && hOver > Math.min(x.w, y.w) * 0.5) {   // A tepada, B pastda — bir ustunda
+              const need = (x.t + x.h + GAP) - y.t;
+              if (need > 0 && need < Math.min(x.h, y.h) * 0.5) { x.h -= need / 2; y.t += need / 2; y.h -= need / 2; }
+            }
+          }
+        }
+      }
+      // 2) karta o'z paneli ichida qolsin (o'ng/past chetga yopishmasin) — chekka = chapdagi ichki chekinish
+      rects.forEach((r) => {
+        const P = r.parent;
+        if (!P) return;
+        const sib = rects.filter((q) => q.parent === P);
+        const padL = Math.min.apply(null, sib.map((q) => q.b.l - P.b.l));
+        const padT = Math.min.apply(null, sib.map((q) => q.b.t - P.b.t));
+        const pad = Math.max(16, Math.min(40, padL > 0 ? padL : 24));
+        const padY = Math.max(16, Math.min(40, padT > 0 ? Math.min(padT, pad) : pad));
+        const maxR = P.b.l + P.b.w - pad, maxB = P.b.t + P.b.h - padY;
+        if (r.b.l + r.b.w > maxR && maxR - r.b.l >= MIN_W) r.b.w = maxR - r.b.l;
+        if (r.b.t + r.b.h > maxB && maxB - r.b.t >= MIN_H) r.b.h = maxB - r.b.t;
+      });
+      // 2b) bir qatordagi bir xil (asli teng kenglikdagi) kartalar — yana teng kenglik va teng oraliq
+      const seenRow = new Set();
+      rects.forEach((r) => {
+        if (seenRow.has(r)) return;
+        const row = rects.filter((q) => q.parent === r.parent && Math.abs(q.o.t - r.o.t) <= 4 && Math.abs(q.o.w - r.o.w) <= 4);
+        row.forEach((q) => seenRow.add(q));
+        if (row.length < 2) return;
+        if (row.every((q) => q.b.l === q.o.l && q.b.w === q.o.w)) return;   // AI to'g'ri joylagan qatorga tegmaymiz
+        row.sort((a, b) => a.b.l - b.b.l);
+        const first = row[0], last = row[row.length - 1];
+        const span = last.b.l + last.b.w - first.b.l;
+        const w = (span - GAP * (row.length - 1)) / row.length;
+        if (w < MIN_W) return;
+        row.forEach((q, k) => { q.b.l = first.b.l + k * (w + GAP); q.b.w = w; });
+      });
+      // 3) o'zgargan kartalarni yozamiz, ichidagi elementlarni ham moslaymiz
+      const changed = rects.filter((r) => r.b.l !== r.o.l || r.b.t !== r.o.t || r.b.w !== r.o.w || r.b.h !== r.o.h);
+      if (!changed.length) return list;
+      changed.forEach((r) => {
+        r.e.left = Math.round(r.b.l); r.e.top = Math.round(r.b.t);
+        r.e.width = Math.round(r.b.w); r.e.height = Math.round(r.b.h);
+      });
+      const isCard = new Set(rects.map((r) => r.i));
+      list.forEach((e, i) => {
+        if (!e || isCard.has(i)) return;
+        const b = box(e) || (num(e.left) != null && num(e.top) != null ? { l: num(e.left), t: num(e.top), w: 1, h: 1 } : null);
+        if (!b) return;
+        const cx = b.l + Math.min(b.w, 40) / 2, cy = b.t + Math.min(b.h, 20) / 2;   // element boshlanishi qaysi kartada
+        let host = null;
+        rects.forEach((r) => {
+          if (cx >= r.o.l && cx <= r.o.l + r.o.w && cy >= r.o.t && cy <= r.o.t + r.o.h && (!host || area(r.o) < area(host.o))) host = r;
+        });
+        if (!host || changed.indexOf(host) < 0) return;
+        const dx = host.b.l - host.o.l, dy = host.b.t - host.o.t;
+        e.left = Math.round(b.l + dx); e.top = Math.round(b.t + dy);
+        const right = host.b.l + host.b.w - 16;
+        const isText = e.type === 'text' || e.type === 'textbox';
+        if (num(e.width) > 0 && e.left + num(e.width) > right) {
+          if (isText) e.width = Math.max(40, Math.round(right - e.left));
+          else e.left = Math.max(host.b.l + 8, Math.round(right - num(e.width)));
+        }
+      });
+      return list;
+    }
+    window.ssFixCardLayout = ssFixCardLayout;
     async function createFabricCanvasFromElements(elements = [], background = '#ffffff') {
+      try { if (Array.isArray(elements)) elements = ssFixCardLayout(elements); } catch (e) { console.warn('ssFixCardLayout:', e); }
       const tempEl = document.createElement('canvas');
       tempEl.width = 960; tempEl.height = 540;
       const tempCanvas = new fabric.Canvas(tempEl, { backgroundColor: background });
