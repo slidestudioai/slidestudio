@@ -2246,6 +2246,12 @@ Decide the intent:
    build it again from scratch ("boshidan qil", "hammasini yangidan yasa", "butunlay boshqa qil", "start over", "заново").
    Return {"intent":"new_topic","topic":"<the full topic to build, incl. requested slide count / style; for «start over» reuse the current deck topic>"}
 3) "chat" — a question or small talk about the deck, not requesting a change.   Return {"intent":"chat","reply":"helpful answer, max 4 sentences"}
+MIXED REQUESTS (statistics + table + chart + buttons + GIF + transitions ... in one message): do ALL of them in this one answer.
+ - One slide has ONE layout, so put each block type on its own slide ("stats" slide, "table" slide, "chart" slide ...) next to the slide the
+   user means (insert after it), and put buttons / media / transition on the slides where they belong. Keep the deck theme.
+ - "animatsiya" in this bot = slide transition ("transition" op / meta) and animated GIF media. Per-element animations, free positions or
+   several block types on ONE slide are not possible in the bot: do the closest version and say in "reply" in one short sentence that for full
+   control they can press «🚀 Muharrirda ochish» (the site editor, where Slide Studio AI can do it exactly).
 SLIDE SCHEMA (field "layout"): title/closing: title, subtitle · bullets: title, bullets[3-5], image, media · cards: title, cards[{heading,text}] (2-4) · stats: title, stats[{value,label}] (2-4) · quote: text, author · table: title, rows[[cells]] (first row = header, 2-8 rows, 2-5 columns) · chart: title, chart(bar|line|pie|doughnut), labels[], series[{name,values[]}]
  - To add a table / chart / statistics use "insert" or "replace" with these layouts. Numbers must be real or approximate, never invented.
  - "image" is a short ENGLISH photo search query or "". Keep the language of the deck unless asked to translate. No emoji, no markdown symbols. Reply in the user's language.
@@ -2529,7 +2535,7 @@ def _card_text(deck: dict, head: str = "✅", extra: str = "") -> str:
     """Tayyor/saqlangan slayd kartasi: sarlavha + tuzilma matni (+ ixtiyoriy qo'shimcha). Tugmalar — kb_done."""
     return (f"{head} <b>{esc(deck['title'])}</b>\n🎞 {len(deck['slides'])} ta slayd · 🎨 {esc(_theme_label(deck))}\n\n{_summary(deck)}"
             + (f"\n\n{extra}" if extra else "")
-            + "\n\n<i>✏️ O'zgartirish kerak bo'lsa — «Tahrirlash» ni bosing yoki shunchaki AI'ga yozing.</i>"   # v63
+            + "\n\n<i>✏️ O'zgartirish kerak bo'lsa — «Tahrirlash» ni bosing, keyin AI'ga oddiy yozing (u slaydni ko'rib turadi).</i>"   # v64
             + "\n\n<b>Yuklab olish uchun formatni tanlang</b> 👇")
 
 
@@ -3679,13 +3685,10 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
             return
         if not await _google_ok(chat_id, user):
             return
-        # v63: tugma bosilmasa ham topshiriq bajariladi. Shu suhbatda slayd bo'lsa — AI uni ko'rib turib tahrirlaydi
-        # (yoki «boshidan qil» / yangi mavzu bo'lsa butunlay yangidan yaratadi); slayd bo'lmasa — AI o'zi hal qiladi:
-        # slayd so'ralgan bo'lsa yaratadi, oddiy savol bo'lsa javob beradi.
-        if st.get("deck"):
-            _spawn(_run_edit(chat_id, user, text[:1500]))
-        else:
-            _spawn(_run_new(chat_id, user, " ".join(text.split())[:1500]))
+        # v64: tugma bosilmasa ham topshiriq bajariladi — AI o'zi hal qiladi: slayd so'ralgan bo'lsa YANGI slayd yaratadi,
+        # oddiy savol bo'lsa javob beradi. Bosh menyuda AI eski slaydni KO'RMAYDI: eski/hozirgi slaydni o'zgartirish
+        # faqat «✏️ Tahrirlash» bosilgandan keyin (shunda AI slaydni ko'rib turadi).
+        _spawn(_run_new(chat_id, user, " ".join(text.split())[:1500]))
         return
     if not await _google_ok(chat_id, user):                # Google ulanmagan bo'lsa slayd yaratilmaydi / tahrirlanmaydi
         return
