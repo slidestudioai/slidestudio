@@ -295,3 +295,7 @@ html.in-telegram body #googleLoginBtn { display: none !important; }
 #ssBuildOverlay .ss-bo-sk .c { border-radius: 14px; }
 #ssBuildOverlay .ss-bo-label { position: absolute; left: 50%; bottom: 4.5%; transform: translateX(-50%); z-index: 2; white-space: nowrap;
   background: #ffffff; padding: 8px 16px; border-radius: 999px; box-shadow: 0 4px 16px rgba(76, 29, 149, .14); font-size: 14px; }
+
+/* v62: ochiladigan ro'yxatlar (AI rejimi, shrift, o'lcham ...) ustida ham qo'l belgisi — boshqa tugmalar kabi */
+select, select option, .ai-sidebar select, #aiModelSelect, #fontFamily, label.ss-switch, input[type="checkbox"], input[type="color"] { cursor: pointer; }
+select:disabled { cursor: not-allowed; }

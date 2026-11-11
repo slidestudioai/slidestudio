@@ -104,6 +104,8 @@
     return obj;
   }
   window.buildShape = build;
+  // v62: shakl nomi (star5, heart ...) saqlanadi — AI va foydalanuvchi uni keyin ham «ko'radi»
+  try { if (typeof SERIALIZE_PROPS !== 'undefined' && SERIALIZE_PROPS.indexOf('shapeType') < 0) SERIALIZE_PROPS.push('shapeType'); } catch (e) {}
 
   // eski addShape ni kengaytiramiz (eski nomlar o'z holicha ishlaydi)
   const LEGACY = ['rect', 'circle', 'triangle', 'line', 'arrow_right', 'arrow_up', 'arrow_down', 'star', 'pentagon', 'hexagon', 'heart', 'chat_bubble'];
@@ -162,7 +164,8 @@
             if (obj) {
               if (el.rx != null && obj.type === 'rect') { obj.set({ rx: +el.rx, ry: el.ry != null ? +el.ry : +el.rx }); }
               try { ensureObjectId(obj); } catch (e) {}
-              if (el.animation && typeof applyAnimFromEl === 'function') { try { applyAnimFromEl(obj, el); } catch (e) {} }
+              // v62: avval bu funksiya boshqa faylda yopiq edi — AI yaratgan yulduz/yurak va boshqa shakllarning animatsiyasi tushib qolardi
+              if ((el.animation || el.anim || el.animName) && typeof window.ssApplyAnimFromEl === 'function') { try { window.ssApplyAnimFromEl(obj, el); } catch (e) {} }
               return obj;
             }
           }

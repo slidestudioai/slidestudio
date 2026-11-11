@@ -5,6 +5,7 @@ const MAP = {
   'fabric.min.js': 'fabric/dist/fabric.min.js',
   'sweetalert2@11': 'sweetalert2/dist/sweetalert2.all.min.js',
   'jszip.min.js': 'jszip/dist/jszip.min.js',
+  'pptxgen.bundle.js': 'pptxgenjs/dist/pptxgen.bundle.js',
 };
 
 async function openEditor(page, url = '/') {

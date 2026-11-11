@@ -1628,6 +1628,7 @@
   // ---------------------------------------------------------------------
   // 9. AI element / action adapterlari
   // ---------------------------------------------------------------------
+  window.ssApplyAnimFromEl = function (obj, el) { return applyAnimFromEl(obj, el); };   // v62: 16_shapes_fonts.js (AI shakllari) ham ishlatadi
   function applyAnimFromEl(obj, el) {
     if (!obj || !el) return obj;
     const name = el.animation || el.anim || el.animName;

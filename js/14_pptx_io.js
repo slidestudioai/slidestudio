@@ -1168,6 +1168,21 @@
       if (stats.skipped) warn.push(stats.skipped + ' ta element');
       if (stats.badVideo) warn.push(stats.badVideo + ' ta video (faqat MP4 PowerPoint\u2019da ishlaydi)');
       if (stats.errors) warn.push(stats.errors + ' ta xatolik');
+      // v62: animatsiya / slayd o'tishi bor bo'lsa — qaysi dasturda ishlashini aniq aytamiz (bir marta, sessiya davomida)
+      try {
+        var hasTr = slides.some(function (s) { return s && s.transition && s.transition !== 'none'; });
+        if ((stats.anim || hasTr) && !window.__ssPptxFxNoted && window.Swal) {
+          window.__ssPptxFxNoted = true;
+          setTimeout(function () {
+            Swal.fire({ icon: 'info', title: 'Animatsiya va o\u2018tish effektlari haqida', heightAuto: false, confirmButtonText: 'Tushunarli',
+              html: '<div style="text-align:left;font-size:14px;line-height:1.5">' +
+                'PPTX faylda animatsiyalar va slayd o\u2018tishlari <b>PowerPoint (2010 va yangi)</b> effektlariga o\u2018girildi — faylni ochib «Slide Show» ni bosing.<br><br>' +
+                '⚠️ <b>Google Slides, WPS, Keynote</b> va telefon ilovalarida ba\u2019zi animatsiyalar yoki o\u2018tishlar <b>ishlamasligi</b> yoki boshqacharoq ko\u2018rinishi mumkin. ' +
+                'Ba\u2019zi effektlar PowerPoint\u2019dagi eng yaqin analogi bilan almashtirildi.<br><br>' +
+                '✅ Saytdagidek <b>100% bir xil</b> ko\u2018rinish uchun <b>HTML</b> formatda saqlang (istalgan brauzerda ochiladi).</div>' });
+          }, 400);
+        }
+      } catch (e) {}
       if (warn.length) toast('PPTX yuklandi, lekin qo\'shilmadi: ' + warn.join(', ') + ((stats.gifFail || stats.imgFail) ? ' (internet/CORS)' : ''), 'error');
       else toast(stats.anim ? 'PPTX yuklandi — slayd o\'tishlari va animatsiyalar PowerPoint effektlariga o\'girildi (ba\'zi effektlar eng yaqin PowerPoint analogi bilan)' : 'PPTX yuklandi — PowerPoint da ochib, qayta tahrirlash mumkin');
     } catch (e) {

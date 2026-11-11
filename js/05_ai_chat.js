@@ -208,6 +208,7 @@
           // v59: AI slaydni to'liq ko'rsin — shakl turi, burchak, chiziq, soya, matn uslubi, animatsiya vaqti
           const shapeName = { rect: 'rect', circle: 'circle', ellipse: 'ellipse', triangle: 'triangle', line: 'line', polygon: 'polygon', path: 'path', group: 'group' }[o.type];
           if (!isText && !isImg && shapeName) entry.shape = shapeName;
+          if (!isText && !isImg && o.shapeType) { entry.type = 'shape'; entry.shape = o.shapeType; }   // v62: star5, heart, arrow_right ...
           if (o.type === 'rect') { entry.rx = Math.round(o.rx || 0); entry.ry = Math.round(o.ry || 0); }
           if (o.type === 'circle' && o.radius) entry.radius = Math.round(o.radius * (o.scaleX || 1));
           if (o.strokeWidth && o.stroke) entry.strokeWidth = o.strokeWidth;

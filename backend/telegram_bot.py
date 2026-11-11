@@ -2837,6 +2837,9 @@ async def _send_files(chat_id: int, fmt: str) -> bool:
             cap = f"📦 <b>{esc(deck['title'])}</b>" if (first and fmt == "all") else (f"<b>{esc(deck['title'])}</b>" if total == 1 else "")
             if name.endswith(".html") and fmt != "all":
                 cap += "\n<i>Brauzerda oching: ← → tugmalar yoki barmoq bilan suring, F — to'liq ekran.</i>"
+            if name.endswith(".pptx"):     # v62: animatsiya / o'tishlar qaysi dasturda ishlashi
+                cap += ("\n<i>PowerPoint'da oching va «Slide Show» ni bosing — o'tish effektlari va GIF'lar ishlaydi. "
+                        "Google Slides, WPS yoki telefon ilovalarida ba'zi effektlar ishlamasligi mumkin; 100% bir xil ko'rinish — HTML formatda.</i>")
             ok_all = (await tg_send_document(chat_id, name, stream, mime, cap)) and ok_all
             first = False
             try:
