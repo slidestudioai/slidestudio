@@ -252,3 +252,14 @@ body.ss-ai-building #canvasCard { overflow: hidden; }
   animation: ssSweep 1.2s linear infinite;
 }
 .slide-item.ss-wait { animation: ssPulse 1.4s ease-in-out infinite; }
+
+/* v58: hozir yaratilayotgan slayd — chap paneldagi miniatyurada ham kanvasdagi kabi effekt */
+.slide-item.ss-gen .slide-thumb { position: relative; overflow: hidden; border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124, 58, 237, .35), 0 4px 14px rgba(124, 58, 237, .3); }
+.slide-item.ss-gen .slide-thumb::after {
+  content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%, rgba(124, 58, 237, .22) 45%, rgba(59, 130, 246, .26) 55%, transparent 80%);
+  animation: ssSweep 1.3s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+body.ss-ai-building #canvasCard::after {
+  background: linear-gradient(100deg, transparent 20%, rgba(124, 58, 237, .18) 45%, rgba(59, 130, 246, .22) 55%, transparent 80%);
+}

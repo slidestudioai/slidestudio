@@ -292,6 +292,15 @@
     }
     skel(on && st);
     try { markPending(st); } catch (e) {}
+    // v58: effekt aynan shu hozir yaratilayotgan slaydda — kanvasda ham, chap paneldagi miniatyurasida ham bir vaqtda;
+    // keyingi slaydga o'tilganda effekt ham o'sha slaydga ko'chadi.
+    try {
+      var all = document.querySelectorAll('#sidebar .slide-item');
+      for (var j = 0; j < all.length; j++) {
+        var g = on && Number(all[j].dataset.idx) === activeIndex;
+        if (all[j].classList.contains('ss-gen') !== g) all[j].classList.toggle('ss-gen', g);
+      }
+    } catch (e) {}
     var n = nSlides();
     if (lastCount >= 0 && n > lastCount && (on || st)) {
       var items = document.querySelectorAll('#sidebar .slide-item');
