@@ -1614,7 +1614,10 @@
       if (!collected.length) return;
       try { stampActionOccurrences(collected); } catch (e) {}
 
-      const deckSmall = !slides || slides.length <= 1;
+      // v58: navbat hali ishlayotgan bo'lsa (slaydlar 1 soniyalik pauza bilan ketma-ket qo'llanadi) deck "kichik" bo'lishi
+      // tabiiy — signaturalarni o'chirib qayta bajarish slaydlarni ikkilantirardi (4 so'ralsa 5 ta chiqardi).
+      const _queueIdle = (_aiQueuePending === 0 && !isAiApplyingCommands);
+      const deckSmall = _queueIdle && (!slides || slides.length <= 1);
       const hasStruct = collected.some(function (a) { return a && STRUCT_RE.test(String(a.action || '')); });
       if (deckSmall && hasStruct) {
         try {
@@ -1641,6 +1644,8 @@
 
     async function finishAiStream() {
 
+      // v58: avval navbatdagi (hali qo'llanmagan) slaydlar tugasin — keyin tekshiruv
+      try { if (aiProcessingQueue && typeof aiProcessingQueue.then === 'function') await aiProcessingQueue; } catch (e) {}
       try { recoverPendingAiActions(); } catch (e) { console.warn('recoverPendingAiActions:', e); }
       try {
         if (aiProcessingQueue && typeof aiProcessingQueue.then === 'function') {
