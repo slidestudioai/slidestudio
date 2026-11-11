@@ -283,12 +283,41 @@
     }
   }
 
+  // v58: effekt aynan shu hozir yaratilayotgan slaydda — kanvasda ham, chap paneldagi miniatyurasida ham bir vaqtda;
+  // keyingi slaydga o'tilganda effekt ham o'sha slaydga ko'chadi.
+  var fxOn = false;
+  function applyFx(on) {
+    if (typeof on === 'boolean') fxOn = on;
+    try {
+      var all = document.querySelectorAll('#sidebar .slide-item');
+      for (var j = 0; j < all.length; j++) {
+        var g = fxOn && Number(all[j].dataset.idx) === activeIndex;
+        if (all[j].classList.contains('ss-gen') !== g) all[j].classList.toggle('ss-gen', g);
+      }
+    } catch (e) {}
+  }
+  // sidebar qayta chizilganda effekt darhol qayta qo'yiladi (kutmasdan)
+  try {
+    var _rs = window.renderSidebar;
+    if (typeof _rs === 'function' && !_rs.__ssFx) {
+      var wrapped = function () { var r = _rs.apply(this, arguments); try { applyFx(); markPending(streaming()); } catch (e) {} return r; };
+      wrapped.__ssFx = true;
+      window.renderSidebar = wrapped;
+    }
+  } catch (e) {}
+
   // Bufer ichida AI yozishni boshlagan, lekin hali tugatmagan slayd bormi? Bo'lsa — ekran shu slaydga o'tadi.
   var focusBusy = false;
   function focusUpcoming() {
     if (focusBusy || typeof window.enqueueAiTask !== 'function' || typeof window.ssFocusUpcomingSlide !== 'function') return;
     var b = buf(), re = /"(replace_slide|insert_slide)"/g, m, last = null, started = 0;
     while ((m = re.exec(b))) { started++; last = m; }
+    if (!last && /"(?:reset_deck|create_slides)"/.test(b) && !window._ssSlidesDone) {   // yangi deck boshlandi — ekran 1-slaydga
+      if (window._ssFocusKey === 'first') return;
+      window._ssFocusKey = 'first'; focusBusy = true;
+      window.enqueueAiTask(function () { return window.ssFocusUpcomingSlide('replace', 1); }).then(function () { focusBusy = false; }, function () { focusBusy = false; });
+      return;
+    }
     if (!last || started <= (window._ssSlidesDone | 0)) return;
     var win = b.slice(Math.max(0, last.index - 60), last.index + 90);
     var kind = last[1] === 'insert_slide' ? 'insert' : 'replace';
@@ -317,15 +346,7 @@
     }
     skel(on && st && !window._ssPH);
     try { markPending(st); } catch (e) {}
-    // v58: effekt aynan shu hozir yaratilayotgan slaydda — kanvasda ham, chap paneldagi miniatyurasida ham bir vaqtda;
-    // keyingi slaydga o'tilganda effekt ham o'sha slaydga ko'chadi.
-    try {
-      var all = document.querySelectorAll('#sidebar .slide-item');
-      for (var j = 0; j < all.length; j++) {
-        var g = on && Number(all[j].dataset.idx) === activeIndex;
-        if (all[j].classList.contains('ss-gen') !== g) all[j].classList.toggle('ss-gen', g);
-      }
-    } catch (e) {}
+    applyFx(on);
     var n = nSlides();
     if (lastCount >= 0 && n > lastCount && (on || st)) {
       var items = document.querySelectorAll('#sidebar .slide-item');
@@ -335,5 +356,5 @@
     }
     lastCount = n;
   }
-  setInterval(tick, 250);
+  setInterval(tick, 120);
 })();

@@ -300,7 +300,8 @@
       const el = rec.el;
       el.dataset.idx = idx;
       const isNew = window._newlyCreatedSlideIds && slide._uid && window._newlyCreatedSlideIds.has(slide._uid);
-      el.className = 'slide-item' + (idx === activeIndex ? ' active' : '') + (isNew ? ' just-created' : '');
+      const _keepFx = ['ss-gen', 'ss-wait', 'ss-pop'].filter(function (c) { return el.classList.contains(c); }).join(' ');   // v58: har renderda effekt klasslari o'chib (miltillab) ketmasin
+      el.className = 'slide-item' + (idx === activeIndex ? ' active' : '') + (isNew ? ' just-created' : '') + (_keepFx ? ' ' + _keepFx : '');
       if (isNew && !slide._ssFxTimer) {   // v58: yangi slayd effekti 2 soniya turadi, keyin o'chadi (har renderda qayta boshlanmaydi)
         slide._ssFxTimer = setTimeout(function () {
           el.classList.remove('just-created');

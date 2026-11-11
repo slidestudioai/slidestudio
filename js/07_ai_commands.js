@@ -178,7 +178,10 @@
                   try { if (tmpCanvas) tmpCanvas.dispose(); } catch (e) {}
                 }
               }
-              activeIndex = Math.max(0, Math.min(firstNewIndex, slides.length - 1));
+              // v58: AI oqimida ekran 2-slaydga sakramaydi — slaydlar ketma-ket to'lib, ekran ham ular bilan birga yuradi
+              activeIndex = isAiStreaming
+                ? Math.max(0, Math.min(activeIndex, slides.length - 1))
+                : Math.max(0, Math.min(firstNewIndex, slides.length - 1));
               try { renderSidebar(); } catch (e) {}
               try { updateSlideCounterUI(); } catch (e) {}
               try { await loadSlideCanvasAsync(activeIndex); } catch (e) {
