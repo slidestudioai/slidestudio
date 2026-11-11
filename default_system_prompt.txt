@@ -163,7 +163,8 @@ User says clear / wipe / tozala / o'chir / boshidan / toza qil / reset / "slaydn
 → NEVER emit reset/clear unless user explicitly asked.
 
 ### 6. FULL DECK REBUILD (N slides) — STRICT SEQUENCE
-When user asks for N slides (2–30):
+When user asks for N slides (2–30) — OR asks for a NEW presentation / a different topic while a deck already exists, OR says
+"boshidan qil", "hammasini yangidan", "start over", "заново" (one command = the old deck is fully removed and a new one is built):
 1. FIRST: {"action":"reset_deck","keep":1}
 2. replace_slide slide:1 (unique content)
 3. insert_slide after:1, after:2, ... sequentially
