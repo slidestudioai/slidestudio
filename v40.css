@@ -1,0 +1,240 @@
+/* v40 */
+/* Balans (AI varaq) oynasi doim eng ustki qatlamda */
+#ssQuotaPop { z-index: 2147483000 !important; }
+.swal2-container { z-index: 2147482000 !important; }
+/* v42: Sozlamalar paneli — tor ekranda ham sig'sin, gorizontal skroll bo'lmasin */
+.sidebar:has(.settings-panel-inner) { width: min(320px, 92vw) !important; }
+.settings-panel-inner, .settings-panel-body, .settings-user-card, .ss-set-card { min-width: 0; max-width: 100%; }
+.settings-panel-body { overflow-x: hidden; }
+.settings-user-info { min-width: 0; }
+.settings-user-status, .ss-set-row small { overflow-wrap: anywhere; }
+.ss-set-row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.ss-set-row .ss-set-btn, .ss-set-row .ss-switch { flex-shrink: 0; }
+.settings-panel-body .ss-meter-wrap, .settings-panel-body .ss-meter-wrap * { max-width: 100%; box-sizing: border-box; }
+/* Namoyish (iframe ko'rsatgich) */
+.presentation-overlay.pres-v40 .pres-canvas-container,
+.presentation-overlay.pres-v40 .pres-controls,
+.presentation-overlay.pres-v40 .close-pres-btn { display: none !important; }
+.presentation-overlay.pres-v40 { overflow: hidden; }
+#ssPrepOverlay { z-index: 2147483100 !important; }
+/* v52: referal (+15) tugmasi yana ko'rinadi (sayt, telefon va Telegram Mini App'da) */
+#btnReferral { display: inline-flex !important; flex-shrink: 0; }
+/* Chap panel: miniatyuralar harakatsiz va silliq */
+#sidebar .slide-thumb img { pointer-events: none; }
+#sidebar .sidebar-slides-scroll { overscroll-behavior: contain; scroll-behavior: auto; }
+
+/* ================= v44: mobil/tor ekran tuzatmalari ================= */
+/* 1) Sahifa HECH QACHON gorizontal siljimasin (overflow:hidden dasturiy skrollni to'xtatmaydi, clip to'xtatadi) */
+html, body { overflow-x: hidden; max-width: 100%; overscroll-behavior: none; }
+@supports (overflow: clip) {
+  html, body { overflow-x: clip; }
+}
+body { position: relative; }
+.canvas-wrapper, .editor-container, .workspace { overflow-x: hidden; }
+@supports (overflow: clip) {
+  .canvas-wrapper, .editor-container, .workspace { overflow-x: clip; }
+}
+/* Fabric'ning yashirin textarea'si ekrandan tashqariga chiqib, fokusda sahifani surib yubormasin */
+textarea[data-fabric="textarea"] { position: fixed !important; left: 0 !important; top: 0 !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none !important; font-size: 16px !important; transform: none !important; }
+
+/* 2) Balans bloki (AI varaqlar): hech qachon tor ekranga sig'maslik bo'lmasin */
+.ss-meter { min-width: 0 !important; width: 100%; box-sizing: border-box; }
+.ss-meter-wrap { min-width: 0; width: 100%; box-sizing: border-box; }
+.ss-meter-row { min-width: 0; flex-wrap: wrap; row-gap: 2px; }
+.ss-meter-row .ss-meter-name { min-width: 0; overflow-wrap: anywhere; }
+.ss-meter-row b { white-space: nowrap; margin-left: auto; }
+.ss-meter-foot { flex-wrap: wrap; row-gap: 2px; min-width: 0; }
+.ss-meter-foot > span { min-width: 0; overflow-wrap: anywhere; }
+.ss-meter-foot.ss-cross { flex-wrap: wrap; }
+.ss-bal-card { padding: 10px 12px; overflow: hidden; }
+.ss-bal-card .ss-set-row { padding-bottom: 0; }
+.settings-panel-body { overflow-x: hidden !important; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.settings-panel-body * { max-width: 100%; box-sizing: border-box; }
+.settings-user-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ssQuotaPop { width: min(280px, calc(100vw - 16px)) !important; max-width: calc(100vw - 16px) !important; box-sizing: border-box; left: auto; }
+#ssQuotaPop .ss-set-btn { white-space: normal; }
+@media (max-width: 420px) {
+  .sidebar:has(.settings-panel-inner) { width: min(300px, 94vw) !important; }
+}
+
+/* ===== v50 UI — chap sidebar keng, header o‘ng ixcham, AI panel aniq ===== */
+@media screen and (min-width: 769px) {
+  /* Header */
+  .top-header {
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 8px !important;
+    gap: 6px !important;
+  }
+  .slide-logo { width: 26px !important; height: 26px !important; font-size: 15px !important; }
+  .doc-title { font-size: 13.5px !important; }
+  .top-menu-bar { font-size: 12px !important; }
+  .top-menu-item { padding: 2px 5px !important; }
+
+  /* Tepa header tugmalari — chap va o‘ng hammasi bir xil ixcham */
+  .header-actions { gap: 4px !important; }
+  .header-actions > button,
+  .btn-slideshow,
+  .btn-ai-toggle,
+  .btn-ribbon-toggle,
+  .btn-login {
+    padding: 3px 8px !important;
+    font-size: 11.5px !important;
+    height: 30px !important;
+    min-height: 30px !important;
+    max-height: 30px !important;
+    box-sizing: border-box !important;
+  }
+  .header-actions > button .material-symbols-outlined,
+  .btn-slideshow .material-symbols-outlined,
+  .btn-ai-toggle .material-symbols-outlined,
+  .btn-ribbon-toggle .material-symbols-outlined,
+  .btn-login .material-symbols-outlined {
+    font-size: 17px !important;
+  }
+  .btn-hamburger {
+    width: 30px !important;
+    height: 30px !important;
+    padding: 4px !important;
+  }
+  .btn-hamburger .material-symbols-outlined { font-size: 20px !important; }
+
+  /* Toolbar — ixcham */
+  .toolbar-container {
+    margin: 2px 8px !important;
+    border-radius: 10px !important;
+    padding: 2px 4px !important;
+  }
+  .tb-btn {
+    height: 28px !important;
+    padding: 0 6px !important;
+    font-size: 12px !important;
+  }
+  .tb-btn .material-symbols-outlined { font-size: 18px !important; }
+
+  /* Chap sidebar — o‘rtacha kenglik (235 dan biroz qisqa) */
+  .sidebar { width: 225px !important; }
+  .sidebar.collapsed { margin-left: -225px !important; }
+  .sidebar-slides-scroll { padding: 8px 8px 6px 8px !important; gap: 6px !important; }
+
+  /* AI panel — biroz kengroq va elementlar kattaroq */
+  .ai-sidebar.open { width: 360px !important; }
+  .ai-sidebar-header { padding: 10px 12px !important; }
+  .ai-sidebar-header h4 { font-size: 13.5px !important; }
+  .ai-sidebar-footer { padding: 8px 11px !important; }
+  .ai-sidebar-input-box { min-height: 42px !important; }
+  .ai-sidebar-input-box textarea {
+    min-height: 42px !important;
+    padding: 11px 4px !important;
+    font-size: 13.5px !important;
+  }
+  .ai-chat-body { padding: 14px !important; gap: 12px !important; }
+  .ai-msg {
+    padding: 11px 13px !important;
+    font-size: 13.5px !important;
+    line-height: 1.5 !important;
+    max-width: 90% !important;
+  }
+  .ai-msg-actions { gap: 7px !important; margin-top: 7px !important; }
+  .ai-action-btn {
+    font-size: 12px !important;
+    padding: 4px 9px !important;
+  }
+  .ai-sidebar-input-box .send-btn {
+    width: 30px !important;
+    height: 30px !important;
+  }
+
+  .editor-container { padding: 0 6px 6px 6px !important; }
+  .sticky-slide-counter {
+    margin-top: 4px !important;
+    padding: 3px 12px !important;
+    font-size: 11px !important;
+  }
+  .sidebar-user-section { padding: 8px 9px !important; }
+
+  /* Sidebar tugmalari */
+  .btn-add-slide-bottom {
+    padding: 7px 6px !important;
+    font-size: 12.5px !important;
+    margin-top: 2px !important;
+    margin-bottom: 4px !important;
+    gap: 5px !important;
+    white-space: nowrap !important;
+    line-height: 1.2 !important;
+  }
+  .btn-add-slide-bottom .material-symbols-outlined { font-size: 18px !important; }
+  .btn-reset-canvas, .btn-about-bot {
+    padding: 7px 6px !important;
+    font-size: 12px !important;
+    gap: 5px !important;
+    white-space: nowrap !important;
+    line-height: 1.2 !important;
+  }
+  .btn-reset-canvas .material-symbols-outlined,
+  .btn-about-bot .material-symbols-outlined { font-size: 17px !important; }
+
+  /* Slide item */
+  .slide-item {
+    margin: 2px 2px !important;
+    padding: 3px !important;
+    gap: 5px !important;
+    overflow: visible !important;
+  }
+  .slide-num { width: 14px !important; font-size: 11px !important; }
+  .slide-thumb {
+    height: 98px !important;
+    overflow: hidden !important;
+  }
+  .slide-more-btn {
+    width: 20px !important;
+    height: 20px !important;
+    top: 3px !important;
+    right: 3px !important;
+  }
+  .slide-more-btn span { font-size: 13px !important; }
+
+  /* Terms */
+  #sidebarTermsLink {
+    font-size: 12px !important;
+    padding: 5px 4px !important;
+    gap: 6px !important;
+    color: #3c4043 !important;
+    font-weight: 500 !important;
+  }
+  #sidebarTermsLink .material-symbols-outlined {
+    font-size: 17px !important;
+    color: #5f6368 !important;
+  }
+}
+
+@media screen and (min-width: 769px) and (max-width: 1680px) {
+  .sidebar { width: 218px !important; }
+  .sidebar.collapsed { margin-left: -218px !important; }
+  .ai-sidebar.open { width: 340px !important; }
+  .slide-thumb { height: 92px !important; }
+  .btn-add-slide-bottom { font-size: 12px !important; padding: 6px 5px !important; }
+  .btn-reset-canvas, .btn-about-bot { font-size: 11.5px !important; padding: 6px 5px !important; }
+  .header-actions > button,
+  .btn-slideshow, .btn-ai-toggle,
+  .btn-ribbon-toggle, .btn-login {
+    height: 28px !important;
+    min-height: 28px !important;
+    max-height: 28px !important;
+    font-size: 11px !important;
+    padding: 2px 7px !important;
+  }
+}
+
+@media screen and (min-width: 769px) and (max-width: 1366px) {
+  .top-header { height: 40px !important; min-height: 40px !important; }
+  .sidebar { width: 208px !important; }
+  .sidebar.collapsed { margin-left: -208px !important; }
+  .ai-sidebar.open { width: 320px !important; }
+  .slide-thumb { height: 88px !important; }
+  .btn-add-slide-bottom { font-size: 11.5px !important; padding: 6px 4px !important; }
+  .btn-reset-canvas, .btn-about-bot { font-size: 11px !important; padding: 6px 4px !important; }
+  .tb-btn { height: 26px !important; padding: 0 5px !important; }
+  .tb-btn .material-symbols-outlined { font-size: 17px !important; }
+  .ai-msg { font-size: 13px !important; padding: 10px 12px !important; }
+}

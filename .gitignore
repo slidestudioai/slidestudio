@@ -1,0 +1,28 @@
+# Maxfiy kalitlar — hech qachon GitHub'ga yuklanmasin
+.env
+.env.*
+!.env.example
+
+# Server o'zi hosil qiladigan fayl
+config.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Tizim / muharrir
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+node_modules/
+*.zip
+*.log
+
+# e2e (Playwright)
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/

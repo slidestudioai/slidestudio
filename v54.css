@@ -1,0 +1,254 @@
+/* v54 — bir xil o'lchamli, toza tugmalar.
+ * Avvalgi qatlamlar (styles.css, v38–v40) har tugmaga har xil balandlik / radius / rang bergan edi
+ * (28, 32, 36 px; doira, pill, kvadrat). Bu fayl OXIRIDA yuklanadi va hammasini bitta tizimga keltiradi.
+ */
+:root {
+  --ss-ctl-h: 30px;          /* v57: yuqori panel tugmalari — ixchamroq (34 → 30) */
+  --ss-tb: 32px;             /* asboblar paneli tugmalari */
+  --ss-round: 34px;          /* v56: suzuvchi dumaloq tugmalar (zoom, pastki boshqaruv) — ixchamroq */
+  --ss-radius: 999px;       /* v55: yumshoq «pill» shakl (to'rtburchak emas) */
+  --ss-border: #e2e8f0;
+  --ss-ink: #1f2937;
+}
+
+/* ---------- Yuqori panel: hamma tugma bir xil balandlik, bir xil shakl ---------- */
+@media (min-width: 769px) {
+  .header-actions { gap: 6px !important; align-items: center; }
+  .header-actions > button,
+  .header-actions > a,
+  .header-actions > #ssQuota {
+    height: var(--ss-ctl-h) !important;
+    min-height: var(--ss-ctl-h) !important;
+    width: auto !important;
+    padding: 0 11px !important;
+    border-radius: var(--ss-radius) !important;
+    font: 600 12px/1 'Roboto', system-ui, sans-serif !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center;
+    gap: 6px !important;
+    box-sizing: border-box;
+    white-space: nowrap;
+  }
+  .header-actions > button .material-symbols-outlined,
+  .header-actions > #ssQuota .material-symbols-outlined { font-size: 16px !important; }
+  /* oddiy (ikkinchi darajali) tugmalar — oq, ingichka chegara */
+  .header-actions > .btn-community,
+  .header-actions > .btn-login,
+  .header-actions > .btn-ribbon-toggle,
+  .header-actions > #ssQuota {
+    background: #fff !important;
+    border: 1px solid var(--ss-border) !important;
+    color: var(--ss-ink) !important;
+  }
+  .header-actions > .btn-gift { background: #fffbeb !important; border-color: #fde68a !important; color: #92400e !important; }
+  .header-actions > .btn-ribbon-toggle { width: var(--ss-ctl-h) !important; padding: 0 !important; }
+  /* asosiy tugmalar: AI (binafsha) va Namoyish (ko'k) — bir xil shakl */
+  .header-actions > .btn-ai-toggle { border: 1px solid transparent !important; }
+  .header-actions > .btn-slideshow { background: #0b57d0 !important; color: #fff !important; border: 1px solid #0b57d0 !important; }
+  .header-actions > .btn-slideshow:hover { background: #0a4cb8 !important; }
+  .header-actions > button:hover { filter: brightness(.98); }
+}
+
+/* ---------- Asboblar paneli ---------- */
+.toolbar-container .tb-btn {
+  width: var(--ss-tb) !important;
+  height: var(--ss-tb) !important;
+  min-height: var(--ss-tb) !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+}
+.toolbar-container .tb-btn .material-symbols-outlined { font-size: 19px !important; }
+.font-size-control { height: var(--ss-tb) !important; border-radius: 8px; overflow: hidden; }
+.font-size-btn { width: 28px !important; height: 100% !important; }
+.toolbar-container select { height: var(--ss-tb) !important; border-radius: 8px !important; }
+
+/* ---------- Suzuvchi tugmalar: zoom (o'ngda) va pastki boshqaruv — bir xil diametr ---------- */
+#mzIn, #mzOut, #mzFit, #mzHand {
+  width: var(--ss-round) !important;
+  height: var(--ss-round) !important;
+  border-radius: 50% !important;
+}
+@media (min-width: 769px) {
+  .bottom-ctrl-btn { width: var(--ss-round) !important; height: var(--ss-round) !important; }
+}
+
+/* ---------- AI yozish qutilari: yuborish / biriktirish tugmalari bir xil ---------- */
+.ai-sidebar-input-box .send-btn,
+.ai-sidebar-input-box .attach-btn,
+.bottom-ai-btn {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px;
+  border-radius: 50% !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- Sozlamalar paneli: slayd ustiga chiqmasin ---------- */
+.sidebar:has(.settings-panel-inner) { box-shadow: 4px 0 18px rgba(15, 23, 42, .08); }
+
+/* ---------- Pro AI «o'ylayapti» qatori ---------- */
+.ai-search-row.thinking .material-symbols-outlined { color: #7c3aed; }
+
+/* ---------- Telefon / Telegram Mini App: yuqori tugmalar ham bir xil ---------- */
+@media (max-width: 768px) {
+  .header-actions { gap: 6px !important; }
+  .header-actions > button,
+  .header-actions > #ssQuota {
+    height: 32px !important;
+    min-height: 32px !important;
+    min-width: 32px !important;
+    border-radius: 999px !important;
+    box-sizing: border-box;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  .header-actions > .btn-community,
+  .header-actions > .btn-login,
+  .header-actions > .btn-ribbon-toggle,
+  .header-actions > #ssQuota { background: #fff !important; border: 1px solid var(--ss-border) !important; }
+  .header-actions > .btn-gift { background: #fffbeb !important; border-color: #fde68a !important; }
+  /* barmoq bilan bosish uchun kamida 40px (Apple/Google tavsiyasi) */
+  .mab-btn { min-height: 44px; }
+  .bottom-ctrl-btn { width: 36px !important; height: 36px !important; }
+}
+
+/* ---------- Telegram to'liq ekran: chelka / Telegram tugmalari ostida qolmasin ---------- */
+body.tg-inset { padding-top: var(--tg-inset-top, 0px); padding-bottom: var(--tg-inset-bottom, 0px); box-sizing: border-box; }
+
+/* ---------- v54.1: akkaunt holatiga qarab yuqori panel (kompyuter + telefon) ---------- */
+body.ss-auth-out #ssQuota,
+body.ss-auth-out #ssQuotaPop { display: none !important; }
+body.ss-auth-in #googleLoginBtn { display: none !important; }
+body.ss-auth-out #googleLoginBtn {
+  display: inline-flex !important;
+  background: #0b57d0 !important;
+  border: 1px solid #0b57d0 !important;
+  color: #fff !important;
+}
+body.ss-auth-out #googleLoginBtn .material-symbols-outlined { color: #fff !important; }
+body.ss-auth-out #googleLoginBtn:hover { background: #0a4cb8 !important; }
+/* Telegram ichida Google kirish yo'q (33_v43_telegram.js) — u yerda tugma yashirin qoladi */
+html.in-telegram body #googleLoginBtn { display: none !important; }
+
+/* ---------- v55: yumshoqroq, chiroyliroq yuqori tugmalar ---------- */
+.header-actions > button,
+.header-actions > #ssQuota {
+  transition: background-color .18s ease, box-shadow .18s ease, transform .12s ease !important;
+}
+@media (min-width: 769px) {
+  .header-actions > .btn-community,
+  .header-actions > .btn-login,
+  .header-actions > .btn-ribbon-toggle,
+  .header-actions > #ssQuota { box-shadow: 0 1px 2px rgba(15, 23, 42, .06); }
+  .header-actions > button:hover,
+  .header-actions > #ssQuota:hover { box-shadow: 0 3px 10px rgba(15, 23, 42, .10) !important; transform: translateY(-1px); }
+  .header-actions > button:active { transform: translateY(0) scale(.97); }
+  .header-actions > .btn-ai-toggle { box-shadow: 0 2px 8px rgba(124, 58, 237, .28); }
+  .header-actions > .btn-slideshow { box-shadow: 0 2px 8px rgba(11, 87, 208, .25); }
+  .header-actions > .btn-ribbon-toggle { border-radius: 50% !important; }
+}
+
+/* ---------- v55: chap panel biroz torroq (v40.css dagi 225/218/208 !important o'rniga), sozlamalar rejimi bundan mustasno ---------- */
+@media (min-width: 1400px) {
+  .sidebar:not(:has(.settings-panel-inner)) { width: 218px !important; }
+  .sidebar.collapsed { margin-left: -218px !important; }
+}
+@media (min-width: 1025px) and (max-width: 1399px) {
+  .sidebar:not(:has(.settings-panel-inner)) { width: 206px !important; }
+  .sidebar.collapsed { margin-left: -206px !important; }
+}
+@media (min-width: 769px) and (max-width: 1024px) {
+  .sidebar:not(:has(.settings-panel-inner)) { width: 192px !important; }
+  .sidebar.collapsed { margin-left: -192px !important; }
+}
+
+/* ---------- v55: E'lon popup (reklamasiz) ---------- */
+.ssn-ov { position: fixed; inset: 0; z-index: 20000; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(15, 23, 42, 0); transition: background .22s ease; }
+.ssn-ov.on { background: rgba(15, 23, 42, .45); backdrop-filter: blur(2px); }
+.ssn { position: relative; width: min(420px, 100%); max-height: 88vh; overflow: auto; background: #fff; border-radius: 22px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, .28); transform: translateY(14px) scale(.97); opacity: 0;
+  transition: transform .25s cubic-bezier(.22, .8, .3, 1), opacity .2s ease; }
+.ssn-ov.on .ssn { transform: none; opacity: 1; }
+.ssn-media { display: block; width: 100%; max-height: 260px; object-fit: cover; background: #0f172a; }
+.ssn-body { padding: 18px 20px 20px; }
+.ssn-body h3 { margin: 0 0 6px; padding-right: 34px; font: 700 18px/1.3 'Roboto', system-ui, sans-serif; color: #0f172a; }
+.ssn-body p { margin: 0 0 14px; font: 400 14px/1.5 'Roboto', system-ui, sans-serif; color: #475569; white-space: pre-line; }
+.ssn-go { display: flex; align-items: center; justify-content: center; height: 42px; border-radius: 999px; background: #0b57d0; color: #fff;
+  font: 600 14px 'Roboto', system-ui, sans-serif; text-decoration: none; box-shadow: 0 4px 14px rgba(11, 87, 208, .3); }
+.ssn-go:hover { background: #0a4cb8; }
+.ssn-x { position: absolute; top: 10px; right: 10px; z-index: 2; width: 32px; height: 32px; border: 0; border-radius: 50%;
+  background: rgba(15, 23, 42, .55); color: #fff; font-size: 20px; line-height: 30px; cursor: pointer; }
+
+/* ---------- v56: ixchamroq pastki panel, AI panel va chap panel tugmalari ---------- */
+@media (min-width: 769px) {
+  /* «Shu varoq haqida yozing» qatori va uning ustidagi boshqaruv tugmalari kichikroq */
+  .bottom-controls-wrapper { max-width: 560px !important; gap: 6px !important; }
+  .bottom-mobile-controls { padding: 4px 10px !important; gap: 8px !important; }
+  .bottom-mobile-controls .material-symbols-outlined { font-size: 19px !important; }
+  .bottom-ai-container { padding: 2px 6px 2px 12px !important; min-height: 36px; }
+  .bottom-ai-container .material-symbols-outlined { font-size: 18px !important; }
+  .bottom-ai-input-display { font-size: 13.5px !important; }
+  .bottom-ai-btn { width: 28px !important; height: 28px !important; min-width: 28px; }
+  #mzIn .material-symbols-outlined, #mzOut .material-symbols-outlined,
+  #mzFit .material-symbols-outlined, #mzHand .material-symbols-outlined { font-size: 19px !important; }
+
+  /* O'ng AI panel: torroq va mayinroq yozuv */
+  .ai-sidebar.open { width: 320px !important; }
+  .ai-msg { font-size: 12.5px !important; line-height: 1.5 !important; padding: 9px 11px !important; }
+  .ai-sidebar-input-box textarea { font-size: 12.5px !important; }
+  .ai-action-btn { font-size: 11.5px !important; }
+}
+@media (min-width: 769px) and (max-width: 1366px) {
+  .ai-sidebar.open { width: 296px !important; }
+}
+
+/* Chap panel: «Slayd qo'shish» / «Hamma varaqni tozalash» — chetlarga yopishmasin, ikki tomonda teng joy */
+.sidebar-slides-scroll { padding-left: 10px !important; padding-right: 10px !important; }
+.sidebar-slides-scroll > .btn-add-slide-bottom,
+.sidebar-slides-scroll > .btn-reset-canvas,
+.sidebar-slides-scroll > .btn-about-bot {
+  margin-left: 6px !important;
+  margin-right: 6px !important;
+  width: auto !important;
+  border-radius: 10px !important;
+}
+.sidebar-slides-scroll > .btn-add-slide-bottom { margin-top: 2px !important; }
+
+/* ---------- v57: AI ishlayotganda yuklanish effektlari ---------- */
+@keyframes ssSweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+@keyframes ssPopIn { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes ssPulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+body.ss-ai-building #canvasCard::after {
+  content: ''; position: absolute; inset: 0; z-index: 30; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(100deg, transparent 20%, rgba(124, 58, 237, .10) 45%, rgba(59, 130, 246, .12) 55%, transparent 80%);
+  animation: ssSweep 1.6s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+body.ss-ai-building #canvasCard { overflow: hidden; }
+.slide-item.ss-pop { animation: ssPopIn .45s cubic-bezier(.22, .8, .3, 1) both; }
+.ss-slide-skel { display: flex; flex-direction: column; gap: 4px; padding: 3px 6px; animation: ssPopIn .3s ease both; }
+.ss-slide-skel-box { position: relative; overflow: hidden; aspect-ratio: 16 / 9; border-radius: 8px; border: 1px dashed #c4b5fd;
+  background: linear-gradient(135deg, #f5f3ff, #eef2ff); display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 0 14%; }
+.ss-slide-skel-box::after { content: ''; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, .75) 50%, transparent 75%); animation: ssSweep 1.2s linear infinite; }
+.ss-slide-skel-bar { display: block; height: 7px; border-radius: 999px; background: #ddd6fe; }
+.ss-slide-skel-bar.w70 { width: 70%; height: 9px; background: #c4b5fd; } .ss-slide-skel-bar.w45 { width: 45%; } .ss-slide-skel-bar.w55 { width: 55%; }
+.ss-slide-skel small { font: 600 10.5px 'Roboto', system-ui, sans-serif; color: #7c3aed; text-align: center; animation: ssPulse 1.4s ease-in-out infinite; }
+/* qidiruv qatorlari ham birma-bir silliq paydo bo'ladi */
+.ai-search-row { animation: ssPopIn .3s cubic-bezier(.22, .8, .3, 1) both; }
+.ai-search-row.ok .material-symbols-outlined { color: #16a34a; }
+.ai-search-row.none .material-symbols-outlined { color: #d97706; }
+
+/* v58: keyingi (hali yaratilmagan) slaydlar chap panelda ham yuklanish effektida */
+.slide-item.ss-wait .slide-thumb { position: relative; overflow: hidden; border-radius: 6px; outline: 1px dashed #c4b5fd; }
+.slide-item.ss-wait .slide-thumb::after {
+  content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, .8) 50%, transparent 75%);
+  animation: ssSweep 1.2s linear infinite;
+}
+.slide-item.ss-wait { animation: ssPulse 1.4s ease-in-out infinite; }

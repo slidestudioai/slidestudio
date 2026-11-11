@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+*.zip
+tests/
+requirements-dev.txt
+pytest.ini
+e2e/
+.github/

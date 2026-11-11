@@ -1,0 +1,67 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"     # Dockerfile bilan bir xil
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt -r requirements-dev.txt pyflakes
+      - name: Python syntax / undefined names
+        run: python -m pyflakes main.py backend/*.py | grep -vE "imported but unused|redefinition of unused|f-string is missing|assigned to but never used" && exit 1 || true
+      - name: JS syntax
+        run: for f in js/*.js; do node --check "$f"; done
+      - name: Tests
+        run: pytest
+
+  e2e:
+    name: Brauzer (Playwright — desktop, telefon, Telegram Mini App)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install server
+        run: pip install -r requirements.txt
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: E2E tests
+        working-directory: e2e
+        run: npx playwright test --trace off
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/test-results/
+          retention-days: 7

@@ -1,0 +1,67 @@
+/* =====================================================================
+ * v39.css — media oynasi barqarorligi, silliq yuklanish animatsiyalari, AI yozayotgan paytdagi barqarorlik
+ * ===================================================================== */
+
+/* ---------- 1) Media oynasi: spinner qatlami (yopilmaydi, faqat ✕ / Esc) ---------- */
+.media-browser-card { position: relative; }
+.ss39-busy { position: absolute; inset: 0; z-index: 20; pointer-events: none; opacity: 0; transition: opacity .18s ease; border-radius: inherit; overflow: hidden; }
+.ss39-busy.on { opacity: 1; }
+.ss39-busy .ss39-bar { position: absolute; left: 0; right: 0; top: 0; height: 3px; background: linear-gradient(90deg, transparent, #7c3aed, #3b82f6, transparent); background-size: 50% 100%; background-repeat: no-repeat; animation: ss39Bar 1.1s cubic-bezier(.4,0,.2,1) infinite; }
+.ss39-busy .ss39-block { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+  background: rgba(255,255,255,.72); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.ss39-busy.hard { pointer-events: auto; cursor: progress; }          /* joylash vaqtida karta bloklanadi — tasodifiy bosish yo'q */
+.ss39-busy.hard .ss39-block { display: flex; animation: ss39Fade .2s ease both; }
+.ss39-ring { width: 46px; height: 46px; border-radius: 50%; position: relative;
+  background: conic-gradient(from 0deg, rgba(124,58,237,0) 0%, #7c3aed 55%, #3b82f6 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  animation: ss39Spin .85s linear infinite; will-change: transform; }
+.ss39-label { font: 600 13px/1.2 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #334155; letter-spacing: .01em; }
+@keyframes ss39Spin { to { transform: rotate(360deg); } }
+@keyframes ss39Bar { 0% { background-position: -60% 0; } 100% { background-position: 160% 0; } }
+@keyframes ss39Fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-color-scheme: dark) {
+  .ss39-busy .ss39-block { background: rgba(15,23,42,.68); }
+  .ss39-label { color: #e2e8f0; }
+}
+
+/* ---------- 2) Mavjud spinner / skelet / yuklash animatsiyalarini silliqlash ---------- */
+.upload-spinner, .skeleton-spinner {
+  border: 0 !important; background: conic-gradient(from 0deg, rgba(124,58,237,0) 0%, #7c3aed 60%, #3b82f6 100%) !important;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  animation: ss39Spin .85s linear infinite !important; will-change: transform; }
+.media-skeleton { background: linear-gradient(110deg, #eef1f6 8%, #f7f9fc 18%, #eef1f6 33%) !important; background-size: 200% 100% !important; animation: ss39Shimmer 1.4s linear infinite !important; }
+@keyframes ss39Shimmer { to { background-position-x: -200%; } }
+/* rasm / GIF / video yuklangach yumshoq paydo bo'lish (miltillamaydi) */
+.media-results-grid img, .media-results-grid video, .gif-overlay-item img { animation: ss39ImgIn .28s ease both; }
+@keyframes ss39ImgIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- 3) AI yozayotganda: GIF/rasm barqarorligi ---------- */
+/* kanvas va GIF katlami alohida GPU qatlamida — chat matni yangilanishi ularni qayta chizishga majburlamaydi */
+.ss39-ready #mainCanvas, .ss39-ready .canvas-container, .ss39-ready #gifOverlay { transform: translateZ(0); backface-visibility: hidden; }
+.ss39-ready .canvas-container { contain: layout paint; }
+.ss39-ready .ai-sidebar, .ss39-ready #aiSidebar, .ss39-ready .ai-chat-messages, .ss39-ready .ai-messages { contain: content; }
+.ss39-ready .ai-msg { content-visibility: auto; contain-intrinsic-size: 1px 64px; }
+/* AI yozish nuqtalari — yanada silliq */
+.ss-typing i { animation-duration: 1.1s !important; animation-timing-function: cubic-bezier(.45,0,.55,1) !important; }
+
+/* ---------- 4) "/" buyruqlar menyusi ---------- */
+.ss39-slash { position: fixed; z-index: 1000010; display: none; flex-direction: column; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(15,23,42,.18); padding: 6px; max-height: 260px; overflow: auto; }
+.ss39-slash.on { display: flex; animation: ss39Pop .16s ease both; }
+.ss39-slash-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: transparent; border: 0; padding: 9px 10px; border-radius: 10px; cursor: pointer; font: 500 13px system-ui, sans-serif; color: #0f172a; }
+.ss39-slash-item:hover, .ss39-slash-item:focus { background: #f1f5f9; outline: none; }
+.ss39-slash-item .material-symbols-outlined { font-size: 20px; color: #7c3aed; }
+.ss39-slash-item b { font-weight: 700; }
+.ss39-slash-item i { font-style: normal; color: #64748b; font-size: 12px; margin-left: auto; }
+@keyframes ss39Pop { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-color-scheme: dark) {
+  .ss39-slash { background: #1e293b; border-color: #334155; }
+  .ss39-slash-item { color: #f1f5f9; } .ss39-slash-item:hover { background: #334155; } .ss39-slash-item i { color: #94a3b8; }
+}
+
+/* ---------- 5) Harakat sezmaydiganlar uchun ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .ss39-ring, .upload-spinner, .skeleton-spinner, .media-skeleton, .ss39-busy .ss39-bar { animation-duration: 2.4s !important; }
+}
