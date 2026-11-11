@@ -1143,6 +1143,16 @@
       return aiProcessingQueue;
     }
     window.enqueueAiCommands = enqueueAiCommands;
+    // v58: navbatga oddiy vazifa (masalan, keyingi slaydga o'tish) — AI amallari bilan bir tartibda bajariladi
+    function enqueueAiTask(fn) {
+      _aiQueuePending++;
+      aiProcessingQueue = aiProcessingQueue
+        .then(() => fn())
+        .catch(err => { console.error('AI task error:', err); })
+        .then(() => { _aiQueuePending = Math.max(0, _aiQueuePending - 1); });
+      return aiProcessingQueue;
+    }
+    window.enqueueAiTask = enqueueAiTask;
     let _partialConsumedLen = 0;
     function _normAiGifQuery(q) {
       const t = String(q || '').trim();
@@ -1533,6 +1543,7 @@
     });
     function startAiStream() {
       window._aiTurnId = (window._aiTurnId || 0) + 1;
+      window._ssSlidesDone = 0; window._ssPH = null;
       window._ssLastDoneAt = 0;   // v58: yangi so'rov — slayd ushlab turish hisoblagichi tozalanadi
       isAiStreaming = true;
       aiSessionActive = true;
@@ -1652,6 +1663,12 @@
           await aiProcessingQueue;
         }
       } catch (e) { console.warn('AI queue await:', e); }
+      try {   // v58: yaratilmay qolgan vaqtinchalik varaq olib tashlanadi
+        if (typeof ssDropPlaceholder === 'function' && ssDropPlaceholder()) {
+          try { renderSidebar(); updateSlideCounterUI(); } catch (e) {}
+          try { _lastRenderedSlideIndex = -1; await loadSlideCanvasAsync(activeIndex); } catch (e) {}
+        }
+      } catch (e) {}
       isAiStreaming = false;
       clearAiWatchdog();
       updateSendButtons(false);
@@ -1820,6 +1837,7 @@
       isAiStreaming = false;
       isAiApplyingCommands = false;
       if (twoPassState) twoPassState = null;
+      try { if (typeof ssDropPlaceholder === 'function' && ssDropPlaceholder()) { renderSidebar(); updateSlideCounterUI(); loadSlideCanvasAsync(activeIndex).catch(function () {}); } } catch (e) {}
       _streamCtx = null;
       clearAiWatchdog();
       updateSendButtons(false);

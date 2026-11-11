@@ -283,14 +283,39 @@
     }
   }
 
+  // Bufer ichida AI yozishni boshlagan, lekin hali tugatmagan slayd bormi? Bo'lsa — ekran shu slaydga o'tadi.
+  var focusBusy = false;
+  function focusUpcoming() {
+    if (focusBusy || typeof window.enqueueAiTask !== 'function' || typeof window.ssFocusUpcomingSlide !== 'function') return;
+    var b = buf(), re = /"(replace_slide|insert_slide)"/g, m, last = null, started = 0;
+    while ((m = re.exec(b))) { started++; last = m; }
+    if (!last || started <= (window._ssSlidesDone | 0)) return;
+    var win = b.slice(Math.max(0, last.index - 60), last.index + 90);
+    var kind = last[1] === 'insert_slide' ? 'insert' : 'replace';
+    var nm = kind === 'insert' ? /"after"\s*:\s*(\d+)/.exec(win) : /"slide"\s*:\s*(\d+)/.exec(win);
+    var num = nm ? parseInt(nm[1], 10) : (kind === 'insert' ? nSlides() : activeIndex + 1);
+    if (kind === 'replace' && !nm && !window._ssSlidesDone) return;     // raqam hali yozilmagan — keyingi tickda
+    var key = started + ':' + kind + ':' + num;
+    if (window._ssFocusKey === key) return;
+    window._ssFocusKey = key;
+    focusBusy = true;
+    window.enqueueAiTask(function () {
+      // navbatga kelguncha slayd allaqachon to'liq kelib bajarilgan bo'lishi mumkin — u holda vaqtinchalik varaq kerak emas
+      var b2 = buf(), n2 = (b2.match(/"(?:replace_slide|insert_slide)"/g) || []).length;
+      if (n2 <= (window._ssSlidesDone | 0)) return null;
+      return window.ssFocusUpcomingSlide(kind, num);
+    }).then(function () { focusBusy = false; }, function () { focusBusy = false; });
+  }
+
   function tick() {
     var st = streaming();
+    if (st) { try { focusUpcoming(); } catch (e) {} } else { window._ssFocusKey = null; }
     var on = (st && (SLIDE_ACT.test(buf()) || applying())) || recentlyDone();
     if (on !== building) {
       building = on;
       document.body.classList.toggle('ss-ai-building', on);
     }
-    skel(on && st);
+    skel(on && st && !window._ssPH);
     try { markPending(st); } catch (e) {}
     // v58: effekt aynan shu hozir yaratilayotgan slaydda — kanvasda ham, chap paneldagi miniatyurasida ham bir vaqtda;
     // keyingi slaydga o'tilganda effekt ham o'sha slaydga ko'chadi.

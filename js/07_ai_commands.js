@@ -13,8 +13,61 @@
     function ssMarkSlideDone(slide) {
       try { if (slide) slide._ssFilled = true; } catch (e) {}
       window._ssLastDoneAt = Date.now();
+      window._ssSlidesDone = (window._ssSlidesDone | 0) + 1;
     }
     window.ssMarkSlideDone = ssMarkSlideDone;
+
+    // v58: AI keyingi slaydni yozishni BOSHLAGAN zahoti ekran (kanvas + chap panel effekti) shu slaydga o'tadi —
+    // slayd tayyor bo'lguncha kutilmaydi. Hali mavjud bo'lmagan slayd uchun vaqtinchalik bo'sh varaq qo'yiladi.
+    window._ssPH = null;
+    function ssDropPlaceholder() {
+      try {
+        const ph = window._ssPH;
+        window._ssPH = null;
+        if (!ph) return false;
+        const i = slides.indexOf(ph);
+        if (i < 0) return false;
+        slides.splice(i, 1);
+        if (activeIndex > i) activeIndex--;
+        activeIndex = Math.max(0, Math.min(activeIndex, slides.length - 1));
+        return true;
+      } catch (e) { return false; }
+    }
+    window.ssDropPlaceholder = ssDropPlaceholder;
+    async function ssFocusUpcomingSlide(kind, num) {
+      try {
+        if (!isAiStreaming) return;
+        const wait = SS_SLIDE_HOLD_MS - (Date.now() - (window._ssLastDoneAt || 0));
+        if (window._ssLastDoneAt && wait > 0) await new Promise((r) => setTimeout(r, wait));
+        if (!isAiStreaming) return;
+        if (kind === 'replace' && num > 0 && slides[num - 1]) {       // mavjud varaq to'ldiriladi — shu varaqqa o'tamiz
+          const idx = num - 1;
+          if (idx !== activeIndex) {
+            activeIndex = idx;
+            try { renderSidebar(); } catch (e) {}
+            try { updateSlideCounterUI(); } catch (e) {}
+            try { await loadSlideCanvasAsync(idx); _lastRenderedSlideIndex = idx; } catch (e) {}
+          }
+          return;
+        }
+        if (window._ssPH && slides.indexOf(window._ssPH) >= 0) return;   // allaqachon turibdi
+        let at = (kind === 'insert' && num >= 0) ? num : slides.length;
+        if (at !== slides.length) return;                              // o'rtaga qo'shishda indekslar siljimasin
+        let bg = '#ffffff';
+        try {
+          const pj = JSON.parse((slides[at - 1] && slides[at - 1].json) || '{}');
+          if (typeof pj.background === 'string' && pj.background) bg = pj.background;
+        } catch (e) {}
+        const ph = { json: JSON.stringify({ objects: [], background: bg }), thumb: '', imageNumbers: [], _ssPH: true };
+        slides.push(ph);
+        window._ssPH = ph;
+        activeIndex = at;
+        try { renderSidebar(); } catch (e) {}
+        try { updateSlideCounterUI(); } catch (e) {}
+        try { await loadSlideCanvasAsync(at); _lastRenderedSlideIndex = at; } catch (e) {}
+      } catch (e) { console.warn('ssFocusUpcomingSlide:', e); }
+    }
+    window.ssFocusUpcomingSlide = ssFocusUpcomingSlide;
 
     async function executeAiCommands(payload) {
       isAiApplyingCommands = true;
@@ -64,6 +117,7 @@
                 window.__ssTurnWarned = true;
                 try { showToast('Balans tugadi: ' + window.__ssTurnBal + ' ta yangi slayd yaratildi, qolganlari uchun varaq yetmadi. 24 soat kuting yoki varaq sotib oling.', 'error'); } catch (e) {}
               }
+              window._ssSlidesDone = (window._ssSlidesDone | 0) + 1;
               continue;
             }
             window.__ssTurnSlides = (window.__ssTurnSlides | 0) + 1;
@@ -982,7 +1036,7 @@
               break;
             }
             case 'insert_slide': {
-
+              ssDropPlaceholder();
               const _aNum = parseInt(cmd.after, 10);
               const _sNum = parseInt(cmd.slide, 10);
               let afterRaw = !isNaN(_aNum) ? _aNum : (!isNaN(_sNum) ? _sNum : slides.length);
@@ -1028,6 +1082,7 @@
               break;
             }
             case 'replace_slide': {
+              ssDropPlaceholder();
               let idx = ((cmd.slide != null ? cmd.slide : (activeIndex + 1)) || 1) - 1;
               if (idx < 0) idx = 0;
 
