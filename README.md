@@ -68,7 +68,6 @@ Testlar haqiqiy Supabase / AI / Telegram ga ulanmaydi (`tests/fake_supabase.py` 
 pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
-GitHub'da har PR va `main` ga push'da avtomatik ishlaydi (`.github/workflows/tests.yml`).
 
 Brauzer testlari (Playwright: editor, telefon, Telegram Mini App):
 ```bash
