@@ -256,7 +256,7 @@
         item.innerHTML = `
           <div class="slide-num">${idx + 1}</div>
           <div class="slide-thumb">
-            <img src="${slide.thumb}" alt="Slayd ${idx + 1}">
+            <img ${slide.thumb ? `src="${slide.thumb}"` : ''} alt="">
             ${imgNums}
             <div class="slide-more-btn" onclick="event.stopPropagation(); showSlideContextMenu(event, ${idx})">
               <span class="material-symbols-outlined">more_vert</span>

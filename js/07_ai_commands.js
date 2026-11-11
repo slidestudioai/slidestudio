@@ -1,6 +1,6 @@
     // v58: AI slaydlarni ketma-ket yaratganda har bir slayd tayyor bo'lgach ekranda 1 soniya QOLADI
     // (yuklanish effekti bilan), shundan keyingina keyingi slaydga o'tiladi.
-    const SS_SLIDE_HOLD_MS = 1000;
+    const SS_SLIDE_HOLD_MS = 700;   // v59: elementlar endi birma-bir paydo bo'ladi — ushlab turish qisqaroq
     window._ssLastDoneAt = 0;
     async function ssPaceBeforeSlide(targetIdx) {
       try {
@@ -10,8 +10,63 @@
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       } catch (e) {}
     }
+    // v59: hozir qaysi slayd QURILAYOTGANI (-1 = hech qaysi). Kanvas ustidagi «N-slayd tayyorlanmoqda» kartasi shunga qarab chiqadi.
+    window._ssBuildingIdx = -1;
+    function ssSetBuilding(idx) {
+      window._ssBuildingIdx = (typeof idx === 'number') ? idx : -1;
+      try { if (typeof window.ssBuildOverlayUpdate === 'function') window.ssBuildOverlayUpdate(); } catch (e) {}
+    }
+    window.ssSetBuilding = ssSetBuilding;
+    // v59: tayyor slayd elementlari birma-bir, silliq paydo bo'ladi (avval bo'sh fon turib, keyin hammasi birdan chiqardi).
+    // Faqat ko'rinish: opacity/top oxirida aynan asl qiymatiga qaytariladi. rAF to'xtasa (yashirin tab) — taymer yakunlaydi.
+    function ssRevealCanvasObjects() {
+      return new Promise(function (resolve) {
+        let finished = false;
+        let rows = [];
+        const finish = function () {
+          if (finished) return;
+          finished = true;
+          window._ssRevealing = false;
+          rows.forEach(function (r) { r.o.opacity = r.op; r.o.top = r.top; try { r.o.setCoords(); } catch (e) {} });
+          try { canvas.requestRenderAll(); } catch (e) {}
+          resolve();
+        };
+        try {
+          if (!isAiStreaming || typeof canvas === 'undefined' || !canvas) return finish();
+          const objs = canvas.getObjects().filter(function (o) { return o && o.visible !== false; });
+          if (!objs.length) return finish();
+          const n = objs.length, DUR = 340, LIFT = 14;
+          const step = Math.max(60, Math.min(180, 1000 / n));
+          rows = objs.map(function (o) {
+            const media = !!(o.isGif || o.isVideo || o.isEmbed || o.type === 'gifImage' || o.type === 'videoImage' || o.type === 'embedVideo');
+            return { o: o, op: (o.opacity == null ? 1 : o.opacity), top: o.top, lift: media ? 0 : LIFT };
+          });
+          window._ssRevealing = true;
+          rows.forEach(function (r) { r.o.opacity = 0; r.o.top = r.top + r.lift; });
+          canvas.requestRenderAll();
+          const total = step * (n - 1) + DUR;
+          const t0 = performance.now();
+          setTimeout(finish, total + 400);
+          const frame = function (now) {
+            if (finished) return;
+            const el = now - t0;
+            rows.forEach(function (r, i) {
+              const p = Math.max(0, Math.min(1, (el - i * step) / DUR));
+              const e = 1 - Math.pow(1 - p, 3);
+              r.o.opacity = r.op * e;
+              r.o.top = r.top + r.lift * (1 - e);
+            });
+            canvas.requestRenderAll();
+            if (el < total) requestAnimationFrame(frame); else finish();
+          };
+          requestAnimationFrame(frame);
+        } catch (e) { finish(); }
+      });
+    }
+    window.ssRevealCanvasObjects = ssRevealCanvasObjects;
     function ssMarkSlideDone(slide) {
       try { if (slide) slide._ssFilled = true; } catch (e) {}
+      ssSetBuilding(-1);
       window._ssLastDoneAt = Date.now();
       window._ssSlidesDone = (window._ssSlidesDone | 0) + 1;
     }
@@ -42,6 +97,7 @@
         if (!isAiStreaming) return;
         if (kind === 'replace' && num > 0 && slides[num - 1]) {       // mavjud varaq to'ldiriladi — shu varaqqa o'tamiz
           const idx = num - 1;
+          ssSetBuilding(idx);
           if (idx !== activeIndex) {
             activeIndex = idx;
             try { renderSidebar(); } catch (e) {}
@@ -62,6 +118,7 @@
         slides.push(ph);
         window._ssPH = ph;
         activeIndex = at;
+        ssSetBuilding(at);
         try { renderSidebar(); } catch (e) {}
         try { updateSlideCounterUI(); } catch (e) {}
         try { await loadSlideCanvasAsync(at); _lastRenderedSlideIndex = at; } catch (e) {}
@@ -77,6 +134,7 @@
         if (!isAiStreaming || idx < 0 || idx >= slides.length) return;
         const needLoad = activeIndex !== idx || _lastRenderedSlideIndex !== idx;
         activeIndex = idx;
+        ssSetBuilding(idx);
         try { renderSidebar(); } catch (e) {}
         try { updateSlideCounterUI(); } catch (e) {}
         if (needLoad) { try { await loadSlideCanvasAsync(idx); _lastRenderedSlideIndex = idx; } catch (e) {} }
@@ -90,6 +148,7 @@
       window._ssPH = ph;
       if (reuse && _lastRenderedSlideIndex === at) {   // shu varaq ekranda allaqachon turibdi — qayta chizmaymiz
         activeIndex = at;
+        ssSetBuilding(at);
         try { renderSidebar(); } catch (e) {}
         try { updateSlideCounterUI(); } catch (e) {}
       } else {
@@ -1128,7 +1187,12 @@
               _lastRenderedSlideIndex = -1;
               try { renderSidebar(); } catch (e) {}
               try { updateSlideCounterUI(); } catch (e) {}
-              try { await loadSlideCanvasAsync(activeIndex); } catch (e) {}
+              try { await loadSlideCanvasAsync(activeIndex); _lastRenderedSlideIndex = activeIndex; } catch (e) {}
+              if (activeIndex === _finalAt) {
+                const _rv = ssRevealCanvasObjects();   // obyektlar darhol yashiriladi, keyin karta yo'qoladi
+                ssSetBuilding(-1);
+                await _rv;
+              }
               ssMarkSlideDone(_insSlide);
               break;
             }
@@ -1214,6 +1278,11 @@
               } catch (e) {}
 
               try { ensureSlideMediaLoaded(idx); } catch (e) {}
+              {
+                const _rv = ssRevealCanvasObjects();
+                ssSetBuilding(-1);
+                await _rv;
+              }
               ssMarkSlideDone(slides[idx]);
               break;
             }
@@ -1519,6 +1588,7 @@
         let slideIdx = activeIndex;
         if (act.slide === 'current') slideIdx = activeIndex;
         else if (typeof act.slide === 'number') slideIdx = act.slide - 1;
+        else if (typeof act.slide === 'string' && /^\d+$/.test(act.slide.trim())) slideIdx = parseInt(act.slide, 10) - 1;   // v59: "2" ham qabul
         if (slideIdx < 0) slideIdx = 0;
         if (slideIdx >= slides.length) slideIdx = slides.length - 1;
         try {
@@ -1545,16 +1615,11 @@
               }
             }
           } else if (act.action === 'update_element') {
-            if (slides[slideIdx]) {
-              const parsed = JSON.parse(slides[slideIdx].json);
-              const targetEl = parsed.objects.find(o => o._oid === act.id);
-              if (targetEl && act.props) Object.assign(targetEl, act.props);
-              slides[slideIdx].json = JSON.stringify(parsed);
-            }
+            ssUpdateElement(act, slideIdx);
           } else if (act.action === 'delete_element') {
             if (slides[slideIdx]) {
               const parsed = JSON.parse(slides[slideIdx].json);
-              parsed.objects = parsed.objects.filter(o => o._oid !== act.id);
+              parsed.objects = parsed.objects.filter(o => String(o._oid) !== String(act.id));
               slides[slideIdx].json = JSON.stringify(parsed);
             }
           } else if (act.action === 'delete_slide') {
@@ -1566,7 +1631,7 @@
           } else if (act.action === 'move_element') {
             if (slides[slideIdx]) {
               const parsed = JSON.parse(slides[slideIdx].json);
-              const targetEl = parsed.objects.find(o => o._oid === act.id);
+              const targetEl = parsed.objects.find(o => String(o._oid) === String(act.id));
               if (targetEl) {
                 if (typeof act.left === 'number') targetEl.left = act.left;
                 if (typeof act.top === 'number') targetEl.top = act.top;
@@ -1578,6 +1643,43 @@
       }
       await syncUiAfterAiChange();
     }
+    // v59: update_element — AI ko'rgan (ekrandagi) o'lchamlarda yozadi: width/height = haqiqiy kenglik (scale bilan).
+    // id raqam yoki matn bo'lishi mumkin; props {...} ichida yoki to'g'ridan-to'g'ri amalda kelishi mumkin.
+    // Obyekt ko'rsatilgan slaydda topilmasa — butun deckdan qidiriladi.
+    const SS_UPD_SKIP = { action: 1, slide: 1, id: 1, props: 1, _occ: 1, target_slide: 1 };
+    function ssUpdateElement(act, slideIdx) {
+      const props = Object.assign({}, act.props && typeof act.props === 'object' ? act.props : {});
+      Object.keys(act).forEach(function (k) { if (!SS_UPD_SKIP[k] && props[k] === undefined) props[k] = act[k]; });
+      if (!Object.keys(props).length || act.id == null) return false;
+      let si = slideIdx, parsed = null, target = null;
+      const findIn = function (i) {
+        try {
+          const p = JSON.parse(slides[i].json || '{}');
+          const t = (p.objects || []).find(function (o) { return o && String(o._oid) === String(act.id); });
+          return t ? { p: p, t: t } : null;
+        } catch (e) { return null; }
+      };
+      let hit = slides[si] ? findIn(si) : null;
+      if (!hit) {
+        for (let i = 0; i < slides.length && !hit; i++) { hit = findIn(i); if (hit) si = i; }
+      }
+      if (!hit) return false;
+      parsed = hit.p; target = hit.t;
+      delete props._oid; delete props.type;      // id va turini o'zgartirib bo'lmaydi
+      const isText = target.type === 'textbox' || target.type === 'i-text' || target.type === 'text';
+      if (props.width != null && !isText && target.width) {   // rasm/shakl: ko'rinadigan kenglik -> scale
+        const w = Number(props.width); if (w > 0) target.scaleX = w / target.width; delete props.width;
+      }
+      if (props.height != null && !isText && target.height) {
+        const h = Number(props.height); if (h > 0) target.scaleY = h / target.height; delete props.height;
+      }
+      if (props.animation !== undefined && props.animName === undefined) { props.animName = props.animation; delete props.animation; }
+      if (props.color !== undefined && props.fill === undefined && isText) { props.fill = props.color; delete props.color; }
+      Object.assign(target, props);
+      slides[si].json = JSON.stringify(parsed);
+      return true;
+    }
+    window.ssUpdateElement = ssUpdateElement;
     function extractImageNumbers(elements) {
       if (!Array.isArray(elements)) return [];
       return elements.filter(e => isImageLike(e) && e.imageNumber != null).map(e => e.imageNumber);

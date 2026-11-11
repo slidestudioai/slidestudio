@@ -229,6 +229,19 @@ _IMG_INTENT_RE = _re.compile(r"rasm|surat|image|photo|picture|foto|fon\b|banner|
                              r"mavzu\w*\s+(?:bo'?yicha|haqida|ustida)", _re.I)
 _SMALLTALK_RE = _re.compile(r"^\s*(?:salom|assalom\w*|hi|hello|hey|rahmat|raxmat|ok|okay|yaxshi|nima\s+deding|nima\s+dedi\w*|tushund\w*|qalay\w*|thanks?|привет|спасибо)\W*$", _re.I)
 
+_N_SLIDES_RE = _re.compile(r"(\d{1,2})\s*(?:ta\s*)?(?:slayd|slide|varaq|sahifa|page|слайд)", _re.IGNORECASE)
+
+
+def _presearch_count(text: str) -> int:
+    """v59: Chuqur AI uchun nechta rasm oldindan qidiriladi — so'ralgan slaydlar soniga qarab (3..8)."""
+    m = _N_SLIDES_RE.search(text or "")
+    try:
+        n = int(m.group(1)) if m else 3
+    except Exception:
+        n = 3
+    return max(3, min(8, n))
+
+
 def _wants_images(raw: str) -> bool:
     """Faqat foydalanuvchining O'Z matni asosida: salomlashuv/oddiy savolga rasm qidirilmaydi."""
     t = (raw or "").strip()
@@ -2983,8 +2996,17 @@ async def ws_chat(websocket: WebSocket):
                                     brief["strokeWidth"] = o.get("strokeWidth")
                                 if o.get("opacity") is not None:
                                     brief["opacity"] = o.get("opacity")
+                                # v59: AI slaydni odamdan ham yaxshi «ko'rsin» — shakl, burchak, soya, chiziq, animatsiya vaqti ham beriladi
+                                for _k in ("shape", "rx", "ry", "radius", "strokeDashArray", "shadow", "flipX", "flipY",
+                                           "lineHeight", "charSpacing", "fontColor", "textBackgroundColor",
+                                           "animDur", "animDelay", "animLoop", "src", "url", "locked", "linethrough"):
+                                    _v = o.get(_k)
+                                    if isinstance(_v, str) and _v.startswith("data:"):
+                                        continue
+                                    if _v not in (None, "", False, 0) or (_k in ("rx", "ry") and _v == 0 and o.get("type") == "rect"):
+                                        brief[_k] = _v[:160] if isinstance(_v, str) else _v
                                 if is_text:
-                                    brief["text"] = (o.get("text") or "")[:120]
+                                    brief["text"] = (o.get("text") or "")[:600]
                                     if o.get("fontSize") is not None:
                                         brief["fontSize"] = o.get("fontSize")
                                     if o.get("fontFamily"):
@@ -3015,7 +3037,7 @@ async def ws_chat(websocket: WebSocket):
                                 return brief
 
                             full = {
-                                "active_slide": d.get("active_slide"),
+                                "active_slide": d.get("active_slide") or d.get("active_slide_index"),   # v59: yon AI panel active_slide_index yuboradi
                                 "total_slides": d.get("total_slides") or len(d.get("presentation") or []) or 1,
                                 "title": d.get("title"),
                                 "pending_images": d.get("slide_images_pending") or [],
@@ -3032,6 +3054,9 @@ async def ws_chat(websocket: WebSocket):
                                         "background": s.get("background") or "#ffffff",
                                         "objects": [],
                                     }
+                                    for _k in ("transition", "backgroundImageUrl", "backgroundVideo"):
+                                        if s.get(_k):
+                                            entry[_k] = s.get(_k)
                                     if s.get("backgroundGif"):
                                         entry["backgroundGif"] = True
                                     if s.get("backgroundImage"):
@@ -3100,7 +3125,7 @@ async def ws_chat(websocket: WebSocket):
                                     _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
                                     _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                                 if _want:
-                                    _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else 3, websocket, _pre_stats,
+                                    _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else _presearch_count(user_content or prompt or ""), websocket, _pre_stats,
                                                                    kind=_presearch_kind(prompt or ""))
                                     if _extra:
                                         messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
@@ -3109,6 +3134,7 @@ async def ws_chat(websocket: WebSocket):
                         msgs = messages
                         n_searches = int(_pre_stats.get("searches") or 0)
                         _dsml_retried = False
+                        _researched = False
                         agg_in = agg_out = agg_tot = 0
                         # v29: qidiruvdan oldin yozilgan matn (PART A) O'CHIRILMAYDI va qayta yozdirilmaydi
                         shown_text = False      # foydalanuvchi allaqachon matn ko'rdi
@@ -3242,6 +3268,21 @@ async def ws_chat(websocket: WebSocket):
                                     msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
                                                  "content": json.dumps(result, ensure_ascii=False)[:6000]})
 
+                                # v59: topilmagan rasmlar bo'lsa — AI ularni BOSHQA so'z bilan yana bir marta qidiradi (keyin yasaydi)
+                                _missing = [q_ for (q_, k_), f_ in zip(_jobs, _found_all) if not f_ and k_ != "gif"]
+                                if (_missing and _round + 1 < MAX_TOOL_ROUNDS and n_searches < MAX_SEARCHES_PER_TURN
+                                        and not _researched):
+                                    _researched = True
+                                    msgs.append({
+                                        "role": "user",
+                                        "content": (
+                                            "Bu so'rovlar bo'yicha rasm TOPILMADI: " + "; ".join(f'"{m}"' for m in _missing[:6]) + ". "
+                                            "Faqat ular uchun search_images ni BOSHQA, soddaroq va aniqroq INGLIZCHA so'rov bilan yana bir marta chaqiring "
+                                            "(2-3 so'z, aniq predmet). Topilgan rasmlarni qayta qidirmang. Hech qanday matn yozmang."
+                                        ),
+                                    })
+                                    finish_reason = None
+                                    continue
                                 if n_searches > 0:
                                     if shown_text:
                                         _text_rule = (
