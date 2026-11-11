@@ -177,15 +177,20 @@
 
   function renderChart() {
     var sp = cur.ssSpec, labels = sp.labels, series = sp.series, multi = series.length > 1, pie = sp.chart === 'pie' || sp.chart === 'doughnut';
-    var colors = (sp.colors && sp.colors.length ? sp.colors : PAL).slice();
-    var need = (pie || !multi) ? labels.length : series.length;
-    while (colors.length < need) colors.push(PAL[colors.length % PAL.length]);
+    // v63: panel AYNAN grafikda ko'ringan ranglarni ko'rsatadi (chizuvchi colors[i % n] qiladi). Avval yetishmagan ranglar
+    // standart palitradan to'ldirilib, ustunlar bir rangda turgani holda panelda boshqa ranglar ko'rinardi va bitta rang
+    // o'zgartirilsa qolgan ustunlar ham kutilmaganda o'zgarardi (botdan kelgan diagrammalarda).
+    var perLabel = pie || (!multi && sp.chart !== 'line');          // har bir yorliqning o'z rangi (doira / bitta seriyali ustun)
+    var src = (sp.colors && sp.colors.length ? sp.colors : PAL);
+    var need = perLabel ? labels.length : series.length;
+    var colors = [];
+    for (var ci = 0; ci < Math.max(need, 1); ci++) colors.push(src[ci % src.length]);
     var head = '<tr><td></td><td class="hint">Yorliq</td>' + series.map(function (s, si) {
-      return '<td>' + (multi ? '<input type="color" data-sc="' + si + '" value="' + hex(colors[si]) + '" title="Qator rangi"><br>' : '') +
+      return '<td>' + (!perLabel ? '<input type="color" data-sc="' + si + '" value="' + hex(colors[si]) + '" title="' + (multi ? 'Qator rangi' : 'Chiziq rangi') + '"><br>' : '') +
         '<input type="text" data-sn="' + si + '" value="' + esc(s.name || ('Qator ' + (si + 1))) + '" placeholder="Nomi"></td>';
     }).join('') + '<td></td></tr>';
     var body = labels.map(function (lb, i) {
-      return '<tr><td>' + ((!multi || pie) ? '<input type="color" data-pc="' + i + '" value="' + hex(colors[i]) + '" title="Rangi">' : '') + '</td>' +
+      return '<tr><td>' + (perLabel ? '<input type="color" data-pc="' + i + '" value="' + hex(colors[i]) + '" title="Rangi">' : '') + '</td>' +
         '<td><input type="text" data-l="' + i + '" value="' + esc(lb) + '"></td>' +
         series.map(function (s, si) { return '<td><input type="number" step="any" data-v="' + si + ',' + i + '" value="' + (s.values[i] == null ? 0 : s.values[i]) + '"></td>'; }).join('') +
         '<td><button class="rm" data-rm="' + i + '" title="Qatorni o\'chirish">×</button></td></tr>';

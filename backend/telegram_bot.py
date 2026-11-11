@@ -2242,7 +2242,9 @@ Decide the intent:
    {"op":"transition","index":3,"name":"zoom"}                           — slide transition (how that whole slide appears) of ONE slide
    For slide 1 use "replace" with layout "title" (that is how «sarlavhasini o'zgartir» works for the deck title: also send a "meta" op with the new title).
    Only if nearly EVERY slide must change (translate the whole deck, rewrite everything) you may return "deck" (the COMPLETE updated deck) instead of "ops".
-2) "new_topic" — the message is clearly a NEW presentation topic unrelated to the current deck.   Return {"intent":"new_topic"}
+2) "new_topic" — the message is clearly a NEW presentation topic unrelated to the current deck, OR the user asks to throw the deck away and
+   build it again from scratch ("boshidan qil", "hammasini yangidan yasa", "butunlay boshqa qil", "start over", "заново").
+   Return {"intent":"new_topic","topic":"<the full topic to build, incl. requested slide count / style; for «start over» reuse the current deck topic>"}
 3) "chat" — a question or small talk about the deck, not requesting a change.   Return {"intent":"chat","reply":"helpful answer, max 4 sentences"}
 SLIDE SCHEMA (field "layout"): title/closing: title, subtitle · bullets: title, bullets[3-5], image, media · cards: title, cards[{heading,text}] (2-4) · stats: title, stats[{value,label}] (2-4) · quote: text, author · table: title, rows[[cells]] (first row = header, 2-8 rows, 2-5 columns) · chart: title, chart(bar|line|pie|doughnut), labels[], series[{name,values[]}]
  - To add a table / chart / statistics use "insert" or "replace" with these layouts. Numbers must be real or approximate, never invented.
@@ -2526,7 +2528,9 @@ def _theme_label(deck: dict) -> str:
 def _card_text(deck: dict, head: str = "✅", extra: str = "") -> str:
     """Tayyor/saqlangan slayd kartasi: sarlavha + tuzilma matni (+ ixtiyoriy qo'shimcha). Tugmalar — kb_done."""
     return (f"{head} <b>{esc(deck['title'])}</b>\n🎞 {len(deck['slides'])} ta slayd · 🎨 {esc(_theme_label(deck))}\n\n{_summary(deck)}"
-            + (f"\n\n{extra}" if extra else "") + "\n\n<b>Yuklab olish uchun formatni tanlang</b> 👇")
+            + (f"\n\n{extra}" if extra else "")
+            + "\n\n<i>✏️ O'zgartirish kerak bo'lsa — «Tahrirlash» ni bosing yoki shunchaki AI'ga yozing.</i>"   # v63
+            + "\n\n<b>Yuklab olish uchun formatni tanlang</b> 👇")
 
 
 def _summary(deck: dict) -> str:
@@ -2732,10 +2736,14 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         data = data if isinstance(data, dict) else {}
         intent = str(data.get("intent") or "").lower()
         if intent == "new_topic":
-            await _edit(chat_id, msg_id, "🆕 Yangi mavzu deb tushundim.")
-            st.update(deck=None, deck_id=None, imgs={}, awaiting=None, topic=text[:1500])
+            # v63: «hammasini boshidan qil» kabi buyruqda mavzu matnda bo'lmasligi mumkin — AI bergan mavzu, bo'lmasa eski mavzu ishlatiladi
+            topic = decks.clean(data.get("topic"), 1500)
+            if not topic:
+                topic = text[:1500] if len(text.split()) > 3 else f"{deck.get('title') or st.get('topic') or ''}. {text}".strip(" .")[:1500]
+            await _edit(chat_id, msg_id, "🆕 Eski slayd yopildi — butunlay yangidan yarataman.")
+            st.update(deck=None, deck_id=None, imgs={}, awaiting=None, ui=None, topic=topic)
             st["busy"] = False
-            await _run_generate(chat_id, user, text[:1500], _parse_count(text) or DEFAULT_SLIDES)
+            await _run_generate(chat_id, user, topic, _parse_count(text) or _parse_count(topic) or DEFAULT_SLIDES)
             return
         has_change = isinstance(data.get("ops"), list) or isinstance(data.get("deck"), dict)
         if intent == "chat" or not has_change:
@@ -3522,6 +3530,8 @@ async def _handle_callback(cb: dict) -> None:
         await _send(cid, f"✏️ <b>Tahrirlash oynasi</b>\n<b>{esc(d['title'])}</b> · 🎞 {len(d['slides'])} ta slayd\n\n{_summary(d)}\n\n"
                          "<b>Nimani o'zgartiray? Oddiy matn bilan yozing:</b>\n"
                          "• <i>3-slaydni qisqartir</i>\n• <i>sarlavhasini o'zgartir: «Yangi nom»</i>\n• <i>yana 2 ta slayd qo'sh: xavflar va xulosa</i>\n• <i>ruscha tarjima qil</i>\n\n"
+                         "💬 <b>AI'ga oddiy yozsangiz ham bo'ldi</b> — u slaydlarni ko'rib turibdi va aytganingizni qiladi. "
+                         "«Hammasini boshidan qil» yoki yangi mavzu yozsangiz — eski slayd yopilib, butunlay yangisi yaratiladi.\n\n"
                          "<i>Faqat kerakli slaydlar o'zgaradi. Yoki «🚀 Muharrirdan» o'zingiz tahrirlang — shu slaydning o'zi ochiladi.</i>", kb_edit(st))
     elif data == "theme":
         if st.get("deck"):
@@ -3664,13 +3674,18 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
         return
     ui = st.get("ui")
     if ui not in ("new", "edit"):
-        # v51: tugma bosilmagan — yozilgan matn AI'ga BORMAYDI va eski slaydni ham o'zgartirmaydi
         if GREETING_RE.match(text):
             await _send_welcome(chat_id, user)
             return
         if not await _google_ok(chat_id, user):
             return
-        _spawn(_run_chat(chat_id, user, text[:1500]))      # oddiy savol — AI javob beradi, slayd yaratilmaydi
+        # v63: tugma bosilmasa ham topshiriq bajariladi. Shu suhbatda slayd bo'lsa — AI uni ko'rib turib tahrirlaydi
+        # (yoki «boshidan qil» / yangi mavzu bo'lsa butunlay yangidan yaratadi); slayd bo'lmasa — AI o'zi hal qiladi:
+        # slayd so'ralgan bo'lsa yaratadi, oddiy savol bo'lsa javob beradi.
+        if st.get("deck"):
+            _spawn(_run_edit(chat_id, user, text[:1500]))
+        else:
+            _spawn(_run_new(chat_id, user, " ".join(text.split())[:1500]))
         return
     if not await _google_ok(chat_id, user):                # Google ulanmagan bo'lsa slayd yaratilmaydi / tahrirlanmaydi
         return

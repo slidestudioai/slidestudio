@@ -287,7 +287,7 @@
       axis.ticks.forEach(function (tv, gi) {
         var gy = py(tv);
         objs.push(new fabric.Line([padL, gy, W, gy], { stroke: Math.abs(tv) < 1e-9 ? '#9ca3af' : '#e5e7eb', strokeWidth: 1, selectable: false, evented: false, objectCaching: false }));
-        objs.push(placed(fmt(tv), { fontSize: YFS, fill: '#6b7280' }, 'r', padL - 8, gy));        // yorliq gridline'ning aynan o'rtasida
+        objs.push(placed(fmt(tv), { fontSize: YFS, fill: el.textColor ? ink : '#6b7280' }, 'r', padL - 8, gy));        // v63: o'q raqamlari ham «Matn rangi» ga bo'ysunadi (to'q fonda ko'rinadi)
       });
       var zeroY = py(0);
       if (kind === 'line') {
