@@ -92,7 +92,7 @@ def _http() -> httpx.AsyncClient:
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(15.0, connect=6.0),
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=4, keepalive_expiry=30),
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20, keepalive_expiry=30),   # v59: ko'p foydalanuvchi — har xabarga yangi TLS ulanish ochilmasin
         )
     return _client
 
@@ -2410,7 +2410,17 @@ async def _ai_json(system: str, user: str, mode: str) -> Tuple[Optional[dict], i
     kw: Dict[str, Any] = dict(model=model, messages=[{"role": "system", "content": system}, {"role": "user", "content": user}], max_tokens=7500)
     if mode != "deep":
         kw.update(temperature=0.7, response_format={"type": "json_object"})
-    resp = await asyncio.wait_for(client.chat.completions.create(**kw), timeout=175)
+    # v59: sayt bilan UMUMIY cheklov (DEEPSEEK_CONCURRENCY). Avval bot o'z hisobicha (+6) so'rov yuborardi —
+    # ko'p odam bir vaqtda kirganda bitta API kalitga ruxsatdan ko'p parallel so'rov ketib, 429/sekinlashish bo'lardi.
+    sem = _deps.get("ai_sem")
+    if sem is not None:
+        await asyncio.wait_for(sem.acquire(), timeout=120)   # TimeoutError — chaqiruvchilar uni allaqachon ushlaydi
+        try:
+            resp = await asyncio.wait_for(client.chat.completions.create(**kw), timeout=175)
+        finally:
+            sem.release()
+    else:
+        resp = await asyncio.wait_for(client.chat.completions.create(**kw), timeout=175)
     text = (resp.choices[0].message.content or "") if resp.choices else ""
     tokens = int(getattr(getattr(resp, "usage", None), "total_tokens", 0) or 0)
     return decks.extract_json(text), tokens

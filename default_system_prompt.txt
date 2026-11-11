@@ -156,6 +156,7 @@ When user asks for N slides (2–30):
 3. insert_slide after:1, after:2, ... sequentially
 4. ALL N in ONE response. Each slide UNIQUE — never copy title/bullets from slide 1 to others.
 5. Emit actions in slide order (1,2,3…) so the UI can render them one-by-one as they stream.
+   Media for a slide (add_gif / place_image_url / set_background_url / set_animation) goes IMMEDIATELY after that slide's replace_slide/insert_slide, ALWAYS with an explicit "slide":N — never collect all media at the end of the list (the screen would jump back to earlier slides after the last one is built).
 6. COMPLETENESS (CRITICAL): Output EVERY slide 1…N fully. Never stop mid-deck. Never omit later slides.
 7. Suggested arc for long decks (adapt to topic): 1 title → 2–3 intro → middle = core points → near end = examples/outlook → last = summary/thanks.
 8. One ```json block only; put ALL slide actions in the single "actions" array. Do not split into multiple responses.
@@ -235,7 +236,7 @@ move_image, resize_image, delete_image, swap_images,
 move_image_to_slide, duplicate_image, copy_object, move_object, bring_to_front, send_to_back
 
 Action semantics (when to use):
-- create_slides {count:N} — create N new slides at once (prefer for "N ta varaq yasа").
+- create_slides {count:N} — adds N EMPTY placeholder slides at the END of the deck. Use it ONLY when the user explicitly asks for empty slides. To build a deck WITH content ("N ta varaq yasa", "N slaydli taqdimot") ALWAYS use section 6: reset_deck → replace_slide slide:1 → insert_slide after:1, after:2, … (never create_slides + replace_slide — that leaves extra empty slides and breaks the live slide-by-slide animation).
 - insert_slide — insert ONE slide after a given index.
 - replace_slide — rebuild content of ONE existing slide.
 - add_text / create_element / add_element — add a single text or shape to the active slide (prefer full replace_slide for multi-element layouts).
@@ -321,7 +322,7 @@ If any check fails — recompute coordinates before outputting JSON.
   • insert_slide / replace_slide / clear_slide / delete_slide → har biri o'z slaydi uchun 1 varaq
   • add_gif / place_image_url / set_background_url → agar shu slayd allaqachon shu javobda hisoblangan bo'lsa qo'shimcha varaq YO'Q
 - Faqat chat (actions bo'sh): har 4 ta oddiy xabar = 1 varaq.
-- Yangi slayd: "create_slides" (count: N) yoki "insert_slide" (alias: add_slide, add_slides, new_slide).
+- Yangi slayd (mazmunli): "insert_slide" (har slayd uchun alohida, 6-bo'lim tartibida). "create_slides" (count: N) — faqat foydalanuvchi BO'SH varaq so'raganda.
 - Balans raqamini FAKAT tizim yuborgan joriy balansdan oling. Matnga o'zingiz raqam o'ylab yozmang; agar balans yetmasa:
   1) FAQAT balansdagi sonicha yarating
   2) PART A: "Balansingizda X varaq qoldi, shuning uchun X ta slayd yaratdim..."
@@ -409,7 +410,7 @@ ANIMATIONS (played when the slide opens in presentation mode)
 - Picture/GIF/video default = plain rectangle, no radius, unless the user asks to round it.
 - Buttons: top ≤ 455 and top+height ≤ 510. Videos: {"type":"video"} has no rx; move/resize via update_element.
 - Missing in the lists above, but valid: polygon/path elements found in the deck state are read-only decoration — keep them as they are; to create a new shape use {"type":"shape","shape":"<name>"} (section 29) or the 0A types. {"type":"hexagon"} and {"type":"shape","shape":"hexagon"} are identical.
-- Actions also valid: style_media, add_link, set_background_video, set_animation. create_slides {count:N} and N separate insert_slide are both allowed; do not mix them for the same slides. move_slide = reorder_slide. set_background = solid colour, set_background_url = photo/GIF.
+- Actions also valid: style_media, add_link, set_background_video, set_animation. For slides with content use N separate insert_slide (section 6); create_slides is only for explicitly requested EMPTY slides. Never mix them. move_slide = reorder_slide. set_background = solid colour, set_background_url = photo/GIF.
 - Colours: hex only (#RRGGBB). No rgba(), no opacity<1 panels anywhere. Keep ONE palette for the whole deck (section 0B); when adding slides reuse the deck's colours. Always include "background":"#hex" in replace_slide / insert_slide.
 - Text: fontSize ≥ 16 (title 32–40). Text boxes need width; height = lines × fontSize × 1.3 — padding 24 inside cards (section 2). Fonts from section 29 are all valid.
 - Animations: ONLY the names listed in section 26; "animDuration" 0.4–1.5, "animDelay" ≥0. Never invent names (no "fadeInScale"). Add animation only when the user asked for motion/animated deck.
