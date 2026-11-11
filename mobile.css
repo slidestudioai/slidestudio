@@ -139,3 +139,12 @@
 @media (pointer: coarse) {
   .ap-fx, .ap-btn, .ap-tab { min-height: 40px; }
 }
+
+/* v60: Instagram kabi yopiq javoblar va qadalgan (pin) izoh */
+.fb-toggle-replies { display: inline-flex; align-items: center; gap: 10px; margin-top: 8px; padding: 2px 0; border: none; background: none;
+  font-size: 12.5px; font-weight: 600; color: #6b7280; cursor: pointer; }
+.fb-toggle-replies:hover { color: #111827; }
+.fb-tr-line { display: inline-block; width: 24px; height: 1px; background: #c4c7cc; }
+.fb-post.pinned { background: #faf5ff; border-radius: 12px; padding: 10px; margin-left: -10px; margin-right: -10px; }
+.fb-pinned { display: inline-flex; align-items: center; gap: 2px; margin-bottom: 2px; font-size: 11.5px; font-weight: 600; color: #7c3aed; }
+.fb-pinned .material-symbols-outlined { font-size: 15px; }

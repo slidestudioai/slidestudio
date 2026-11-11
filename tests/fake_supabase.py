@@ -71,7 +71,23 @@ class _Query:
         self.filters.append(lambda r: r.get(col) is not None and str(r.get(col)) >= str(val))
         return self
 
-    def order(self, *a, **k):
+    def is_(self, col, val):
+        want = None if str(val).lower() == "null" else val
+        self.filters.append(lambda r: r.get(col) is want if want is None else str(r.get(col)) == str(want))
+        return self
+
+    def in_(self, col, vals):
+        vs = {str(v) for v in vals}
+        self.filters.append(lambda r: str(r.get(col)) in vs)
+        return self
+
+    def range(self, a, b):
+        self._range = (a, b)
+        return self
+
+    def order(self, col=None, desc=False, nullsfirst=None, **k):
+        if col:
+            self._orders = getattr(self, "_orders", []) + [(col, desc, nullsfirst)]
         return self
 
     def limit(self, n):
@@ -89,9 +105,20 @@ class _Query:
                 raise FakeAPIError(f"forced failure on {self.table}")
             if self.op == "select":
                 out = [dict(r) for r in rows if self._match(r)]
+                for col, desc, nf in reversed(getattr(self, "_orders", [])):   # barqaror saralash: oxirgi kalit birinchi
+                    if col in self.db.missing_columns.get(self.table, ()):
+                        raise FakeAPIError(f"column {self.table}.{col} does not exist")
+                    have = [r for r in out if r.get(col) is not None]
+                    none = [r for r in out if r.get(col) is None]
+                    have.sort(key=lambda r: str(r.get(col)), reverse=bool(desc))
+                    out = (none + have) if (nf if nf is not None else not desc) else (have + none)
+                total = len(out)
+                if getattr(self, "_range", None):
+                    a, b = self._range
+                    out = out[a:b + 1]
                 if self._limit is not None:
                     out = out[: self._limit]
-                return _Res(out, len(out) if self._count else None)
+                return _Res(out, total if self._count else None)
             if self.op in ("insert", "upsert"):
                 items = self.payload if isinstance(self.payload, list) else [self.payload]
                 key = UNIQUE_KEYS.get(self.table)
@@ -148,6 +175,7 @@ class FakeSupabase:
         self.calls: list = []
         self.fail_tables: set = set()
         self.missing_rpc: set = set()
+        self.missing_columns: Dict[str, set] = {}
         self.lock = threading.RLock()
         self.auth = _Auth(self)
 
