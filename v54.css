@@ -224,12 +224,6 @@ html.in-telegram body #googleLoginBtn { display: none !important; }
 @keyframes ssSweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 @keyframes ssPopIn { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
 @keyframes ssPulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
-body.ss-ai-building #canvasCard::after {
-  content: ''; position: absolute; inset: 0; z-index: 30; pointer-events: none; border-radius: inherit;
-  background: linear-gradient(100deg, transparent 20%, rgba(124, 58, 237, .10) 45%, rgba(59, 130, 246, .12) 55%, transparent 80%);
-  animation: ssSweep 1.6s cubic-bezier(.4, 0, .2, 1) infinite;
-}
-body.ss-ai-building #canvasCard { overflow: hidden; }
 .slide-item.ss-pop { animation: ssPopIn .45s cubic-bezier(.22, .8, .3, 1) both; }
 .ss-slide-skel { display: flex; flex-direction: column; gap: 4px; padding: 3px 6px; animation: ssPopIn .3s ease both; }
 .ss-slide-skel-box { position: relative; overflow: hidden; aspect-ratio: 16 / 9; border-radius: 8px; border: 1px dashed #c4b5fd;
@@ -244,22 +238,48 @@ body.ss-ai-building #canvasCard { overflow: hidden; }
 .ai-search-row.ok .material-symbols-outlined { color: #16a34a; }
 .ai-search-row.none .material-symbols-outlined { color: #d97706; }
 
-/* v58: keyingi (hali yaratilmagan) slaydlar chap panelda ham yuklanish effektida */
-.slide-item.ss-wait .slide-thumb { position: relative; overflow: hidden; border-radius: 6px; outline: 1px dashed #c4b5fd; }
-.slide-item.ss-wait .slide-thumb::after {
-  content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none;
-  background: linear-gradient(100deg, transparent 25%, rgba(255, 255, 255, .8) 50%, transparent 75%);
-  animation: ssSweep 1.2s linear infinite;
-}
-.slide-item.ss-wait { animation: ssPulse 1.4s ease-in-out infinite; }
+/* ---------- v59: AI slayd yasayotganda — sokin va toza ko'rinish ---------- */
+/* keyingi (hali to'ldirilmagan) slaydlar: faqat xira, harakatsiz */
+.slide-item.ss-wait .slide-thumb { opacity: .55; outline: 1px dashed #c4b5fd; outline-offset: -1px; border-radius: 6px; }
 
-/* v58: hozir yaratilayotgan slayd — chap paneldagi miniatyurada ham kanvasdagi kabi effekt */
-.slide-item.ss-gen .slide-thumb { position: relative; overflow: hidden; border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124, 58, 237, .35), 0 4px 14px rgba(124, 58, 237, .3); }
-.slide-item.ss-gen .slide-thumb::after {
-  content: ''; position: absolute; inset: 0; z-index: 5; pointer-events: none;
-  background: linear-gradient(100deg, transparent 20%, rgba(124, 58, 237, .22) 45%, rgba(59, 130, 246, .26) 55%, transparent 80%);
-  animation: ssSweep 1.3s cubic-bezier(.4, 0, .2, 1) infinite;
-}
-body.ss-ai-building #canvasCard::after {
-  background: linear-gradient(100deg, transparent 20%, rgba(124, 58, 237, .18) 45%, rgba(59, 130, 246, .22) 55%, transparent 80%);
+/* hozir yasalayotgan slayd miniatyurasi: binafsha halqa + kichik aylanuvchi belgi (to'lqin yo'q) */
+.slide-item.ss-gen .slide-thumb { position: relative; border-color: #7c3aed !important;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, .35), 0 6px 18px rgba(124, 58, 237, .22); }
+.slide-item.ss-gen .slide-thumb::before { content: ''; position: absolute; right: 6px; bottom: 6px; z-index: 6; width: 14px; height: 14px;
+  border-radius: 50%; border: 2px solid rgba(124, 58, 237, .25); border-top-color: #7c3aed; animation: ssBoSpin .8s linear infinite; }
+
+/* rasmi hali yo'q varaq: «Slayd 1» yozuvi yoki buzilgan rasm belgisi emas — skelet */
+.slide-thumb > img:not([src]), .slide-thumb > img[src=""] { visibility: hidden; }
+.slide-item.ss-ph .slide-thumb { position: relative; background: linear-gradient(135deg, #f5f3ff, #eef2ff) !important; }
+.slide-item.ss-ph .slide-thumb::after { content: ''; position: absolute; left: 12%; right: 12%; top: 26%; height: 48%; z-index: 1;
+  background:
+    linear-gradient(#c4b5fd, #c4b5fd) 0 0 / 62% 9px no-repeat,
+    linear-gradient(#ddd6fe, #ddd6fe) 0 45% / 86% 7px no-repeat,
+    linear-gradient(#ddd6fe, #ddd6fe) 0 80% / 54% 7px no-repeat;
+  border-radius: 4px; opacity: .9; }
+
+/* kanvas ustidagi «N-slayd tayyorlanmoqda» kartasi */
+#canvasCard { position: relative; }
+#ssBuildOverlay { position: absolute; inset: 0; z-index: 45; /* ss-freeze (40) dan ham yuqori */ pointer-events: none; display: flex; align-items: center; justify-content: center;
+  border-radius: inherit; background: rgba(248, 250, 252, .94); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  opacity: 0; visibility: hidden; transition: opacity .28s ease, visibility 0s linear .28s; }
+#ssBuildOverlay.on { opacity: 1; visibility: visible; transition: none; }   /* darhol chiqadi, silliq yo'qoladi */
+.ss-bo-card { width: min(62%, 460px); display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.ss-bo-sk { width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; background: #fff; box-shadow: 0 10px 30px rgba(15, 23, 42, .12);
+  padding: 9% 8%; box-sizing: border-box; display: flex; flex-direction: column; gap: 9%; position: relative; overflow: hidden; }
+.ss-bo-sk span, .ss-bo-sk .c { display: block; border-radius: 999px; background: #ede9fe; }
+.ss-bo-sk .t { height: 13%; width: 58%; background: #ddd6fe; }
+.ss-bo-sk .l { height: 7%; } .ss-bo-sk .w80 { width: 82%; } .ss-bo-sk .w60 { width: 60%; }
+.ss-bo-sk .row { display: flex; gap: 5%; flex: 1; }
+.ss-bo-sk .c { flex: 1; border-radius: 10px; background: #f5f3ff; }
+.ss-bo-sk::after { content: ''; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .85) 50%, transparent 70%);
+  animation: ssSweep 1.5s ease-in-out infinite; }
+.ss-bo-label { display: flex; align-items: center; gap: 10px; font: 600 15px 'Roboto', system-ui, sans-serif; color: #4c1d95; }
+.ss-bo-label b { font-weight: 600; }
+.ss-bo-dot { width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid rgba(124, 58, 237, .25); border-top-color: #7c3aed;
+  animation: ssBoSpin .8s linear infinite; }
+@keyframes ssBoSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ss-bo-sk::after, .ss-bo-dot, .slide-item.ss-gen .slide-thumb::before { animation: none; }
 }

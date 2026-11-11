@@ -351,15 +351,41 @@
     return !!nm && parseInt(nm[1], 10) > nSlides();
   }
 
+  // v59: slayd qurilayotganda kanvas ustida toza «N-slayd tayyorlanmoqda» kartasi (bo'sh fon yoki eski mazmun ko'rinib turmaydi)
+  function buildOverlay(on, n) {
+    var card = document.getElementById('canvasCard');
+    var el = document.getElementById('ssBuildOverlay');
+    if (!card) return;
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'ssBuildOverlay';
+      el.setAttribute('aria-live', 'polite');
+      el.innerHTML = '<div class="ss-bo-card"><div class="ss-bo-sk"><span class="t"></span><span class="l w80"></span><span class="l w60"></span>' +
+        '<div class="row"><span class="c"></span><span class="c"></span><span class="c"></span></div></div>' +
+        '<div class="ss-bo-label"><span class="ss-bo-dot"></span><b></b></div></div>';
+    }
+    if (el.parentNode !== card) card.appendChild(el);
+    if (on) el.querySelector('b').textContent = n + '-slayd tayyorlanmoqda…';
+    if (el.classList.contains('on') !== on) el.classList.toggle('on', on);
+  }
+  function overlayUpdate() {
+    var bi = (typeof window._ssBuildingIdx === 'number') ? window._ssBuildingIdx : -1;
+    var on = streaming() && bi >= 0 && bi === activeIndex;
+    if (!streaming() && bi >= 0) window._ssBuildingIdx = -1;
+    try { buildOverlay(on, bi + 1); } catch (e) {}
+  }
+  window.ssBuildOverlayUpdate = overlayUpdate;
+
   function tick() {
     var st = streaming();
+    overlayUpdate();
     if (st) { try { focusUpcoming(); } catch (e) {} } else { window._ssFocusKey = null; }
     var on = (st && (SLIDE_ACT.test(buf()) || applying())) || recentlyDone();
     if (on !== building) {
       building = on;
       document.body.classList.toggle('ss-ai-building', on);
     }
-    skel(on && st && !window._ssPH && upcomingIsNew());
+    skel(on && st && !window._ssPH && !(window._ssBuildingIdx >= 0) && !window._ssRevealing && upcomingIsNew());   // v59: biror slayd qurilayotganda ikkinchi «yaratilmoqda» chiqmaydi
     try { markPending(st); } catch (e) {}
     applyFx(on);
     var n = nSlides();

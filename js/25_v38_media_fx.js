@@ -206,7 +206,7 @@
   }
   function slideItemHtml(slide, idx) {
     const imgNums = slide.imageNumbers && slide.imageNumbers.length > 0 ? '<div class="img-nums">#' + slide.imageNumbers.join(',#') + '</div>' : '';
-    return '<div class="slide-num">' + (idx + 1) + '</div><div class="slide-thumb"><img alt="Slayd ' + (idx + 1) + '">' + imgNums +
+    return '<div class="slide-num">' + (idx + 1) + '</div><div class="slide-thumb"><img alt="">' + imgNums +
       '<div class="slide-more-btn"><span class="material-symbols-outlined">more_vert</span></div></div>';
   }
   function createItem(slide) {
@@ -301,7 +301,8 @@
       el.dataset.idx = idx;
       const isNew = window._newlyCreatedSlideIds && slide._uid && window._newlyCreatedSlideIds.has(slide._uid);
       const _keepFx = ['ss-gen', 'ss-wait', 'ss-pop'].filter(function (c) { return el.classList.contains(c); }).join(' ');   // v58: har renderda effekt klasslari o'chib (miltillab) ketmasin
-      el.className = 'slide-item' + (idx === activeIndex ? ' active' : '') + (isNew ? ' just-created' : '') + (_keepFx ? ' ' + _keepFx : '');
+      el.className = 'slide-item' + (idx === activeIndex ? ' active' : '') + (isNew ? ' just-created' : '') + (_keepFx ? ' ' + _keepFx : '') +
+        ((slide._ssPH || !slide.thumb) ? ' ss-ph' : '');   // v59: rasmi yo'q (tayyorlanayotgan) varaq — chiroyli skelet, «Slayd 1» yozuvi emas
       if (isNew && !slide._ssFxTimer) {   // v58: yangi slayd effekti 2 soniya turadi, keyin o'chadi (har renderda qayta boshlanmaydi)
         slide._ssFxTimer = setTimeout(function () {
           el.classList.remove('just-created');

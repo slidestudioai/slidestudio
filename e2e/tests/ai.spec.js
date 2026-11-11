@@ -120,6 +120,7 @@ test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi'
         done: window._ssSlidesDone | 0,
         gen: gen ? Number(gen.dataset.idx) : null,
         skel: !!document.getElementById('ssSlideSkel'),
+        ov: !!document.querySelector('#ssBuildOverlay.on'),
       });
     }, 30);
   });
@@ -137,5 +138,22 @@ test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi'
     if (t.done === 0) expect(t.skel).toBe(false);                     // 1-slayd yasalayotganda «2-slayd yaratilmoqda» chiqmaydi
   }
   expect(maxActive).toBe(4);
+  expect(trace.some((t) => t.ov)).toBe(true);                         // qurilayotganda «N-slayd tayyorlanmoqda» kartasi chiqadi
   expect((await deck(page)).length).toBe(5);
+  // birma-bir paydo bo'lish effekti slaydga yashirin (opacity 0) obyekt qoldirmaydi, karta oxirida yopiladi
+  const low = await page.evaluate(() => slides.flatMap((s) => (JSON.parse(s.json).objects || []).map((o) => o.opacity)).filter((x) => x != null && x < 0.99));
+  expect(low).toEqual([]);
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => !!document.querySelector('#ssBuildOverlay.on'))).toBe(false);
+  expect(await page.evaluate(() => [...document.querySelectorAll('#sidebar .slide-thumb img')].some((i) => /Slayd/.test(i.alt)))).toBe(false);
+});
+
+test('rasm topilmasa AI uni boshqa so\'z bilan qayta qidiradi, keyin slaydlarni yasaydi', async ({ page }) => {
+  await openEditor(page);
+  await login(page);
+  await ask(page, '3 ta slayd yarat, 3 ta rasm bilan, topilmas');
+  const rows = await page.$$eval('.ai-search-row', (r) => r.map((x) => x.innerText));
+  expect(rows.join(' | ')).toContain('yoq narsa');
+  expect(rows.join(' | ')).toContain('subject retry');   // topilmagani uchun boshqa so'z bilan qayta qidirildi (chatda ko'rinadi)
+  expect((await deck(page)).length).toBe(3);
 });

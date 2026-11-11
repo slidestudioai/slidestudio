@@ -41,7 +41,7 @@ def _img_url(q: str, kind: str = "photo") -> str:
 
 def fake_search(q, kind="photo", n=12):
     CALLS["search"].append((q, kind))
-    if "yoq" in q.lower():                      # «yoq» so'zi bor so'rov — hech narsa topilmaydi (qayta urinish sinovi)
+    if "yoq" in q.lower() or q.lower() == "narsa":   # «yoq narsa» va uning soddaroq varianti — hech narsa topilmaydi (qayta urinish sinovi)
         return []
     return [{"url": _img_url(f"{q} {i}", kind), "thumb": _img_url(f"{q} {i}", kind), "title": q} for i in range(min(n, 3))]
 
@@ -95,7 +95,7 @@ def _last_user(messages):
     """Foydalanuvchining haqiqiy so'rovi (server qo'shadigan «Qidiruv yakunlandi…» xizmat xabarlari emas)."""
     for m in reversed(messages):
         c = str(m.get("content") or "")
-        if m.get("role") == "user" and not c.startswith("Qidiruv yakunlandi") and not c.startswith("Tool mavjud emas"):
+        if m.get("role") == "user" and not c.startswith(("Qidiruv yakunlandi", "Tool mavjud emas", "Bu so'rovlar bo'yicha rasm TOPILMADI")):
             return c.split("\n\n[TAYYOR")[0]
     return ""
 
@@ -179,6 +179,10 @@ class _Completions:
             items.append(_chunk(finish="tool_calls"))
             items.append(_usage())
             return _Stream(items, delay)
+        last = str((msgs[-1] if msgs else {}).get("content") or "")
+        if kw.get("tools") and last.startswith("Bu so'rovlar bo'yicha rasm TOPILMADI"):   # AI topilmagan rasmni boshqa so'z bilan qayta qidiradi
+            calls = [NS(index=0, id="call_r", function=NS(name="search_images", arguments=json.dumps({"query": "subject retry"})))]
+            return _Stream([_chunk(tool_calls=calls), _chunk(finish="tool_calls"), _usage()], delay)
         urls = _found_urls(msgs)
         body = "Tayyor! Slaydlar yaratildi.\n```json\n" + json.dumps({"actions": _reply_actions(prompt, urls)}, ensure_ascii=False) + "\n```"
         items += _text_stream(body, 40)

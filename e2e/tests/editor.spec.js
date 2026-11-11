@@ -179,3 +179,19 @@ test('pastki AI qatori, boshqaruv va zoom tugmalari ixcham; AI panel torroq', as
   expect(m.ai).toBeLessThanOrEqual(322);
   expect(m.fs).toBeLessThanOrEqual(13);
 });
+
+test('AI update_element: id matn bo\'lsa ham, props to\'g\'ridan-to\'g\'ri yozilsa ham ishlaydi', async ({ page }) => {
+  await openEditor(page);
+  const r = await page.evaluate(async () => {
+    const p = JSON.parse(slides[0].json);
+    const t = (p.objects || []).find((o) => o._oid != null && (o.type === 'textbox' || o.type === 'i-text'));
+    if (!t) return { skip: true };
+    await executeAiCommands({ actions: [{ action: 'update_element', slide: '1', id: String(t._oid), fill: '#ff0000', fontWeight: 'bold' }] });
+    const t2 = JSON.parse(slides[0].json).objects.find((o) => String(o._oid) === String(t._oid));
+    return { fill: t2.fill, fw: t2.fontWeight, map: extractDeckStateMap()[0].objects.find((o) => String(o.id) === String(t._oid)) };
+  });
+  expect(r.skip).toBeFalsy();
+  expect(r.fill).toBe('#ff0000');
+  expect(String(r.fw)).toBe('bold');
+  expect(r.map.fontWeight).toBe('bold');      // AI uchun holatda ham ko'rinadi
+});

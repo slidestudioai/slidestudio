@@ -209,6 +209,12 @@ When user asks for N slides (2–30):
 - Delete image by number: {"action":"delete_image","image_number":K}
 - Move element: {"action":"move_element","slide":N,"id":OBJECT_ID,"left":X,"top":Y}
 - Update element: {"action":"update_element","slide":N,"id":OBJECT_ID,"props":{...}}
+  props can be any visible property from the LIVE DECK STATE: text, fill (text colour too), fontSize, fontFamily, fontWeight, fontStyle,
+  textAlign, underline, lineHeight, charSpacing, left, top, width, height (visible size), angle, opacity, stroke, strokeWidth, rx, ry,
+  shadow, animName/animDur/animDelay/animLoop. Example: {"action":"update_element","slide":2,"id":14,"props":{"fill":"#FACC15","fontWeight":"bold"}}.
+- READ THE DECK FIRST: before any edit, look at the LIVE DECK STATE of the slide (every object: shape, rx/ry, colours, font, size, text,
+  animation, background, transition). Small change ("rangini o'zgartir", "kattaroq qil", "matnni tuzat") → update_element / move_element on
+  the exact ids, keep everything else as it is. Do NOT rebuild the whole slide with replace_slide for a small edit.
 - Clear one slide content: {"action":"clear_slide","slide":N}
 - Switch active slide: {"action":"switch_slide","slide":N}
 When user says "o'chir", "o'chirib tashla", "delete", "remove" → use the matching delete_* action.

@@ -1543,7 +1543,7 @@
     });
     function startAiStream() {
       window._aiTurnId = (window._aiTurnId || 0) + 1;
-      window._ssSlidesDone = 0; window._ssPH = null;
+      window._ssSlidesDone = 0; window._ssPH = null; window._ssBuildingIdx = -1;
       window._ssLastDoneAt = 0;   // v58: yangi so'rov — slayd ushlab turish hisoblagichi tozalanadi
       isAiStreaming = true;
       aiSessionActive = true;

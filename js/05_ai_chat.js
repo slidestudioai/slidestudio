@@ -205,23 +205,57 @@
             stroke: o.stroke || null,
             opacity: o.opacity != null ? o.opacity : 1,
           };
-          if (isText) {
-            entry.text = (o.text || '').substring(0, 120);
-            entry.fontSize = o.fontSize || null;
-            entry.fontFamily = o.fontFamily || null;
+          // v59: AI slaydni to'liq ko'rsin — shakl turi, burchak, chiziq, soya, matn uslubi, animatsiya vaqti
+          const shapeName = { rect: 'rect', circle: 'circle', ellipse: 'ellipse', triangle: 'triangle', line: 'line', polygon: 'polygon', path: 'path', group: 'group' }[o.type];
+          if (!isText && !isImg && shapeName) entry.shape = shapeName;
+          if (o.type === 'rect') { entry.rx = Math.round(o.rx || 0); entry.ry = Math.round(o.ry || 0); }
+          if (o.type === 'circle' && o.radius) entry.radius = Math.round(o.radius * (o.scaleX || 1));
+          if (o.strokeWidth && o.stroke) entry.strokeWidth = o.strokeWidth;
+          if (Array.isArray(o.strokeDashArray) && o.strokeDashArray.length) entry.strokeDashArray = o.strokeDashArray;
+          if (o.shadow) {
+            const sh = typeof o.shadow === 'string' ? o.shadow : [o.shadow.color, o.shadow.blur, o.shadow.offsetX, o.shadow.offsetY].join(' ');
+            entry.shadow = sh;
           }
+          if (o.flipX) entry.flipX = true;
+          if (o.flipY) entry.flipY = true;
+          if (isText) {
+            entry.text = (o.text || '').substring(0, 600);
+            entry.fontSize = o.fontSize ? Math.round(o.fontSize * (o.scaleY || 1)) : null;
+            entry.fontFamily = o.fontFamily || null;
+            if (o.fontWeight && o.fontWeight !== 'normal' && o.fontWeight !== 400) entry.fontWeight = o.fontWeight;
+            if (o.fontStyle && o.fontStyle !== 'normal') entry.fontStyle = o.fontStyle;
+            if (o.textAlign && o.textAlign !== 'left') entry.textAlign = o.textAlign;
+            if (o.underline) entry.underline = true;
+            if (o.linethrough) entry.linethrough = true;
+            if (o.lineHeight && Math.abs(o.lineHeight - 1.16) > 0.01) entry.lineHeight = o.lineHeight;
+            if (o.charSpacing) entry.charSpacing = o.charSpacing;
+            if (o.textBackgroundColor) entry.textBackgroundColor = o.textBackgroundColor;
+          }
+          if (isImg && typeof o.src === 'string' && /^https?:/i.test(o.src)) entry.src = o.src.slice(0, 160);
+          if (isGif && typeof o.gifUrl === 'string' && /^https?:/i.test(o.gifUrl)) entry.src = o.gifUrl.slice(0, 160);
           if (isImg && o.imageNumber != null) entry.imageNumber = o.imageNumber;
           if (o.type === 'embedVideo' || o.isEmbed) { entry.type = 'video'; entry.url = o.embedUrl || ''; }
           if (o.type === 'slideButton' || o.isButton) { entry.type = 'button'; entry.kind = 'button'; entry.text = o.btnLabel || ''; entry.click = o.btnAction || 'next'; entry.target = o.btnTarget || ''; }
-          if (o.animName) entry.animation = o.animName;
+          if (o.animName) {
+            entry.animation = o.animName;
+            if (typeof o.animDur === 'number') entry.animDur = o.animDur;
+            if (typeof o.animDelay === 'number' && o.animDelay) entry.animDelay = o.animDelay;
+            if (o.animLoop) entry.animLoop = true;
+          }
           return entry;
         });
         const slideEntry = {
           slide: idx + 1, slide_index: idx + 1,
-          background: parsed.background || '#ffffff',
+          background: (typeof parsed.background === 'string' && parsed.background) || '#ffffff',
           imageNumbers: s.imageNumbers || [],
           objects: objects,
         };
+        if (s.transition) slideEntry.transition = s.transition;
+        try {
+          const bi = parsed.backgroundImage;
+          const bu = bi && (bi.src || bi.url);
+          if (typeof bu === 'string' && /^https?:/i.test(bu)) slideEntry.backgroundImageUrl = bu.slice(0, 160);
+        } catch (e) {}
         if (parsed.backgroundGif && (parsed.backgroundGif.src || parsed.backgroundGif.url)) {
           slideEntry.backgroundGif = {
             src: parsed.backgroundGif.src || parsed.backgroundGif.url,
