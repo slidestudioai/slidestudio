@@ -145,6 +145,9 @@ create table if not exists public.feedback_likes (
 create index if not exists idx_feedback_posts_created on public.feedback_posts (created_at desc);
 create index if not exists idx_feedback_posts_parent  on public.feedback_posts (parent_id);
 create index if not exists idx_feedback_likes_post    on public.feedback_likes (post_id);
+-- v60: admin izohni tepaga qadaydi (pin)
+alter table public.feedback_posts add column if not exists pinned_at timestamptz;
+create index if not exists idx_feedback_posts_pinned on public.feedback_posts (pinned_at desc nulls last);
 
 
 -- ============================================================================

@@ -2503,6 +2503,7 @@ try:
         "update_usage_atomic": update_usage_atomic,
         "add_paid_credits": add_paid_credits,
         "notify": (lambda uid, text: tgbot.notify_user(uid, text)) if tgbot is not None else None,
+        "is_admin_email": lambda email: bool(email) and email in admin_core.admin_emails(),   # v60: izohlarni pin/o'chirish
     })
 except Exception as _cm_err:
     print(f"[COMMUNITY] yuklanmadi: {_cm_err}")

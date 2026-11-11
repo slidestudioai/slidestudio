@@ -60,7 +60,9 @@
     return { overlay: ov, body: body, close: x.onclick };
   }
 
-  var REF_KEY = 'ss_pending_ref';
+  // v60: brauzer xotirasi qulfi (index.html) faqat 'ss-auth-v39' kalitlarini saqlaydi — referal kodi ham shu ostida
+  var REF_KEY = 'ss-auth-v39-ref';
+  var refStore = function () { return window.__ssAuthStorage || { getItem: function () { return null; }, setItem: function () {}, removeItem: function () {} }; };
   var Referral = {
     open: async function () {
       var m = modalShell('referralModal', 'Do\'st taklif qiling');
@@ -113,21 +115,35 @@
       var code = (u.searchParams.get('ref') || '').trim().toUpperCase();
       if (/^[A-Z0-9]{6,12}$/.test(code)) {
         window.__ssRefMem = code;
+        // v60: Google bilan kirishda sahifa qayta yuklanadi — kod xotirada yo'qolib, bonus berilmasdi. Endi 7 kun saqlanadi.
+        try { refStore().setItem(REF_KEY, JSON.stringify({ code: code, at: Date.now() })); } catch (e) {}
         u.searchParams.delete('ref');
         history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
       }
     } catch (e) {}
   })();
+  function storedRef() {
+    try {
+      var j = JSON.parse(refStore().getItem(REF_KEY) || 'null');
+      if (j && /^[A-Z0-9]{6,12}$/.test(j.code) && Date.now() - (j.at || 0) < 7 * 864e5) return j.code;
+      if (j) refStore().removeItem(REF_KEY);
+    } catch (e) {}
+    return null;
+  }
+  function forgetRef() { window.__ssRefMem = null; try { refStore().removeItem(REF_KEY); } catch (e) {} }
   var claiming = false;
   async function tryClaim() {
     if (claiming || !loggedIn()) return;
-    var code = window.__ssRefMem || null;
+    var code = window.__ssRefMem || storedRef();
     if (!code) return;
     claiming = true;
     try {
       var r = await post('/api/referral/claim', { code: code });
 
-      if (r.status !== 503 && r.status !== 401 && r.status !== 0) { window.__ssRefMem = null; }
+      if (r.status !== 503 && r.status !== 401 && r.status !== 0) { forgetRef(); }   // aniq javob (berildi yoki rad) — boshqa urinmaymiz
+      if (r.data && r.data.ok === false && r.data.error) {
+        toast('Taklif bonusi: ' + r.data.error, 'error');      // v60: sabab ko'rinsin (eski akkaunt, o'z havolasi va h.k.)
+      }
       if (r.data && r.data.ok) {
         toast('Do\'stingiz taklifi orqali kirdingiz — rahmat! 🎉');
         try { if (typeof loadUserStats === 'function') loadUserStats(); } catch (e) {}
@@ -140,6 +156,8 @@
 
   var Feedback = {
     state: { posts: [], total: 0, offset: 0 },
+    expanded: {},          // v60: javoblari ochilgan izohlar (Instagram kabi — boshida yopiq)
+    isAdmin: false,
     root: null,
     open: function () {
       var m = modalShell('feedbackModal', 'Izohlar');
@@ -202,7 +220,9 @@
         return;
       }
       this.state.total = r.data.total || 0;
-      this.state.posts = this.state.posts.concat(r.data.posts || []);
+      this.isAdmin = !!r.data.is_admin;
+      var have = {}; this.state.posts.forEach(function (p) { have[p.id] = 1; });
+      this.state.posts = this.state.posts.concat((r.data.posts || []).filter(function (p) { return !have[p.id]; }));
       this.render(false);
     },
     createPost: async function (text, parentId) {
@@ -212,9 +232,11 @@
       if (parentId) {
 
         var top = this.findTop(parentId);
-        if (top) top.replies.push(np);
+        if (top) { top.replies.push(np); this.expanded[top.id] = true; }   // o'z javobini darhol ko'rsin
       } else {
-        this.state.posts.unshift(np); this.state.total++;
+        var firstFree = 0;                                   // qadalgan izohlar tepada qoladi
+        while (firstFree < this.state.posts.length && this.state.posts[firstFree].pinned) firstFree++;
+        this.state.posts.splice(firstFree, 0, np); this.state.total++;
       }
       this.render(false);
       return true;
@@ -237,9 +259,13 @@
     },
     renderPost: function (p, isReply, topId) {
       var self = this;
-      var row = el('div', 'fb-post' + (isReply ? ' reply' : ''));
+      var row = el('div', 'fb-post' + (isReply ? ' reply' : '') + (p.pinned ? ' pinned' : ''));
       row.appendChild(avatar(p.author));
       var main = el('div', 'fb-main');
+      if (!isReply && p.pinned) {
+        var pin = el('div', 'fb-pinned'); pin.appendChild(icon('keep')); pin.appendChild(document.createTextNode(' Admin qadagan'));
+        main.appendChild(pin);
+      }
       var head = el('div', 'fb-head');
       head.appendChild(el('b', 'fb-author', p.author));
       head.appendChild(el('span', 'fb-time', timeAgo(p.created_at)));
@@ -300,7 +326,19 @@
         var ta = c.querySelector('textarea'); if (ta) ta.focus();
       };
       act.appendChild(rep);
-      if (p.mine) {
+      if (self.isAdmin && !isReply) {        // v60: admin izohni tepaga qadaydi
+        var pb = el('button', 'fb-act', p.pinned ? 'Qadashni olib tashlash' : 'Qadash'); pb.type = 'button';
+        pb.onclick = async function () {
+          pb.disabled = true;
+          var r = await post('/api/feedback/pin', { id: p.id, pinned: !p.pinned });
+          pb.disabled = false;
+          if (!r.ok) { toast((r.data && r.data.error) || 'Saqlab bo\'lmadi', 'error'); return; }
+          toast(r.data.pinned ? 'Izoh tepaga qadaldi 📌' : 'Qadash olib tashlandi');
+          self.load(true);
+        };
+        act.appendChild(pb);
+      }
+      if (p.mine || self.isAdmin) {
         var del = el('button', 'fb-act danger', 'O\'chirish'); del.type = 'button';
         del.onclick = async function () {
           var okDel = true;
@@ -321,9 +359,19 @@
       main.appendChild(act);
       main.appendChild(replyBox);
       if (!isReply && p.replies && p.replies.length) {
-        var rw = el('div', 'fb-replies');
-        p.replies.forEach(function (r2) { rw.appendChild(self.renderPost(r2, true, p.id)); });
-        main.appendChild(rw);
+        // v60: Instagram kabi — javoblar yopiq, «—— N ta javobni ko'rish» bosilganda ochiladi
+        var open = !!self.expanded[p.id];
+        var tg = el('button', 'fb-toggle-replies'); tg.type = 'button';
+        tg.appendChild(el('span', 'fb-tr-line'));
+        tg.appendChild(document.createTextNode(open ? 'Javoblarni yashirish' : (p.replies.length + ' ta javobni ko\'rish')));
+        tg.setAttribute('aria-expanded', open ? 'true' : 'false');
+        tg.onclick = function () { self.expanded[p.id] = !open; self.render(false); };
+        main.appendChild(tg);
+        if (open) {
+          var rw = el('div', 'fb-replies');
+          p.replies.forEach(function (r2) { rw.appendChild(self.renderPost(r2, true, p.id)); });
+          main.appendChild(rw);
+        }
       }
       row.appendChild(main);
       return row;

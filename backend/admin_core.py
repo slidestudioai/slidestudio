@@ -428,14 +428,31 @@ def user_action(actor: str, body: Dict[str, Any]) -> Dict[str, Any]:
     elif act == "add_credits":
         pages = _num(body.get("pages"), "pages", -100000, 100000)
         units = int(round(pages * mon.UNIT))
-        paid = int(u["paid_credits"])
-        newp = max(0, paid + units)
-        units_delta = newp - paid
-        patch["paid_credits"] = newp
-        patch["slide_credits"] = int(u["free_credits"]) + newp
-        note = f"paket varaq {pages:+g}"
-        if units_delta > 0:
-            tg_text = f"🎁 Balansingizga <b>+{units_delta / mon.UNIT:g}</b> varaq qo'shildi."
+        if units >= 0:
+            paid = int(u["paid_credits"])
+            newp = paid + units
+            units_delta = newp - paid
+            patch["paid_credits"] = newp
+            patch["slide_credits"] = int(u["free_credits"]) + newp
+            note = f"paket varaq {pages:+g}"
+            if units_delta > 0:
+                tg_text = f"🎁 Balansingizga <b>+{units_delta / mon.UNIT:g}</b> varaq qo'shildi."
+        else:
+            # v60: AYIRISH avval paket varaqlardan, yetmasa BUGUNGI bepul varaqlardan olinadi.
+            # Avval paket 0 bo'lgach kunlik bepul limit darhol qaytib kelardi (100 bor, 200 ayirilsa ham 10 qolardi).
+            # Bepul qismidan olinsa 24 soatlik oyna hozirdan boshlanadi — bepul varaq ertaga (24 soatdan keyin) qaytadi.
+            cur = mon.apply_24h_reset(dict(row))
+            paid, free = int(cur["paid_credits"]), int(cur["free_credits"])
+            take = -units
+            from_paid = min(paid, take)
+            from_free = min(free, take - from_paid)
+            newp, newf = paid - from_paid, free - from_free
+            patch.update({"paid_credits": newp, "free_credits": newf, "slide_credits": newp + newf})
+            if from_free > 0:
+                patch["last_reset_time"] = _now().isoformat()
+            units_delta = -(from_paid + from_free)
+            note = (f"varaq {pages:+g}: paketdan −{from_paid / mon.UNIT:g}"
+                    + (f", bugungi bepuldan −{from_free / mon.UNIT:g} (24 soatdan keyin qaytadi)" if from_free else ""))
     elif act == "set_credits":
         fp = body.get("free_pages")
         pp = body.get("paid_pages")

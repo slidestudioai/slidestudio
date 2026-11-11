@@ -49,6 +49,13 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
     save_credits = ctx["save_user_credits"]
     add_paid = ctx["add_paid_credits"]
     notify = ctx.get("notify")          # async (user_id, html_text) — taklif qilgan odamga Telegram xabari
+    is_admin_email = ctx.get("is_admin_email") or (lambda email: False)   # v60: izohlarni pin qilish / o'chirish huquqi
+
+    def is_admin(user) -> bool:
+        try:
+            return bool(user and is_admin_email(str(getattr(user, "email", "") or "").strip().lower()))
+        except Exception:
+            return False
 
     def auth(token: str):
         sb = get_sb()
@@ -213,8 +220,21 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             "likes": likes_map.get(row["id"], 0),
             "liked": row["id"] in liked,
             "mine": bool(me and row.get("user_id") == me),
+            "pinned": bool(row.get("pinned_at")),
             "replies": [],
         }
+
+    def _list_tops(sb, offset: int, limit: int):
+        """v60: pin qilingan izohlar ENG TEPADA (pinned_at bo'yicha), qolgani yangi -> eski.
+        pinned_at ustuni hali yo'q bo'lsa (SQL qayta ishga tushirilmagan) — eski tartib."""
+        base = lambda: sb.table("feedback_posts").select("*", count="exact").is_("parent_id", "null")
+        try:
+            return (base().order("pinned_at", desc=True, nullsfirst=False).order("created_at", desc=True)
+                    .range(offset, offset + limit - 1).execute())
+        except Exception as e:
+            if "pinned_at" not in str(e):
+                raise
+            return base().order("created_at", desc=True).range(offset, offset + limit - 1).execute()
 
     @app.get("/api/feedback/list")
     async def feedback_list(limit: int = 15, offset: int = 0, token: str = ""):
@@ -226,9 +246,7 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
         user = await asyncio.to_thread(auth, token) if token and token != "dev-token" else None
         me = str(user.id) if user else None
         try:
-            top = await asyncio.to_thread(lambda: sb.table("feedback_posts").select("*", count="exact")
-                                          .is_("parent_id", "null").order("created_at", desc=True)
-                                          .range(offset, offset + limit - 1).execute())
+            top = await asyncio.to_thread(_list_tops, sb, offset, limit)
             tops = top.data or []
             total = getattr(top, "count", None) or (offset + len(tops))
             ids = [t["id"] for t in tops]
@@ -255,7 +273,38 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             p = by_id.get(r.get("parent_id"))
             if p is not None:
                 p["replies"].append(_shape(r, likes_map, liked, me))
-        return {"posts": [by_id[i] for i in ids], "total": total}
+        return {"posts": [by_id[i] for i in ids], "total": total, "is_admin": is_admin(user)}
+
+    @app.post("/api/feedback/pin")
+    async def feedback_pin(payload: Dict[str, Any]):
+        """v60: admin izohni tepaga qadaydi (pin) yoki qadashni olib tashlaydi."""
+        sb = get_sb()
+        if not sb:
+            return no_db()
+        user = await asyncio.to_thread(auth, str(payload.get("token") or ""))
+        if not user:
+            return _json({"error": "Avval tizimga kiring"}, 401)
+        if not is_admin(user):
+            return _json({"error": "Faqat admin izohni qadab qo'ya oladi"}, 403)
+        try:
+            pid = str(uuid.UUID(str(payload.get("id") or "")))
+        except ValueError:
+            return _json({"error": "Noto'g'ri izoh"}, 400)
+        on = bool(payload.get("pinned", True))
+        try:
+            pr = await asyncio.to_thread(lambda: sb.table("feedback_posts").select("id,parent_id").eq("id", pid).limit(1).execute())
+            if not pr.data:
+                return _json({"error": "Izoh topilmadi"}, 404)
+            if pr.data[0].get("parent_id"):
+                return _json({"error": "Faqat asosiy izohni qadash mumkin (javobni emas)"}, 400)
+            val = datetime.now(timezone.utc).isoformat() if on else None
+            await asyncio.to_thread(lambda: sb.table("feedback_posts").update({"pinned_at": val}).eq("id", pid).execute())
+        except Exception as e:
+            print(f"[FEEDBACK PIN] {str(e)[:200]}")
+            if "pinned_at" in str(e):
+                return _json({"error": "Bazada pinned_at ustuni yo'q — SUPABASE_SCHEMA.sql ni qayta ishga tushiring."}, 503)
+            return _json({"error": "Saqlab bo'lmadi"}, 503)
+        return {"ok": True, "pinned": on}
 
     @app.post("/api/feedback/post")
     async def feedback_post(payload: Dict[str, Any]):
@@ -377,7 +426,7 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
                                          .eq("id", pid).limit(1).execute())
             if not pr.data:
                 return {"ok": True}
-            if str(pr.data[0].get("user_id")) != uid:
+            if str(pr.data[0].get("user_id")) != uid and not is_admin(user):   # v60: admin har qanday izohni o'chira oladi
                 return _json({"error": "Faqat o'zingiz yozganini o'chira olasiz"}, 403)
             kids = await asyncio.to_thread(lambda: sb.table("feedback_posts").select("id").eq("parent_id", pid).execute())
             ids = [pid] + [k["id"] for k in (kids.data or [])]
