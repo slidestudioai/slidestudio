@@ -195,3 +195,18 @@ test('AI update_element: id matn bo\'lsa ham, props to\'g\'ridan-to\'g\'ri yozil
   expect(String(r.fw)).toBe('bold');
   expect(r.map.fontWeight).toBe('bold');      // AI uchun holatda ham ko'rinadi
 });
+
+test('AI kartalari bir-biriga kirib ketmaydi va panel chetidan chiqmaydi', async ({ page }) => {
+  await openEditor(page);
+  const out = await page.evaluate(() => ssFixCardLayout([
+    { type: 'rect', left: 24, top: 26, width: 912, height: 488 },
+    { type: 'rect', left: 38, top: 94, width: 443, height: 80 }, { type: 'text', left: 48, top: 104, width: 420, text: 'a' },
+    { type: 'rect', left: 481, top: 94, width: 443, height: 80 }, { type: 'text', left: 491, top: 104, width: 425, text: 'b' },
+  ]));
+  const [panel, a, ta, b, tb] = out;
+  expect(b.left - (a.left + a.width)).toBeGreaterThanOrEqual(19);              // oraliq bor
+  expect(b.left + b.width).toBeLessThanOrEqual(panel.left + panel.width - 14);  // panel ichida
+  expect(Math.abs(a.width - b.width)).toBeLessThanOrEqual(1);                   // teng kenglik
+  expect(ta.left + ta.width).toBeLessThanOrEqual(a.left + a.width);             // matn kartadan chiqmaydi
+  expect(tb.left).toBeGreaterThanOrEqual(b.left);
+});
