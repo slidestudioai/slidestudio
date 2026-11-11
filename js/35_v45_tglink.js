@@ -10,11 +10,76 @@
   if (window.__ssTgLinkInit) return;
   window.__ssTgLinkInit = true;
   var tgw = window.Telegram && window.Telegram.WebApp;
-  if (tgw && tgw.initData) return;
+  function toast(m, k) { try { if (typeof showToast === 'function') showToast(m, k || 'info'); } catch (e) {} }
+  async function ask(title, text, okText) {
+    try {
+      if (window.Swal) { var r = await Swal.fire({ title: title, text: text, icon: 'question', showCancelButton: true, confirmButtonText: okText, cancelButtonText: 'Bekor', confirmButtonColor: '#d93025', reverseButtons: true, heightAuto: false }); return !!r.isConfirmed; }
+    } catch (e) {}
+    return confirm(title + '\n' + text);
+  }
+
+  /* v61: Mini App ichida — Google akkaunt holati: ulangan bo'lsa «Uzish», bo'lmasa «Google akkauntni ulash» */
+  if (tgw && tgw.initData) {
+    var gState = null, gAt = 0;
+    var mpost = async function (action) {
+      var r = await fetch('/api/telegram/miniapp-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ init_data: tgw.initData, action: action }) });
+      var j = {}; try { j = await r.json(); } catch (e) {}
+      return { ok: r.ok, data: j };
+    };
+    window.ssGoogleStatus = async function (force) {
+      if (!force && gState && Date.now() - gAt < 60000) return gState;
+      try { var r = await mpost('status'); if (r.ok) { gState = r.data; gAt = Date.now(); } } catch (e) {}
+      return gState || { linked: false };
+    };
+    window.ssGoogleDecorate = async function (root) {
+      var els = (root || document).querySelectorAll('[data-google-link]');
+      if (!els.length) return;
+      var st = await window.ssGoogleStatus();
+      els.forEach(function (el) {
+        el.textContent = st.linked ? ('✅ Google ulangan' + (st.email ? ' (' + st.email + ')' : '') + ' · Uzish') : '🔗 Google akkauntni ulash';
+        el.classList.toggle('is-linked', !!st.linked);
+      });
+    };
+    window.ssGoogleLink = async function () {
+      var st = await window.ssGoogleStatus(true);
+      if (st.linked) {
+        if (!(await ask('Google akkaunt uzilsinmi?', 'Bot va sayt balansi ajraladi. Keyin /link bilan qayta ulash mumkin.', 'Uzish'))) return;
+        var u = await mpost('unlink');
+        if (u.ok) { toast('Google akkaunt uzildi.'); setTimeout(function () { location.reload(); }, 900); }
+        else toast('Uzib bo\u2018lmadi. Keyinroq urinib ko\u2018ring.', 'error');
+        return;
+      }
+      var r = await mpost('link');
+      if (!r.ok || !r.data.url) { toast('Ulab bo\u2018lmadi. Keyinroq urinib ko\u2018ring.', 'error'); return; }
+      toast('Brauzer ochiladi — Google bilan kiring, ulash o\u2018zi tugaydi.');
+      try { tgw.openLink(r.data.url); } catch (e) { window.open(r.data.url, '_blank'); }
+    };
+    return;
+  }
 
   function token() { try { return (typeof supabaseToken !== 'undefined') ? supabaseToken : ''; } catch (e) { return ''; } }
   function logged() { var t = token(); return !!t && t !== 'dev-token'; }
-  function toast(m, k) { try { if (typeof showToast === 'function') showToast(m, k || 'info'); } catch (e) {} }
+
+  /* v61: holat oldindan bilinadi — ulangan bo'lsa tugmada «Ulash» emas «Uzish» yoziladi */
+  var tState = null, tAt = 0, tTok = '';
+  window.ssTgStatus = async function (force) {
+    if (!logged()) return { linked: false };
+    if (!force && tState && tTok === token() && Date.now() - tAt < 60000) return tState;
+    try { var r = await api('/api/telegram/link-status'); if (r.ok) { tState = r.data; tAt = Date.now(); tTok = token(); } } catch (e) {}
+    return tState || { linked: false };
+  };
+  window.ssTgDecorate = async function (root) {
+    var els = (root || document).querySelectorAll('[data-tg-link]');
+    if (!els.length) return;
+    var st = await window.ssTgStatus();
+    els.forEach(function (el) {
+      var short = el.getAttribute('data-tg-link') === 'short';
+      el.textContent = st.linked ? (short ? 'Uzish' : '✅ Telegram ulangan · Uzish') : (short ? 'Ulash' : '✈️ Telegram botni ulash');
+      el.classList.toggle('is-linked', !!st.linked);
+      var lab = el.closest('.ss-set-row') && el.closest('.ss-set-row').querySelector('span');
+      if (lab && short) lab.firstChild.textContent = st.linked ? 'Bot ulangan ✅' : 'Botni ulash';
+    });
+  };
 
   async function api(url) {
     var r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token() }) });
@@ -28,12 +93,19 @@
     if (!logged()) { toast('Avval Google bilan tizimga kiring.', 'error'); return; }
     busy = true;
     var win = null;
-    try { win = window.open('about:blank', '_blank'); } catch (e) { win = null; }      // bosish paytida ochiladi (brauzer bloklamasin)
+    var knownLinked = !!(tState && tState.linked && tTok === token());               // v61: ulanganligi ma'lum — bo'sh oyna ochilmaydi
+    if (!knownLinked) { try { win = window.open('about:blank', '_blank'); } catch (e) { win = null; } }      // bosish paytida ochiladi (brauzer bloklamasin)
     try {
       var st = await api('/api/telegram/link-status');
       if (st.ok && st.data && st.data.linked) {
         if (win && !win.closed) win.close();
-        toast('✅ Telegram allaqachon ulangan — balans bot bilan bir xil.');
+        // v61: allaqachon ulangan — uzishni taklif qilamiz
+        if (await ask('Telegram bot ulangan', 'Uzsangiz bot va sayt balansi ajraladi. Uzilsinmi?', 'Uzish')) {
+          var u = await api('/api/telegram/unlink');
+          if (u.ok) { tState = { linked: false, enabled: true }; tAt = Date.now(); toast('Telegram bot uzildi.'); }
+          else toast('Uzib bo\u2018lmadi. Keyinroq urinib ko\u2018ring.', 'error');
+          try { window.ssTgDecorate(); } catch (e) {}
+        }
         return;
       }
       var r = await api('/api/telegram/link-code');

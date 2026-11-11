@@ -1360,9 +1360,17 @@
         regBtn.innerHTML = '<span class="material-symbols-outlined">refresh</span> Qayta yaratish';
         regBtn.onclick = (e) => { e.stopPropagation(); regenerateLastResponse(); };
         actions.appendChild(regBtn);
-        if (window._preAiSlidesSnapshot) {
+        if (window._aiUndone && window._postAiSlidesSnapshot) {     // v61: bekor qilingan — AI natijasini qaytarish
+          const redoAiBtn = document.createElement('button');
+          redoAiBtn.className = 'ai-action-btn ai-redo-btn';
+          redoAiBtn.type = 'button';
+          redoAiBtn.innerHTML = '<span class="material-symbols-outlined">redo</span> Qaytarish';
+          redoAiBtn.title = "Bekor qilingan AI natijasini qaytarish";
+          redoAiBtn.onclick = (e) => { e.stopPropagation(); redoAiChanges(); };
+          actions.appendChild(redoAiBtn);
+        } else if (window._preAiSlidesSnapshot) {
           const undoAiBtn = document.createElement('button');
-          undoAiBtn.className = 'ai-action-btn';
+          undoAiBtn.className = 'ai-action-btn ai-undo-btn';
           undoAiBtn.type = 'button';
           undoAiBtn.innerHTML = '<span class="material-symbols-outlined">undo</span> Bekor qilish';
           undoAiBtn.onclick = (e) => { e.stopPropagation(); undoAiChanges(); };

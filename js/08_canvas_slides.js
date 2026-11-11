@@ -1655,9 +1655,8 @@
 
       setTimeout(() => toast.classList.remove('show'), type === 'error' ? 5000 : 3000);
 
-      if (type === 'error') {
-        try { showErrorPopup(msg); } catch (e) {  }
-      }
+      // v61: o'ng pastdagi ikkinchi (takroriy) qizil oyna olib tashlandi — u yashiringandan keyin ham ko'rinmas holda
+      // AI yozish joyi / jo'natish tugmasi / telefonning pastki qismini to'sib, bosish ishlamay qolardi.
     }
 
     let _errorPopupTimer = null;

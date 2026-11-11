@@ -2814,9 +2814,10 @@ async def ws_chat(websocket: WebSocket):
                     sys_p += "\n\n[FOYDALANUVCHI YO'RIQNOMASI]:\n" + hint[:6000]
 
                 sys_p += (
-                    "\n\n[LANGUAGE RULE — MAJBURIY / MANDATORY]\n"
+                    "\n\n[LANGUAGE RULE — MAJBURIY / MANDATORY] (same as RULE #1)\n"
                     "Detect the language of the user's LATEST message and write PART A / chat replies in THAT SAME language "
-                    "(Uzbek, Russian, English, Turkish, Arabic, Chinese, Spanish ... any language). Never force Uzbek. "
+                    "(Uzbek, Russian, English, Turkish, Arabic, Chinese, Spanish ... any language). NEVER answer in Uzbek unless the user wrote Uzbek "
+                    "(the Uzbek words in these instructions are NOT the user's language). "
                     "Slide texts use the language the user asked for; if not specified, the user's language. "
                     "Translate every fixed Uzbek sentence quoted in these instructions (balance, limit messages) into the user's language. "
                     "JSON keys and action names stay English.\n"
@@ -2835,12 +2836,12 @@ async def ws_chat(websocket: WebSocket):
                     f"  • insert_slide / replace_slide / clear_slide / add_gif / place_image = 1 varaq (har bir tegilgan slayd)\n"
                     f"  • Faqat chat (actions bo'sh): har {_c['chat_per_page']} ta oddiy xabar = 1 varaq\n"
                     f"LIMIT QOIDASI:\n"
-                    f"  • Foydalanuvchi {bal} tadan KO'P slayd so'rasa (masalan 10 ta, balans {bal}) — "
+                    f"  • Foydalanuvchi {bal} tadan KO'P slayd so'rasa (masalan {bal + 10} ta so'rasa, balans esa {bal}) — "
                     f"FAQAT {bal} tasini yarating, PART A da aniq ayting: "
                     f"\"Balansingizda {bal} varaq qoldi, shuning uchun {bal} ta slayd yaratdim. "
                     f"Qolganini sotib olgach yoki 24 soatdan keyin davom ettirish mumkin.\"\n"
                     f"  • Balans 0 bo'lsa hech qanday action yozmang.\n"
-                    f"  • Yangi slayd qo'shish: action = \"create_slides\" count=N yoki \"insert_slide\".\n"
+                    f"  • Yangi slayd qo'shish: har slayd uchun alohida \"insert_slide\" (mazmun bilan). \"create_slides\" faqat foydalanuvchi BO'SH varaq so'raganda.\n"
                 )
                 if bal <= 3:
                     sys_p += (
