@@ -1264,6 +1264,7 @@
       if (liveOnes.length) enqueueAiCommands({ actions: liveOnes });
     }
     function capturePreAiSnapshot() {
+      window._aiUndone = false; window._postAiSlidesSnapshot = null;   // v61: yangi so'rov — eski «Qaytarish» holati tozalanadi
       try {
         window._preAiSlidesSnapshot = JSON.stringify({
           slides: (slides || []).map(s => ({
@@ -1279,37 +1280,68 @@
       }
     }
     window.capturePreAiSnapshot = capturePreAiSnapshot;
+    function _snapshotNow() {
+      try { saveCurrentSlideState(); } catch (e) {}
+      return JSON.stringify({
+        slides: (slides || []).map(s => ({ json: s.json, thumb: s.thumb, imageNumbers: (s.imageNumbers || []).slice(), transition: s.transition })),
+        activeIndex: activeIndex,
+      });
+    }
+    function _restoreSnapshot(snap, okMsg) {
+      const backup = JSON.parse(snap);
+      if (!backup || !Array.isArray(backup.slides) || backup.slides.length === 0) return false;
+      try { recordGlobalState(); } catch (e) {  }
+      slides = backup.slides;
+      activeIndex = Math.min(Math.max(backup.activeIndex || 0, 0), slides.length - 1);
+      try { recalculateGlobalImageCounter(); } catch (e) {  }
+      _lastRenderedSlideIndex = -1;
+      loadSlideCanvas(activeIndex, () => {
+        renderSidebar();
+        updateSlideCounterUI();
+        updateAllImageBadges();
+        try { recordGlobalState(); } catch (e) {  }
+        try { hasUnsavedChanges = true; } catch (e) {}
+        showToast(okMsg);
+      });
+      try { if (typeof refreshChatMessageActions === 'function') refreshChatMessageActions(); } catch (e) {}
+      return true;
+    }
     function undoAiChanges() {
       if (!window._preAiSlidesSnapshot) {
         showToast("Bekor qilish uchun oldingi holat topilmadi", 'error');
         return;
       }
       try {
-        const backup = JSON.parse(window._preAiSlidesSnapshot);
-        if (!backup || !Array.isArray(backup.slides) || backup.slides.length === 0) {
+        // v61: bekor qilishdan OLDIN AI natijasi saqlanadi — «Qaytarish» tugmasi uni tiklaydi
+        window._postAiSlidesSnapshot = _snapshotNow();     // tugmalar qayta chizilishidan OLDIN saqlanadi
+        window._aiUndone = true;
+        if (!_restoreSnapshot(window._preAiSlidesSnapshot, "AI o'zgarishlari bekor qilindi. «Qaytarish» bilan AI natijasini qaytarish mumkin.")) {
+          window._aiUndone = false;
           showToast("Bekor qilish uchun oldingi holat topilmadi", 'error');
           return;
         }
-
-        try { recordGlobalState(); } catch (e) {  }
-        slides = backup.slides;
-        activeIndex = Math.min(Math.max(backup.activeIndex || 0, 0), slides.length - 1);
-        try { recalculateGlobalImageCounter(); } catch (e) {  }
-        _lastRenderedSlideIndex = -1;
-        loadSlideCanvas(activeIndex, () => {
-          renderSidebar();
-          updateSlideCounterUI();
-          updateAllImageBadges();
-          try { recordGlobalState(); } catch (e) {  }
-          showToast("AI o'zgarishlari bekor qilindi (Ctrl+Y bilan qaytarish mumkin)");
-        });
-
       } catch (e) {
         console.warn('undoAiChanges xatoligi:', e);
+        window._aiUndone = false;
         showToast("Xatolik yuz berdi", 'error');
       }
     }
     window.undoAiChanges = undoAiChanges;
+    function redoAiChanges() {
+      if (!window._postAiSlidesSnapshot) { showToast("Qaytarish uchun AI natijasi topilmadi", 'error'); return; }
+      try {
+        window._aiUndone = false;
+        if (!_restoreSnapshot(window._postAiSlidesSnapshot, "AI natijasi qaytarildi")) {
+          window._aiUndone = true;
+          showToast("Qaytarish uchun AI natijasi topilmadi", 'error');
+        }
+      } catch (e) {
+        console.warn('redoAiChanges xatoligi:', e);
+        window._aiUndone = true;
+        showToast("Xatolik yuz berdi", 'error');
+      }
+    }
+    window.redoAiChanges = redoAiChanges;
 
     const INTERRUPTED_KEY = 'slide_studio_interrupted_v1';
     const INTERRUPTED_MAX = 5;

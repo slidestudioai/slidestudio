@@ -112,7 +112,8 @@
       html += '<div class="ssset-head"><div class="ssset-av">' + esc((em[0] || 'S').toUpperCase()) + '</div><div><b>' + esc(em) + '</b><span class="ssset-plan ' + pl[1] + '">' + esc(pl[0]) + '</span></div></div>';
       html += '<div class="ssset-card" id="ssSetMeters">' + (window.ssMetersHTML ? window.ssMetersHTML() : '') + '</div>';
       if (!s.unlimited) html += '<button type="button" class="ssset-btn pri" id="ssBuyPack">➕ Varaq sotib olish' + packTxt + '</button>';
-      if (window.ssTgLink && !tgw) html += '<button type="button" class="ssset-btn" id="ssTg">✈️ Telegram botni ulash</button>';
+      if (window.ssTgLink && !tgw) html += '<button type="button" class="ssset-btn" id="ssTg" data-tg-link>✈️ Telegram botni ulash</button>';
+      if (tgw && window.ssGoogleLink) html += '<button type="button" class="ssset-btn" id="ssGg" data-google-link>🔗 Google akkauntni ulash</button>';   // v61: Mini App
       html += '<button type="button" class="ssset-btn" id="ssTools">🛠 Asboblar va tozalash</button>';
       html += '<button type="button" class="ssset-btn adm" id="ssAdmin" style="display:none">🛡 Admin panel</button>';
       if (!tgw) html += '<button type="button" class="ssset-btn" id="ssOut">Chiqish</button>';
@@ -131,6 +132,9 @@
     ov.querySelector('.ssset-x').onclick = closeSettings;
     on('ssBuyPack', function () { closeSettings(); if (mon()) mon().startCheckout('pack'); });
     on('ssTg', function () { closeSettings(); try { window.ssTgLink(); } catch (e) {} });
+    on('ssGg', function () { closeSettings(); try { window.ssGoogleLink(); } catch (e) {} });
+    try { if (window.ssTgDecorate) window.ssTgDecorate(ov); } catch (e) {}
+    try { if (window.ssGoogleDecorate) window.ssGoogleDecorate(ov); } catch (e) {}
     on('ssIn', function () { closeSettings(); try { handleGoogleLogin(); } catch (e) {} });
     on('ssOut', function () { closeSettings(); try { handleLogout(); } catch (e) {} });
     on('ssTools', function () {

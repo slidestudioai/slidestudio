@@ -3997,6 +3997,57 @@ async def telegram_link_status(request: Request):
     return JSONResponse({"linked": linked, "enabled": True}, headers={"Cache-Control": "no-store"})
 
 
+@router.post("/api/telegram/unlink")
+async def telegram_unlink_web(request: Request):
+    """v61: saytdan (Google akkaunt) Telegram botni UZISH. Balanslar ajraladi — bot o'z (Telegram) akkauntiga qaytadi."""
+    if not ENABLED:
+        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
+    me = await _web_user(request)
+    if not me:
+        return JSONResponse({"error": "login_required"}, status_code=401)
+    try:
+        sb = _sb()
+        r = await asyncio.to_thread(lambda: sb.table("tg_links").select("tg_id").eq("user_id", me[0]).execute())
+        tids = [int(x["tg_id"]) for x in (r.data or []) if x.get("tg_id") is not None]
+    except Exception as e:
+        _db_warn(e)
+        return JSONResponse({"error": "db_not_ready"}, status_code=503)
+    for tid in tids:
+        if await asyncio.to_thread(_unlink_sync, tid):
+            try:
+                await _send(tid, "🔌 Sayt akkauntingiz (Google) bu Telegram'dan <b>uzildi</b>. Qayta ulash: /link")
+            except Exception:
+                pass
+    return JSONResponse({"ok": True, "unlinked": len(tids)}, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/api/telegram/miniapp-link")
+async def telegram_miniapp_link(request: Request):
+    """v61: Mini App ichida Google akkaunt holati: action = status | link | unlink (init_data bilan tasdiqlanadi)."""
+    if not ENABLED:
+        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    user = verify_init_data(str((body or {}).get("init_data") or ""))
+    if not user:
+        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
+    tid = int(user["id"])
+    action = str((body or {}).get("action") or "status")
+    if action == "link":
+        return JSONResponse({"url": f"{SITE_URL}/?tglink={_make_token('L', tid, 0, 600)}"}, headers={"Cache-Control": "no-store"})
+    if action == "unlink":
+        ok = await asyncio.to_thread(_unlink_sync, tid)
+        return JSONResponse({"ok": bool(ok)} if ok else {"error": "db"}, status_code=200 if ok else 503)
+    try:
+        linked = await asyncio.to_thread(_linked_sync, tid)
+    except Exception:
+        linked = None
+    return JSONResponse({"linked": bool(linked), "email": _mask_email(linked[1]) if linked else ""},
+                        headers={"Cache-Control": "no-store"})
+
+
 _used_links: "OrderedDict[str, float]" = OrderedDict()
 
 
