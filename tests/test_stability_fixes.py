@@ -362,3 +362,15 @@ def test_create_checkout_sends_gross_price_and_signed_net(client, monkeypatch):
     assert cd["net_amount"] == "5.00" and cd["credits"] == "550" and cd["user_id"] == "u1"
     assert main._topup_verified_credits(cd, "u1", 589) == 550
     assert main._topup_verified_credits(cd, "someone-else", 589) is None
+
+
+def test_create_checkout_shows_lemon_reason(monkeypatch):
+    monkeypatch.setenv("LEMON_SQUEEZY_API_KEY", "k")
+    monkeypatch.setenv("LEMON_SQUEEZY_STORE_ID", "1")
+    monkeypatch.setenv("LEMON_SQUEEZY_VARIANT_ID", "2")
+    body = json.dumps({"errors": [{"detail": "The custom price field must be at least 50.",
+                                   "source": {"pointer": "/data/attributes/checkout_data/custom_price"}}]})
+    monkeypatch.setattr(main, "_ls_post_checkout", lambda k, b: {"status": 422, "error_body": body})
+    code, data = asyncio.run(main._build_checkout("u1", "", "", "pack", quote=main._topup_quote("starter", 100, 100)))
+    assert code == 502 and data["ls_status"] == 422
+    assert "custom price field must be at least 50" in data["error"] and "custom_price" in data["error"]

@@ -164,7 +164,10 @@
     render();
   }
 
-  function showError(msg) { els.error.textContent = msg; els.error.hidden = false; }
+  function showError(msg) {
+    els.error.textContent = msg; els.error.hidden = false;
+    try { els.error.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) {}
+  }
   function hideError() { els.error.hidden = true; els.error.textContent = ''; }
 
   function setBusy(on) {
@@ -324,7 +327,10 @@
       });
       var data = {};
       try { data = await r.json(); } catch (_) { data = { error: "Server javobi noto'g'ri (HTTP " + r.status + ')' }; }
-      if (!r.ok || !data.checkout_url) throw new Error(data.error || data.hint || 'Checkout havolasi olinmadi');
+      if (!r.ok || !data.checkout_url) {
+        console.warn('[topup] create-checkout', r.status, data);
+        throw new Error((data.error || data.hint || 'Checkout havolasi olinmadi') + (r.status ? ' [HTTP ' + r.status + ']' : ''));
+      }
 
       var tgw = null;
       try { tgw = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null; } catch (_) {}

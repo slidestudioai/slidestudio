@@ -1656,7 +1656,27 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
         msg = "Lemon Squeezy so'rovni qabul qilmadi (422)."
     else:
         msg = f"Lemon Squeezy xatosi (HTTP {code})."
+    reason = _ls_error_reason(res.get("error_body", ""))
+    if reason:
+        msg = f"{msg} Sabab: {reason}"
     return 502, {"error": msg, "ls_status": code, "detail": res.get("error_body", "")[:300]}
+
+
+def _ls_error_reason(raw: str) -> str:
+    """Lemon Squeezy JSON:API xatosidan qisqa sabab: 'detail (source.pointer)'. Kalitlar bu yerda bo'lmaydi."""
+    try:
+        errs = (json.loads(raw or "{}") or {}).get("errors") or []
+    except Exception:
+        return ""
+    parts = []
+    for e in errs[:3]:
+        if not isinstance(e, dict):
+            continue
+        d = str(e.get("detail") or e.get("title") or "").strip()
+        ptr = str(((e.get("source") or {}).get("pointer")) or "").strip()
+        if d:
+            parts.append(f"{d} ({ptr})" if ptr else d)
+    return "; ".join(parts)[:300]
 
 
 async def _checkout_for_bot(user_id: str, email: str = "", return_url: str = "", product: str = "pack") -> dict:
