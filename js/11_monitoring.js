@@ -281,6 +281,8 @@
   async function startCheckout(product) {
     product = 'pack';
     if (_checkoutBusy) return;
+    // Yangi "Balansni to'ldirish" modali (js/46_topup.js): paket tanlash + komissiya + Lemon overlay
+    if (typeof window.openTopUpModal === 'function' && document.getElementById('topUpModal')) { window.openTopUpModal(); return; }
     if (!isLoggedIn()) {
       try { showToast("To'lov uchun avval tizimga kiring.", 'error'); } catch (_) {}
       return;
