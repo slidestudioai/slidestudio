@@ -1392,7 +1392,8 @@ def billing_plans():
         "deep_pages_per_pack": pack_units() // MODES["deep"]["page"],
         "free_daily": rt("free_daily_pages"),
         "deep_free_daily": free_daily_units() // MODES["deep"]["page"],
-        "note": "Lemon Squeezy komissiyasi: 5% + $0.50 — narxni shunga qarab belgilang",
+        "note": "Lemon Squeezy komissiyasi: 6.5% + $0.50 — to'lovda mijozga qo'shiladi",
+        "topup_packages": {k: _topup_quote_public(_topup_quote(k, v["net_cents"], v["credits"])) for k, v in TOPUP_PACKAGES.items()},
     }
 
 def _clean_env(name: str, bearer: bool = False) -> str:
@@ -1468,12 +1469,126 @@ async def create_lemon_checkout(payload: Dict[str, Any] = None):
         return JSONResponse({"error": "Sessiya tugagan. Qayta kiring."}, status_code=401)
     user_id = user_res.user.id
     user_email = (user_res.user.email or payload.get("email") or "").strip()
-    amount_cents = int(payload.get("amount_cents") or 0)
-    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack", amount_cents)
+    quote, err = _topup_quote_from_payload(payload)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    # Mijoz ko'rsatgan "Jami to'lov" serverdagi hisob bilan bir xil bo'lishi shart (narx yashirin o'zgarmasin).
+    client_gross = payload.get("gross_amount")
+    if client_gross not in (None, ""):
+        try:
+            client_gross_cents = int(round(float(client_gross) * 100))
+        except (TypeError, ValueError):
+            client_gross_cents = -1
+        if client_gross_cents != quote["gross_cents"]:
+            return JSONResponse({"error": "Narx yangilandi. Oynani yopib, qaytadan urinib ko'ring.",
+                                 "quote": _topup_quote_public(quote)}, status_code=409)
+    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack",
+                                       quote=quote, embed=bool(payload.get("embed", True)))
     return data if code == 200 else JSONResponse(data, status_code=code)
 
 
-async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", product: str = "pack", amount_cents: int = 0):
+# ---------------------------------------------------------------------------------------------
+# Kredit to'ldirish: paketlar, Lemon Squeezy komissiyasi (6.5% + $0.50) va imzolangan custom_data
+# 1 cent net = 1 kredit (1 USD = 100 kredit). Lemon brutto (gross) summani oladi, biz netto (N) ni olamiz.
+# ---------------------------------------------------------------------------------------------
+LS_FEE_PERMILLE = 65            # 6.5%
+LS_FEE_FIXED_CENTS = 50         # $0.50
+TOPUP_MIN_CENTS = 100           # $1.00
+TOPUP_MAX_CENTS = 100_000       # $1000.00 — xato kiritishdan himoya
+TOPUP_PACKAGES: Dict[str, Dict[str, Any]] = {
+    "starter":  {"net_cents": 100,  "credits": 100,  "label": "Starter"},
+    "popular":  {"net_cents": 500,  "credits": 550,  "label": "Eng ommabop"},
+    "pro":      {"net_cents": 1000, "credits": 1200, "label": "Pro"},
+    "business": {"net_cents": 2000, "credits": 2600, "label": "Business"},
+}
+
+
+def topup_gross_cents(net_cents: int) -> int:
+    """gross = ceil((N + 0.50) / 0.935) — butun sonlarda (float xatosiz). Frontend bilan bir xil formula."""
+    num = (int(net_cents) + LS_FEE_FIXED_CENTS) * 1000
+    den = 1000 - LS_FEE_PERMILLE
+    return -(-num // den)
+
+
+def topup_net_from_gross_cents(gross_cents: int) -> int:
+    """Teskari hisob (imzosiz buyurtmalar uchun): N = gross * 0.935 - 0.50, pastga yaxlitlanadi."""
+    return max(0, (int(gross_cents) * (1000 - LS_FEE_PERMILLE)) // 1000 - LS_FEE_FIXED_CENTS)
+
+
+def _topup_quote(package: str, net_cents: int, credits: int) -> Dict[str, Any]:
+    gross = topup_gross_cents(net_cents)
+    return {"package": package, "net_cents": int(net_cents), "credits": int(credits),
+            "gross_cents": gross, "fee_cents": gross - int(net_cents)}
+
+
+def _topup_quote_public(q: Dict[str, Any]) -> Dict[str, Any]:
+    return {"package": q["package"], "credits": q["credits"],
+            "net_usd": round(q["net_cents"] / 100, 2), "fee_usd": round(q["fee_cents"] / 100, 2),
+            "gross_usd": round(q["gross_cents"] / 100, 2)}
+
+
+def _topup_quote_from_payload(payload: Dict[str, Any]):
+    """(quote, error). Kreditlar va narx FAQAT serverda hisoblanadi — mijoz yuborgan credits e'tiborsiz."""
+    package = str(payload.get("package") or "").strip().lower()
+    if package and package != "custom":
+        p = TOPUP_PACKAGES.get(package)
+        if not p:
+            return None, "Noma'lum paket."
+        return _topup_quote(package, p["net_cents"], p["credits"]), None
+    raw = payload.get("net_amount")
+    if raw in (None, "") and payload.get("amount_cents"):          # eski frontend bilan moslik
+        raw = _int_or(payload.get("amount_cents"), 0) / 100
+    if raw in (None, ""):                                           # hech narsa tanlanmagan -> standart paket
+        return _topup_quote("pack", pack_pages(), pack_pages()), None
+    try:
+        net = float(raw)
+    except (TypeError, ValueError):
+        return None, "Miqdor noto'g'ri."
+    if net != net or net in (float("inf"), float("-inf")):
+        return None, "Miqdor noto'g'ri."
+    net_cents = int(round(net * 100))
+    if net_cents < TOPUP_MIN_CENTS:
+        return None, "Eng kam miqdor — $1.00."
+    if net_cents > TOPUP_MAX_CENTS:
+        return None, f"Eng ko'p miqdor — ${TOPUP_MAX_CENTS // 100}."
+    return _topup_quote("custom", net_cents, net_cents), None
+
+
+def _topup_sign_key() -> bytes:
+    ls = _ls_env()
+    return (ls["secret"] or ls["api_key"] or "slidestudio-dev").encode()
+
+
+def _topup_sig(user_id: str, package: str, net_cents: int, credits: int, gross_cents: int) -> str:
+    import hmac, hashlib
+    msg = f"topup|{user_id}|{package}|{int(net_cents)}|{int(credits)}|{int(gross_cents)}".encode()
+    return hmac.new(_topup_sign_key(), msg, hashlib.sha256).hexdigest()
+
+
+def _topup_verified_credits(custom: Dict[str, Any], user_id: str, paid_cents: int):
+    """Imzo to'g'ri va to'langan summa (subtotal) kutilgan grossdan kam bo'lmasa -> kreditlar soni, aks holda None."""
+    import hmac
+    sig = str(custom.get("sig") or "")
+    if not sig:
+        return None
+    net_cents = _int_or(custom.get("net_cents"), -1)
+    credits = _int_or(custom.get("credits"), -1)
+    gross = _int_or(custom.get("gross_cents"), -1)
+    package = str(custom.get("package") or "")
+    if net_cents <= 0 or credits <= 0 or gross <= 0:
+        return None
+    expected = _topup_sig(user_id, package, net_cents, credits, gross)
+    if not hmac.compare_digest(sig, expected):
+        print("[LEMON WEBHOOK] custom_data imzosi noto'g'ri — subtotal bo'yicha hisoblanadi.")
+        return None
+    if paid_cents + 1 < gross:          # 1 cent yaxlitlash farqi
+        print(f"[LEMON WEBHOOK] to'langan {paid_cents} < kutilgan {gross} — subtotal bo'yicha hisoblanadi.")
+        return None
+    return credits
+
+
+async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", product: str = "pack",
+                          quote: Dict[str, Any] = None, embed: bool = False):
     """v45: sayt VA Telegram bot uchun umumiy checkout yaratish. (http_status, dict) qaytaradi."""
     ls = _ls_env()
     variant = ls["variant_id"]
@@ -1486,12 +1601,18 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     return_url = ls["base_url"] or str(return_url_hint or "").strip().rstrip("/")
     if return_url and not return_url.startswith(("http://", "https://")):
         return_url = ""
-    checkout_data: Dict[str, Any] = {"custom": {"user_id": str(user_id), "product": "pack"}}
+    q = quote or _topup_quote("pack", pack_pages(), pack_pages())
+    custom: Dict[str, Any] = {
+        "user_id": str(user_id), "product": "pack", "package": q["package"],
+        # Lemon custom_data qiymatlarini satr ko'rinishida saqlaymiz (webhookda _int_or bilan o'qiladi)
+        "net_amount": f"{q['net_cents'] / 100:.2f}", "net_cents": str(q["net_cents"]),
+        "credits": str(q["credits"]), "gross_cents": str(q["gross_cents"]),
+        "sig": _topup_sig(str(user_id), q["package"], q["net_cents"], q["credits"], q["gross_cents"]),
+    }
+    checkout_data: Dict[str, Any] = {"custom": custom, "custom_price": int(q["gross_cents"])}   # Lemon gross summani oladi
     if user_email:
         checkout_data["email"] = user_email
-    if amount_cents > 0:
-        checkout_data["custom_price"] = int(amount_cents)   # Pay What You Want: cents
-    product_options: Dict[str, Any] = {"name": f"Slide Studio — {pack_pages()} varaq"}
+    product_options: Dict[str, Any] = {"name": f"Slide Studio — {q['credits']:,} kredit".replace(",", " ")}
     try:
         product_options["enabled_variants"] = [int(variant)]
     except ValueError:
@@ -1502,7 +1623,7 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
         product_options["receipt_button_text"] = "Slide Studio ga qaytish"
     attributes: Dict[str, Any] = {
         "product_options": product_options,
-        "checkout_options": {"embed": False},
+        "checkout_options": {"embed": bool(embed)},
         "checkout_data": checkout_data,
     }
     if ls["test_mode"]:
@@ -1522,7 +1643,8 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     if "json" in res:
         url = ((res["json"].get("data") or {}).get("attributes") or {}).get("url")
         if url:
-            return 200, {"checkout_url": url, "pages": pack_pages(), "price_usd": CHECKOUT_PRICE_USD, "product": "pack"}
+            return 200, {"checkout_url": url, "pages": q["credits"], "price_usd": round(q["gross_cents"] / 100, 2),
+                         "product": "pack", "quote": _topup_quote_public(q)}
         return 502, {"error": "Lemon Squeezy checkout URL qaytarmadi"}
     code = res.get("status")
     print(f"[LEMON CHECKOUT] HTTP {code}: {res.get('error_body')}")
@@ -1660,14 +1782,10 @@ async def lemon_webhook(request: Request):
     if ls["variant_id"] and vid not in (ls["variant_id"], "") and cust_product != "pack":
         print(f"[LEMON WEBHOOK] boshqa mahsulot (variant {vid}) — e'tiborsiz qoldirildi. Sizniki bo'lsa LEMON_SQUEEZY_VARIANT_ID ni tekshiring.")
         return {"ok": True, "ignored": "other_variant"}     # bizning checkout (custom_data.product=pack) har doim hisoblanadi
-    # Subtotal-based credit calculation (net dollars BEFORE regional VAT/tax)
+    # Subtotal = soliqsiz (VAT'siz) to'langan summa. Unda Lemon komissiyasi (6.5% + $0.50) ham bor.
     subtotal_cents = _int_or(attrs.get("subtotal"), 0)
     if subtotal_cents <= 0:
         subtotal_cents = _int_or(attrs.get("total"), 0)   # fallback if subtotal missing
-    net_dollars = subtotal_cents / 100.0
-    pages = int(round(net_dollars * 100))   # $1.00 net = 100 credits regardless of VAT
-    if pages <= 0:
-        pages = pack_pages()                # absolute fallback
 
     if not order_id:
         # order_id siz idempotentlik (qayta yuborilganda 2 marta hisoblamaslik) kafolatlanmaydi
@@ -1683,6 +1801,13 @@ async def lemon_webhook(request: Request):
         # (shu orada foydalanuvchi ro'yxatdan o'tsa, email bo'yicha topiladi).
         await _report_unmatched_payment(order_id, event_name, str(attrs.get("user_email") or ""), attrs)
         return JSONResponse({"error": "user not found"}, status_code=500)
+
+    # Kreditlar NETTO summa (N) bo'yicha: imzolangan custom_data.credits (paket bonusi bilan),
+    # imzo yo'q/noto'g'ri bo'lsa — subtotal'dan komissiyani ayirib (1 cent netto = 1 kredit).
+    pages = _topup_verified_credits(meta.get("custom_data") or {}, user_id, subtotal_cents)
+    if pages is None:
+        pages = topup_net_from_gross_cents(subtotal_cents) if subtotal_cents > 0 else pack_pages()
+        pages = max(1, pages)
 
     if event_name == "order_created" and attrs.get("status") not in ("paid", None):
         return {"ok": True, "ignored": f"status={attrs.get('status')}"}
@@ -2515,7 +2640,7 @@ except Exception as _cm_err:
     print(f"[COMMUNITY] yuklanmadi: {_cm_err}")
 
 PUBLIC_STATIC_FILES = {
-        "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css", "v54.css",
+        "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css", "v54.css", "topup.css",
         "favicon.ico", "logo.png", "manifest.json",
         "terms.html", "privacy.html", "refund.html",
     }

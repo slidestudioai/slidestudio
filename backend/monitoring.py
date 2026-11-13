@@ -39,7 +39,7 @@ UNIT = 20                       # 1 Tez-varaq = 20 birlik (4 va 5 ga ham aniq bo
 DEEP_MULT = 2                   # 1 Chuqur-varaq = 2 Tez-varaq (100 Tez = 50 Chuqur)
 FREE_DAILY_PAGES = _env_num("FREE_DAILY_PAGES", 10, int)     # Tez-varaq hisobida (Chuqur: /2 = 5)
 PAGES_PER_PACK = _env_num("PAGES_PER_PACK", 100, int)        # Tez-varaq hisobida (Chuqur: /2 = 50)
-CHECKOUT_PRICE_USD = _env_num("PACK_PRICE_USD", 1.58, float)   # 100 varaq = $1.58
+CHECKOUT_PRICE_USD = _env_num("PACK_PRICE_USD", 1.61, float)   # 100 varaq = $1.00 netto + Lemon komissiyasi (6.5% + $0.50)
 FREE_DAILY_UNITS = FREE_DAILY_PAGES * UNIT
 PACK_UNITS = PAGES_PER_PACK * UNIT
 

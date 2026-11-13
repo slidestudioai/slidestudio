@@ -225,9 +225,23 @@ def test_ws_closes_after_many_errors(sb, client, monkeypatch):
 SECRET = "whsec-test"
 
 
-def _hook(client, event, order_id="1001", user_id="u1", email="a@x.com", **attrs):
-    body = {"meta": {"event_name": event, "custom_data": {"user_id": user_id, "product": "pack"} if user_id else {}},
-            "data": {"id": order_id, "attributes": {"status": "paid", "total": 158, "user_email": email,
+def _signed_custom(user_id, package="pack", net_cents=None, credits=None):
+    net_cents = main.pack_pages() if net_cents is None else net_cents
+    credits = net_cents if credits is None else credits
+    gross = main.topup_gross_cents(net_cents)
+    return {"user_id": user_id, "product": "pack", "package": package, "net_cents": str(net_cents),
+            "credits": str(credits), "gross_cents": str(gross),
+            "sig": main._topup_sig(user_id, package, net_cents, credits, gross)}, gross
+
+
+def _hook(client, event, order_id="1001", user_id="u1", email="a@x.com", custom=None, **attrs):
+    if custom is None:
+        custom, gross = _signed_custom(user_id) if user_id else ({}, main.topup_gross_cents(main.pack_pages()))
+    else:
+        gross = attrs.pop("total", 161)
+    attrs.setdefault("total", gross)
+    body = {"meta": {"event_name": event, "custom_data": custom},
+            "data": {"id": order_id, "attributes": {"status": "paid", "user_email": email,
                                                      "first_order_item": {"variant_id": 1, "quantity": 1}, **attrs}}}
     raw = json.dumps(body).encode()
     sig = hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
@@ -266,13 +280,14 @@ def test_webhook_missing_order_id_rejected(sb, client, lemon):
 
 
 def test_webhook_partial_refunds(sb, client, lemon):
-    full = main.pack_pages() * main.UNIT
+    gross = main.topup_gross_cents(main.pack_pages())
     _hook(client, "order_created", order_id="4004")
-    assert _hook(client, "order_refunded", order_id="4004", refunded_amount=79).status_code == 200
-    assert sb.usage("u1")["paid_credits"] == full // 2               # yarmi qaytarildi -> yarmi olindi
-    assert _hook(client, "order_refunded", order_id="4004", refunded_amount=158).status_code == 200
-    assert sb.usage("u1")["paid_credits"] == 0                        # qolgan yarmi
-    assert _hook(client, "order_refunded", order_id="4004", refunded_amount=158).json().get("duplicate") is True
+    assert _hook(client, "order_refunded", order_id="4004", refunded_amount=gross // 2).status_code == 200
+    taken = main.pack_pages() * (gross // 2) // gross                 # qaytarilgan ulushga mos
+    assert sb.usage("u1")["paid_credits"] == (main.pack_pages() - taken) * main.UNIT
+    assert _hook(client, "order_refunded", order_id="4004", refunded_amount=gross).status_code == 200
+    assert sb.usage("u1")["paid_credits"] == 0                        # qolgan qism
+    assert _hook(client, "order_refunded", order_id="4004", refunded_amount=gross).json().get("duplicate") is True
     assert sb.usage("u1")["paid_credits"] == 0
 
 
@@ -280,3 +295,70 @@ def test_webhook_full_refund_without_amount(sb, client, lemon):
     _hook(client, "order_created", order_id="5005")
     _hook(client, "order_refunded", order_id="5005")
     assert sb.usage("u1")["paid_credits"] == 0
+
+
+# ---------------------------------------------------------------------------------------------
+# 8) Kredit to'ldirish: Lemon komissiyasi (6.5% + $0.50) va netto bo'yicha kredit
+# ---------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("net_cents,gross", [(100, 161), (500, 589), (1000, 1123), (2000, 2193), (750, 856)])
+def test_topup_gross_formula(net_cents, gross):
+    import math
+    assert main.topup_gross_cents(net_cents) == gross
+    n = net_cents / 100                                                # frontend formulasi bilan bir xil
+    assert round(math.ceil(((n + 0.50) / 0.935) * 100)) == gross
+    assert main.topup_net_from_gross_cents(gross) == net_cents          # teskari hisob nettoni beradi
+
+
+def test_topup_quote_presets_and_custom():
+    q, err = main._topup_quote_from_payload({"package": "popular"})
+    assert not err and q["credits"] == 550 and q["net_cents"] == 500 and q["gross_cents"] == 589
+    q, err = main._topup_quote_from_payload({"package": "custom", "net_amount": 7.5, "credits": 999999})
+    assert not err and q["credits"] == 750 and q["gross_cents"] == 856  # mijoz yuborgan credits e'tiborsiz
+    assert main._topup_quote_from_payload({"net_amount": 0.99})[1]
+    assert main._topup_quote_from_payload({"net_amount": "abc"})[1]
+    assert main._topup_quote_from_payload({"net_amount": "nan"})[1]
+    assert main._topup_quote_from_payload({"package": "gold"})[1]
+
+
+def test_webhook_preset_bonus_credits_by_net(sb, client, lemon):
+    custom, gross = _signed_custom("u1", "business", 2000, 2600)
+    assert _hook(client, "order_created", order_id="6006", custom=custom, total=gross, subtotal=gross).status_code == 200
+    assert sb.usage("u1")["paid_credits"] == 2600 * main.UNIT
+
+
+def test_webhook_tampered_custom_data_falls_back_to_net(sb, client, lemon):
+    custom, gross = _signed_custom("u1", "custom", 100, 100)
+    custom["credits"] = "100000"                                        # soxtalashtirilgan
+    assert _hook(client, "order_created", order_id="7007", custom=custom, total=gross, subtotal=gross).status_code == 200
+    assert sb.usage("u1")["paid_credits"] == 100 * main.UNIT              # 161 cent -> netto 100 kredit
+
+
+def test_webhook_underpaid_signed_order_uses_net(sb, client, lemon):
+    custom, gross = _signed_custom("u1", "pro", 1000, 1200)
+    assert _hook(client, "order_created", order_id="8008", custom=custom, total=161, subtotal=161).status_code == 200
+    assert sb.usage("u1")["paid_credits"] == 100 * main.UNIT              # bonus berilmaydi
+
+
+def test_create_checkout_sends_gross_price_and_signed_net(client, monkeypatch):
+    captured = {}
+    monkeypatch.setenv("LEMON_SQUEEZY_API_KEY", "k")
+    monkeypatch.setenv("LEMON_SQUEEZY_STORE_ID", "1")
+    monkeypatch.setenv("LEMON_SQUEEZY_VARIANT_ID", "2")
+    monkeypatch.setenv("LEMON_SQUEEZY_WEBHOOK_SECRET", SECRET)
+
+    def fake_post(api_key, body):
+        captured["body"] = body
+        return {"status": 201, "json": {"data": {"attributes": {"url": "https://x.lemonsqueezy.com/checkout/abc"}}}}
+
+    monkeypatch.setattr(main, "_ls_post_checkout", fake_post)
+    code, data = asyncio.run(main._build_checkout("u1", "a@x.com", "https://app.test", "pack",
+                                                  quote=main._topup_quote("popular", 500, 550), embed=True))
+    assert code == 200 and data["quote"] == {"package": "popular", "credits": 550, "net_usd": 5.0,
+                                             "fee_usd": 0.89, "gross_usd": 5.89}
+    attrs = captured["body"]["data"]["attributes"]
+    assert attrs["checkout_data"]["custom_price"] == 589
+    assert attrs["checkout_options"]["embed"] is True
+    cd = attrs["checkout_data"]["custom"]
+    assert cd["net_amount"] == "5.00" and cd["credits"] == "550" and cd["user_id"] == "u1"
+    assert main._topup_verified_credits(cd, "u1", 589) == 550
+    assert main._topup_verified_credits(cd, "someone-else", 589) is None
