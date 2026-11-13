@@ -1452,7 +1452,7 @@ def _ls_post_checkout(api_key: str, body: dict) -> dict:
             raw = he.read().decode("utf-8", "ignore")
         except Exception:
             raw = ""
-        return {"status": he.code, "error_body": raw[:600]}
+        return {"status": he.code, "error_body": raw[:4000]}
 
 @app.post("/api/payment/create-checkout")
 async def create_lemon_checkout(payload: Dict[str, Any] = None):
@@ -1609,7 +1609,8 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
         "credits": str(q["credits"]), "gross_cents": str(q["gross_cents"]),
         "sig": _topup_sig(str(user_id), q["package"], q["net_cents"], q["credits"], q["gross_cents"]),
     }
-    checkout_data: Dict[str, Any] = {"custom": custom, "custom_price": int(q["gross_cents"])}   # Lemon gross summani oladi
+    # custom_data qiymatlari satr; custom_price esa checkout_data ICHIDA EMAS (u yerda 422 beradi)
+    checkout_data: Dict[str, Any] = {"custom": custom}
     if user_email:
         checkout_data["email"] = user_email
     product_options: Dict[str, Any] = {"name": f"Slide Studio — {q['credits']:,} kredit".replace(",", " ")}
@@ -1622,6 +1623,8 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
         product_options["receipt_link_url"] = return_url + "/"
         product_options["receipt_button_text"] = "Slide Studio ga qaytish"
     attributes: Dict[str, Any] = {
+        # Lemon Squeezy JSON:API: custom_price — data.attributes darajasida, BUTUN son, sentlarda (589 = $5.89).
+        "custom_price": int(q["gross_cents"]),
         "product_options": product_options,
         "checkout_options": {"embed": bool(embed)},
         "checkout_data": checkout_data,
@@ -1647,7 +1650,8 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
                          "product": "pack", "quote": _topup_quote_public(q)}
         return 502, {"error": "Lemon Squeezy checkout URL qaytarmadi"}
     code = res.get("status")
-    print(f"[LEMON CHECKOUT] HTTP {code}: {res.get('error_body')}")
+    # To'liq javob matni (validatsiya tafsiloti). API kalit bu javobda bo'lmaydi.
+    print(f"[LEMON CHECKOUT] HTTP {code}: {res.get('error_body')}", flush=True)
     if code == 404:
         msg = "Lemon Squeezy: do'kon yoki variant topilmadi (STORE_ID / VARIANT_ID ni tekshiring; variant 'Published' bo'lishi va API kalit bilan bir rejimda — test/live — bo'lishi kerak)."
     elif code in (401, 403):
@@ -1656,7 +1660,27 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
         msg = "Lemon Squeezy so'rovni qabul qilmadi (422)."
     else:
         msg = f"Lemon Squeezy xatosi (HTTP {code})."
+    reason = _ls_error_reason(res.get("error_body", ""))
+    if reason:
+        msg = f"{msg} Sabab: {reason}"
     return 502, {"error": msg, "ls_status": code, "detail": res.get("error_body", "")[:300]}
+
+
+def _ls_error_reason(raw: str) -> str:
+    """Lemon Squeezy JSON:API xatosidan qisqa sabab: 'detail (source.pointer)'. Kalitlar bu yerda bo'lmaydi."""
+    try:
+        errs = (json.loads(raw or "{}") or {}).get("errors") or []
+    except Exception:
+        return ""
+    parts = []
+    for e in errs[:3]:
+        if not isinstance(e, dict):
+            continue
+        d = str(e.get("detail") or e.get("title") or "").strip()
+        ptr = str(((e.get("source") or {}).get("pointer")) or "").strip()
+        if d:
+            parts.append(f"{d} ({ptr})" if ptr else d)
+    return "; ".join(parts)[:300]
 
 
 async def _checkout_for_bot(user_id: str, email: str = "", return_url: str = "", product: str = "pack") -> dict:
