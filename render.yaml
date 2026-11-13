@@ -40,7 +40,7 @@ services:
       - key: PAGES_PER_PACK
         value: "100"
       - key: PACK_PRICE_USD
-        value: "1.58"
+        value: "1.61"
       - key: IMG_PROXY_CACHE_MB
         value: "32"
       - key: LEMON_SQUEEZY_API_KEY
