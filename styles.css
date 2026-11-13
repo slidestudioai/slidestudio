@@ -1302,3 +1302,10 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
   .btn-reset-canvas, .btn-about-bot { font-size: 11px; padding: 6px 4px; }
   .slide-thumb { height: 84px; }
 }
+
+/* === Top-Up Credits Modal === */
+.topup-amt-btn{flex:1 1 auto;min-width:52px;padding:9px 8px;background:#f8fafc;border:1.5px solid #cbd5e1;border-radius:8px;font-size:15px;font-weight:600;color:#334155;cursor:pointer;transition:background .15s,border-color .15s,color .15s;}
+.topup-amt-btn:hover{background:#e0f2fe;border-color:#38bdf8;}
+.topup-amt-btn.selected{background:#2563eb;border-color:#2563eb;color:#fff;}
+#topupPayBtn:not([disabled]){opacity:1;cursor:pointer;}
+#topupPayBtn:not([disabled]):hover{background:#1d4ed8;}

@@ -113,6 +113,9 @@ STRICT RULES:
 ### 2. LAYOUT LAW (CRITICAL — the ONE source of truth for positions, margins, gaps and padding; sections 0B2, 16, 27, 28, 32, 33 only repeat it — if any number there differs, section 2 wins)
 Stage = 960×540. Every element has numeric left, top, width (+ height for non-text). The code draws EXACTLY your numbers — it does not auto-fix collisions, so YOU must compute them.
 ZONES
+- Top decorative stripe/bar: use y:0, h:8 to h:20 ONLY. Never exceed y:30.
+- Slide title: use y >= 70 ALWAYS. Never overlap the decorative stripe.
+- Content boxes: use y >= 100 ALWAYS.
 - Outer margin 40: all content stays inside x 40..920, y 30..510. (Only the full-slide background rect 0,0,960,540 is exempt.)
 - TITLE band y 40..125: title fontSize 32–40 bold at top 40 (1 line ≈ 50px high, 2 lines ≈ 100px). Subtitle (fontSize 18–20) top = title.top + title.height + 8 and must end by y 125. If the title needs 2 lines, drop the subtitle.
 - CONTENT area y 140..500. Nothing but the title/subtitle may be above 140; nothing but a footer/button may be below 500.

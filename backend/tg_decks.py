@@ -27,21 +27,52 @@ LH = 1.22                                   # qator balandligi (o'lcham ko'paytm
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 SYS_FONT_DIR = "/usr/share/fonts/truetype/dejavu"
 
+TOP_STRIPE_SAFE_Y   = 0    # decorative top stripe always starts here
+TOP_STRIPE_MAX_H    = 28   # max height for top decorative stripe (px)
+MIN_CONTENT_Y       = 70   # slide title / first content box minimum Y
+TOP_STRIPE_MAX_Y    = 30   # px — top decorative element restricted to 0-30px
+MIN_TITLE_Y         = 70   # px — title must start below decorative zone
+
 LAYOUTS = ("title", "bullets", "cards", "stats", "quote", "closing", "table", "chart")
 TRANSITIONS = ("fade", "zoom", "flip", "up", "blur", "none")      # sayt bilan bir xil nomlar
 CHART_KINDS = ("bar", "line", "pie", "doughnut")
 
 THEMES: Dict[str, Dict[str, str]] = {
     #            qora/to'q   asosiy      urg'u       fon        matn       xira       kartochka   och ton
-    "ocean":  dict(dark="#0B1F4D", primary="#1D4ED8", accent="#06B6D4", bg="#F8FAFC", text="#0F172A", muted="#64748B", card="#FFFFFF", tint="#E0F2FE", label="🔵 Okean"),
-    "violet": dict(dark="#2E1065", primary="#6D28D9", accent="#F59E0B", bg="#FAF5FF", text="#1E1B4B", muted="#6B7280", card="#FFFFFF", tint="#EDE9FE", label="🟣 Binafsha"),
-    "forest": dict(dark="#052E16", primary="#15803D", accent="#84CC16", bg="#F7FEF9", text="#14281D", muted="#5B6B61", card="#FFFFFF", tint="#DCFCE7", label="🟢 O'rmon"),
-    "sunset": dict(dark="#431407", primary="#C2410C", accent="#F59E0B", bg="#FFFBF5", text="#2A1608", muted="#7C6A5C", card="#FFFFFF", tint="#FFEDD5", label="🟠 Quyosh"),
-    "rose":   dict(dark="#500724", primary="#BE185D", accent="#FB7185", bg="#FFF7FA", text="#2D0A1A", muted="#7A5C69", card="#FFFFFF", tint="#FFE4EC", label="🌸 Atirgul"),
-    "slate":  dict(dark="#0B1220", primary="#1E293B", accent="#38BDF8", bg="#F8FAFC", text="#0F172A", muted="#64748B", card="#FFFFFF", tint="#E2E8F0", label="⚫ Grafit"),
-    "teal":   dict(dark="#042F2E", primary="#0F766E", accent="#F97316", bg="#F6FFFE", text="#0B2B29", muted="#5A7270", card="#FFFFFF", tint="#CCFBF1", label="🩵 Zumrad"),
+    "ocean":  dict(name="ocean", dark="#0B1F4D", primary="#1D4ED8", accent="#06B6D4", bg="#F8FAFC", text="#0F172A", muted="#64748B", card="#FFFFFF", tint="#E0F2FE", label="🔵 Okean"),
+    "violet": dict(name="violet", dark="#2E1065", primary="#6D28D9", accent="#F59E0B", bg="#FAF5FF", text="#1E1B4B", muted="#6B7280", card="#FFFFFF", tint="#EDE9FE", label="🟣 Binafsha"),
+    "forest": dict(name="forest", dark="#052E16", primary="#15803D", accent="#84CC16", bg="#F7FEF9", text="#14281D", muted="#5B6B61", card="#FFFFFF", tint="#DCFCE7", label="🟢 O'rmon"),
+    "sunset": dict(name="sunset", dark="#431407", primary="#C2410C", accent="#F59E0B", bg="#FFFBF5", text="#2A1608", muted="#7C6A5C", card="#FFFFFF", tint="#FFEDD5", label="🟠 Quyosh"),
+    "rose":   dict(name="rose", dark="#500724", primary="#BE185D", accent="#FB7185", bg="#FFF7FA", text="#2D0A1A", muted="#7A5C69", card="#FFFFFF", tint="#FFE4EC", label="🌸 Atirgul"),
+    "slate":  dict(name="slate", dark="#0B1220", primary="#1E293B", accent="#38BDF8", bg="#F8FAFC", text="#0F172A", muted="#64748B", card="#FFFFFF", tint="#E2E8F0", label="⚫ Grafit"),
+    "teal":   dict(name="teal", dark="#042F2E", primary="#0F766E", accent="#F97316", bg="#F6FFFE", text="#0B2B29", muted="#5A7270", card="#FFFFFF", tint="#CCFBF1", label="🩵 Zumrad"),
 }
 DEFAULT_THEME = "ocean"
+
+# Multi-color harmony palettes for charts, stats, buttons
+CHART_PALETTES = {
+    "ocean":  ["#1D4ED8","#06B6D4","#0EA5E9","#6366F1","#8B5CF6","#EC4899"],
+    "violet": ["#6D28D9","#F59E0B","#EC4899","#06B6D4","#10B981","#F97316"],
+    "forest": ["#15803D","#84CC16","#F59E0B","#0EA5E9","#8B5CF6","#EC4899"],
+    "sunset": ["#C2410C","#F59E0B","#FBBF24","#EF4444","#F97316","#FB923C"],
+    "rose":   ["#BE185D","#FB7185","#F43F5E","#C026D3","#A855F7","#F59E0B"],
+    "slate":  ["#1E293B","#38BDF8","#6366F1","#10B981","#F59E0B","#F43F5E"],
+    "teal":   ["#0F766E","#F97316","#8B5CF6","#EC4899","#F59E0B","#06B6D4"],
+}
+DEFAULT_PALETTE = CHART_PALETTES[DEFAULT_THEME]
+
+
+def get_palette(th_or_name: Any) -> List[str]:
+    if isinstance(th_or_name, str):
+        return CHART_PALETTES.get(th_or_name, DEFAULT_PALETTE)
+    if isinstance(th_or_name, dict):
+        if "name" in th_or_name and th_or_name["name"] in CHART_PALETTES:
+            return CHART_PALETTES[th_or_name["name"]]
+        prim = th_or_name.get("primary", "")
+        for tname, tdict in THEMES.items():
+            if tdict.get("primary") == prim:
+                return CHART_PALETTES.get(tname, DEFAULT_PALETTE)
+    return DEFAULT_PALETTE
 
 # ---------------------------------------------------------------------------------------------
 # Matnni tozalash
@@ -553,10 +584,8 @@ def _layout_table(sc: Scene, th: dict, rows: List[List[str]]) -> None:
 
 
 def series_colors(th: dict, n: int) -> List[str]:
-    base = [th["primary"], th["accent"], mix(th["primary"], "#FFFFFF", 0.45), mix(th["accent"], th["dark"], 0.4),
-            mix(th["primary"], th["accent"], 0.5), mix(th["dark"], "#FFFFFF", 0.35), mix(th["accent"], "#FFFFFF", 0.5),
-            mix(th["primary"], th["dark"], 0.5), mix(th["tint"], th["primary"], 0.6), mix(th["muted"], "#FFFFFF", 0.4)]
-    return [base[i % len(base)] for i in range(n)]
+    palette = get_palette(th)
+    return [palette[i % len(palette)] for i in range(n)]
 
 
 def _fmt_num(v: float) -> str:
@@ -679,13 +708,15 @@ def _chart_items(it: dict) -> List[dict]:
         tmp.text(gx0 + ci * slot, gy1 + 10, slot, 22, txt, 15, th["text"], align="c", anchor="m", lines=[txt])
     if kind == "bar":
         ns = len(series)
+        palette = get_palette(th)
         bw = min(70.0, (slot * 0.72) / ns)
         for si, sr in enumerate(series):
             for ci, v in enumerate(sr["values"]):
                 x = gx0 + ci * slot + (slot - bw * ns) / 2 + si * bw
                 y0, y1 = py(max(v, 0)), py(min(v, 0) if bot < 0 else bot)
                 hh = max(1.0, abs(y1 - y0))
-                tmp.rect(x, min(y0, y1), bw - 2, hh, cols[si], r=0)
+                bar_col = palette[ci % len(palette)] if ns == 1 else cols[si % len(cols)]
+                tmp.rect(x, min(y0, y1), bw - 2, hh, bar_col, r=0)
                 lab = _fmt_num(v)
                 tmp.text(x - 10, min(y0, y1) - 22, bw + 18, 20, lab, 14, th["text"], bold=True, align="c", anchor="m", lines=[lab])
     else:
@@ -714,14 +745,17 @@ def _footer(sc: Scene, th: dict, deck_title: str, idx: int, total: int):
 
 
 def _topbar(sc: Scene, th: dict):
-    sc.rect(0, 0, W, 10, th["primary"])
-    sc.rect(0, 0, 140, 10, th["accent"])
+    stripe_y = TOP_STRIPE_SAFE_Y
+    stripe_h = min(10, TOP_STRIPE_MAX_H)
+    sc.rect(0, stripe_y, W, stripe_h, th["primary"])
+    sc.rect(0, stripe_y, 140, stripe_h, th["accent"])
 
 
 def _heading(sc: Scene, th: dict, title: str, width: float) -> None:
-    size, lines = fit(title, width, 84, 34, 22, bold=True)
-    sc.text(56, 38, width, 84, title, size, th["primary"], bold=True, lines=lines)
-    sc.rect(56, 128, 64, 5, th["accent"], r=2)
+    title_y = max(MIN_TITLE_Y, 70)
+    size, lines = fit(title, width, 58, 34, 22, bold=True)
+    sc.text(56, title_y, width, 58, title, size, th["primary"], bold=True, lines=lines)
+    sc.rect(56, title_y + 60, 64, 5, th["accent"], r=2)
 
 
 def _dark_slide(sc: Scene, th: dict, title: str, subtitle: str, img: Optional[bytes], kicker: str, media: bool = False) -> float:
@@ -791,8 +825,9 @@ def _buttons_row(sc: Scene, th: dict, btns: List[dict], x: float, y: float, max_
         ws.pop()
     total = sum(ws) + gap * (len(ws) - 1)
     cx = x + (max_w - total if align == "r" else 0)
+    palette = get_palette(th)
     for k, (b, bw) in enumerate(zip(btns, ws)):
-        fill = th["accent"] if k == 0 else (mix(th["dark"], "#FFFFFF", 0.18) if dark else th["primary"])
+        fill = palette[k % len(palette)] if len(btns) > 1 else (th["accent"] if dark else th["primary"])
         label = _short(b["text"], size, bw - size * 1.6, True)
         sc.button(cx, y, bw, h, label, b["url"], fill, "#FFFFFF")
         cx += bw + gap
@@ -912,12 +947,14 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
             gap = 22
             cw = (848 - gap * (n - 1)) / n
             ch = 280
+            palette = get_palette(th)
             for k, c in enumerate(s["stats"]):
                 x, y = 56 + k * (cw + gap), 170
+                stat_col = palette[k % len(palette)]
                 sc.rect(x, y, cw, ch, th["tint"], r=20)
-                sc.rect(x + 24, y + 28, 44, 6, th["accent"], r=3)
+                sc.rect(x + 24, y + 28, 44, 6, stat_col, r=3)
                 vs, vl = fit(c["value"], cw - 40, 80, 58 if n < 4 else 44, 24, bold=True)
-                sc.text(x + 20, y + 64, cw - 40, 80, c["value"], vs, th["primary"], bold=True, align="l", anchor="m", lines=vl)
+                sc.text(x + 20, y + 64, cw - 40, 80, c["value"], vs, stat_col, bold=True, align="l", anchor="m", lines=vl)
                 ls, ll = fit(c["label"] or " ", cw - 40, ch - 170, 19, 12)
                 if c["label"]:
                     sc.text(x + 20, y + 160, cw - 40, len(ll) * ls * LH, c["label"], ls, th["text"], lines=ll)
@@ -963,9 +1000,29 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
 # ---------------------------------------------------------------------------------------------
 # PDF
 # ---------------------------------------------------------------------------------------------
+def _guard_item_coords(it: dict) -> dict:
+    t = it.get("t")
+    y = it.get("y", 0)
+    h = it.get("h", 0)
+    # Top decorative element: restrict to safe zone y:0-30px, clamp Y to min(y, 10), h <= 20
+    if t in ("rect", "line") and y < TOP_STRIPE_MAX_Y and 0 < h <= TOP_STRIPE_MAX_H and h < H:
+        stripe_y = max(0, min(min(y, 10), TOP_STRIPE_MAX_Y - min(h, 20)))
+        stripe_h = min(min(h, 20), TOP_STRIPE_MAX_Y)
+        it = dict(it, y=stripe_y, h=stripe_h)
+        if t == "line" and "y1" in it:
+            it["y1"] = stripe_y
+            it["y2"] = stripe_y
+    elif t == "text" and (it.get("bold") or it.get("size", 0) >= 20) and 0 < y < MIN_TITLE_Y:
+        it = dict(it, y=max(MIN_TITLE_Y, y))
+    elif t in ("rect", "oval", "btn", "img", "table", "chart") and 0 < y < MIN_CONTENT_Y and h < H and y > TOP_STRIPE_MAX_Y:
+        it = dict(it, y=max(MIN_CONTENT_Y, y))
+    return it
+
+
 def _flat(items: List[dict]) -> List[dict]:
     out: List[dict] = []
-    for it in items:
+    for raw_it in items:
+        it = _guard_item_coords(raw_it)
         if it["t"] in ("table", "chart"):
             out.extend(expand_item(it))
         else:
@@ -1209,6 +1266,14 @@ def _pptx_chart(slide, it: dict, E: int, rgb) -> None:
             if kind == "bar":
                 ser.format.fill.solid()
                 ser.format.fill.fore_color.rgb = rgb(cols[k])
+                if len(plot.series) == 1:
+                    palette = get_palette(th)
+                    for pi, pt in enumerate(ser.points):
+                        try:
+                            pt.format.fill.solid()
+                            pt.format.fill.fore_color.rgb = rgb(palette[pi % len(palette)])
+                        except Exception:
+                            pass
             else:
                 ser.format.line.color.rgb = rgb(cols[k])
                 ser.format.line.width = Pt(3.5)
@@ -1285,7 +1350,8 @@ def render_pptx(scenes: List[Scene], title: str) -> bytes:
         bgf = slide.background.fill
         bgf.solid()
         bgf.fore_color.rgb = rgb(sc.bg)
-        for it in sc.items:
+        for raw_it in sc.items:
+            it = _guard_item_coords(raw_it)
             t = it["t"]
             x, y, w, h = (int(round(it[k] * E)) for k in ("x", "y", "w", "h"))
             if t in ("rect", "oval"):
@@ -1487,6 +1553,8 @@ def render_html(scenes: List[Scene], title: str, lang: str = "uz", pptx: Optiona
         out.append(f'<section class="slide tr-{e(tr)}" style="background:{sc.bg}">')
         sec_at = len(out) - 1
         svg: List[str] = []
+        btn_idx = 0
+        palette = CHART_PALETTES.get(getattr(sc, "theme", None), DEFAULT_PALETTE)
         for it in _flat(sc.items):
             t = it["t"]
             if t in ("line", "poly", "wedge"):
@@ -1515,7 +1583,9 @@ def render_html(scenes: List[Scene], title: str, lang: str = "uz", pptx: Optiona
                 emb = _html_embed(it, pos)
                 out.append(emb or f'<div style="{st}"></div>')
             elif t == "btn":
-                st = (pos + f'background:{it["fill"]};color:{it["color"]};border-radius:{it["h"] / 2:.0f}px;display:flex;align-items:center;'
+                btn_fill = it.get("fill") or palette[btn_idx % len(palette)]
+                btn_idx += 1
+                st = (pos + f'background:{btn_fill};color:{it["color"]};border-radius:{it["h"] / 2:.0f}px;display:flex;align-items:center;'
                       f'justify-content:center;font-weight:700;font-size:{max(10, int(it["h"] * 0.4))}px;text-decoration:none;'
                       'box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer')
                 out.append(f'<a class="btn" href="{e(it["url"], quote=True)}" target="_blank" rel="noopener" style="{st}">{e(it["text"])}</a>')

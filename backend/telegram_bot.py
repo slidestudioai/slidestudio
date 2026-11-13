@@ -2219,6 +2219,9 @@ RULES
 - "image": a short ENGLISH search query (2-4 words) for a concrete photographable subject. Give it for the title slide and for at most 40% of the "bullets" slides, otherwise "". If the user does not want images set "images": false and every "image" to "".
 - "notes": 1-2 sentences of speaker notes (same language as the slides).
 - No emoji, no markdown symbols (**, #) inside text.
+- Top decorative stripe/bar: use y:0, h:8 to h:20 ONLY. Never exceed y:30.
+- Slide title: use y >= 70 ALWAYS. Never overlap the decorative stripe.
+- Content boxes: use y >= 100 ALWAYS.
 - Pick the theme that fits the topic, or the colour the user asked for (blue=ocean, purple=violet, green=forest, orange=sunset, pink/red=rose, black/gray=slate, turquoise=teal).
 OPTIONAL INTERACTIVE FIELDS (any slide; use ONLY when the user asks for it):
 - "buttons":[{"text":"max 24 chars","url":"https://..."}]  — up to 3 clickable buttons / links. Use ONLY URLs the user wrote (or official well-known sites like https://www.wikipedia.org). Never invent URLs.
@@ -2621,7 +2624,7 @@ def _kb_buy() -> dict:
 
 
 STEPS = ["Mavzu tahlili", "Slayd matnlari", "Rasmlar", "Fayllar (PPTX · PDF · HTML)"]
-HEADS = ["⏳ AI mavzuni tahlil qilmoqda…", "🧠 Slayd tuzilishi va matnlari yozilmoqda…", "🖼 Rasmlar tanlanmoqda…", "📦 Fayllar tayyorlanmoqda…"]
+HEADS = ["⏳ AI mavzuni tahlil qilmoqda…", "🧠 Slayd tuzilishi va matnlari yozilmoqda…", "🖼 Rasmlar tanlanmoqda…", "📦 Fayl yuborilmoqda..."]
 
 
 def _steps(cur: int, extra: str = "") -> str:
@@ -2811,6 +2814,28 @@ async def _chat_action_loop(chat_id: int, action: str, stop: "asyncio.Event") ->
 _FMT_LABEL = {"pptx": "PPTX", "pdf": "PDF", "html": "HTML", "all": "PPTX + PDF + HTML"}
 
 
+async def _cleanup_storage_files(chat_id: int) -> None:
+    """Remove generated files from Supabase Storage immediately after delivery (keep storage near zero)."""
+    sb = _deps.get("supabase") or _sb()
+    if not sb:
+        return
+    # Clean up any files stored for this chat_id in common bucket patterns
+    buckets_paths = [
+        ("presentations", f"{chat_id}/"),
+        ("slides", f"{chat_id}/"),
+        ("exports", f"{chat_id}/"),
+    ]
+    for bucket, prefix in buckets_paths:
+        try:
+            listed = sb.storage.from_(bucket).list(prefix)
+            if listed and isinstance(listed, list):
+                paths = [f"{prefix}{item['name']}" for item in listed if item.get('name')]
+                if paths:
+                    sb.storage.from_(bucket).remove(paths)
+        except Exception:
+            pass   # bucket may not exist — silently ignore
+
+
 async def _send_files(chat_id: int, fmt: str) -> bool:
     """v53: tezkor yuborish.
     - Fayllar FAQAT RAM'da (io.BytesIO) yasaladi va to'g'ridan-to'g'ri Telegram'ga oqim qilinadi — Supabase/diskka yozilmaydi.
@@ -2834,7 +2859,7 @@ async def _send_files(chat_id: int, fmt: str) -> bool:
         # 1) keshdan darhol (rasm yuklash ham, sahna qurish ham yo'q)
         cached = [decks.cache_peek(deck, lang, f) for f in fmts]
         if not all(cached):
-            m = await _send(chat_id, f"⏳ <b>{_FMT_LABEL.get(fmt, fmt)}</b> tayyorlanmoqda…")
+            m = await _send(chat_id, "⏳ <b>Fayl yuborilmoqda...</b>")
             status_id = (m or {}).get("message_id") if isinstance(m, dict) else None
             imgs_q = await _fetch_images(deck, st.get("imgs") or {}, True)          # faqat yetishmayotgan rasmlar
             st["imgs"], st["img_ts"] = imgs_q, time.time()                          # IMG_TTL gacha RAM'da: keyingi format uchun qayta yuklanmaydi
@@ -2863,6 +2888,9 @@ async def _send_files(chat_id: int, fmt: str) -> bool:
         if status_id:
             _spawn(tg("deleteMessage", chat_id=chat_id, message_id=status_id))
             status_id = None
+        # Immediate Supabase Storage cleanup after successful delivery
+        if ok_all:
+            _spawn(_cleanup_storage_files(chat_id))
         if ok_all:
             await _send(chat_id, "✅ Tayyor! Yana format kerakmi yoki o'zgartirish qilamizmi?\n<i>Masalan: «3-slaydni qisqartir», «sarlavhasini o'zgartir».</i>", kb_done(st))
         else:

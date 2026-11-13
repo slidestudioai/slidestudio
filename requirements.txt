@@ -1,6 +1,7 @@
 # --- Web server ---
 fastapi>=0.110
 uvicorn[standard]>=0.29
+gunicorn>=21.2.0
 websockets>=12.0
 httpx>=0.27
 

@@ -5,6 +5,7 @@ services:
     plan: free          # bepul reja uxlab qoladi; doimiy ishlashi uchun 'starter' ga o'zgartiring
     healthCheckPath: /healthz
     autoDeploy: true
+    startCommand: gunicorn main:app --worker-class uvicorn.workers.UvicornWorker --workers 4 --worker-connections 1000 --keep-alive 5 --timeout 120 --graceful-timeout 30 --bind 0.0.0.0:8080 --log-level warning --access-logfile -
     envVars:
       - key: AI_API_KEY
         sync: false

@@ -181,7 +181,7 @@
     </div>
   </div>
 
-  <div id="tokenStatusBar">Varaq: <span id="statCredits">-</span> | Sessiya: <span id="statPagesUsed">0</span></div>
+  <div id="tokenStatusBar">Varaq: <span id="statCredits">-</span> <button onclick="openTopUpModal()" title="Kredit to'ldirish" style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:13px;padding:0 4px;vertical-align:middle;">＋</button> | Sessiya: <span id="statPagesUsed">0</span></div>
 
   <div class="toolbar-container" id="ribbonToolbar">
     <button class="tb-btn" title="Undo" onclick="undo()"><span class="material-symbols-outlined">undo</span></button>
@@ -456,6 +456,38 @@
     </div>
   </div>
 
+  <!-- Top-Up Credits Modal -->
+  <div id="topUpModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card" style="max-width:420px;padding:28px 24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h3 style="margin:0;font-size:17px;font-weight:700;color:#1e293b;">💳 Kredit to'ldirish</h3>
+        <button onclick="closeTopUpModal()" style="background:transparent;border:none;cursor:pointer;color:#64748b;font-size:20px;line-height:1;">✕</button>
+      </div>
+      <div id="topupAmountRow" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <button class="topup-amt-btn" data-amt="1" onclick="selectTopUpAmount(1)">$1</button>
+        <button class="topup-amt-btn" data-amt="2" onclick="selectTopUpAmount(2)">$2</button>
+        <button class="topup-amt-btn" data-amt="5" onclick="selectTopUpAmount(5)">$5</button>
+        <button class="topup-amt-btn" data-amt="10" onclick="selectTopUpAmount(10)">$10</button>
+        <button class="topup-amt-btn" data-amt="20" onclick="selectTopUpAmount(20)">$20</button>
+        <button class="topup-amt-btn" data-amt="custom" onclick="selectTopUpAmount('custom')">Boshqa</button>
+      </div>
+      <div id="topupCustomWrap" style="display:none;margin-bottom:12px;">
+        <input id="topupCustomInput" type="number" min="1" step="1" placeholder="Miqdor ($, butun son)"
+          style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:15px;"
+          oninput="onTopUpCustomInput(this.value)" />
+      </div>
+      <div id="topupPreview" style="background:#f1f5f9;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:14px;color:#334155;min-height:48px;">
+        <div id="topupPreviewText">Miqdorni tanlang</div>
+        <div style="font-size:12px;color:#94a3b8;margin-top:4px;">* Mintaqaviy soliq (VAT) chegirma asosiga qo'shiladi va to'lov sahifasida ko'rsatiladi.</div>
+      </div>
+      <button id="topupPayBtn" onclick="startTopUpCheckout()" disabled
+        style="width:100%;padding:12px;background:#2563eb;color:#fff;border:none;border-radius:9px;font-size:16px;font-weight:600;cursor:not-allowed;opacity:0.5;">
+        To'lovga o'tish
+      </button>
+      <div id="topupError" style="color:#ef4444;font-size:13px;margin-top:8px;display:none;"></div>
+    </div>
+  </div>
+
   <div id="mediaBrowserModal" class="media-browser-overlay" role="dialog" aria-modal="true" aria-label="Rasm, GIF va video qo'shish">
     <div class="media-browser-card">
       <div class="mb-head">
@@ -585,5 +617,8 @@
   <script src="js/43_v50_ui_scale.js?v=1"></script>
   <script src="js/44_v54_fixes.js?v=6"></script>
   <script src="js/45_v63_guest_carry.js?v=1"></script>
+  <script src="https://app.lemonsqueezy.com/js/lemon.js" defer></script>
+  <script src="js/46_topup.js" defer></script>
+  <script src="js/47_resize_fix.js" defer></script>
   </body>
 </html>

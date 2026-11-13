@@ -183,6 +183,7 @@
       enableRetinaScaling: true,
       imageSmoothingEnabled: true
     });
+    try { window.canvas = canvas; } catch (e) {}
     try {
       const _ctx0 = canvas.getContext();
       if (_ctx0) {

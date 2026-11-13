@@ -265,7 +265,7 @@
               }, 0);
             }
 
-            if (userSwitched && _event !== "TOKEN_REFRESHED" && _event !== "INITIAL_SESSION") {
+            if (userSwitched && !window.__ssUserLogout && _event !== "TOKEN_REFRESHED" && _event !== "INITIAL_SESSION") {
               try {
 
                 if (!window._ssAuthReloadScheduled) {
@@ -485,6 +485,15 @@
       try { if (typeof _clipboardStack !== 'undefined') _clipboardStack = null; } catch (e) {}
       try { if (window.__ssAuthStorage) { window.__ssAuthStorage.removeItem('ss-auth-v39'); window.__ssAuthStorage.removeItem('ss-auth-v39-backup'); } } catch (e) {}
       try {
+        if (typeof localStorage !== 'undefined') {
+          Object.keys(localStorage).forEach(function(k) {
+            if (k.startsWith('sb-') || k.startsWith('ss-auth')) {
+              localStorage.removeItem(k);
+            }
+          });
+        }
+      } catch (e) {}
+      try {
         if (supabaseClient) await supabaseClient.auth.signOut();
       } catch (e) { console.warn("Logout xatolik:", e); }
       supabaseToken = "dev-token";
@@ -584,3 +593,19 @@
       projectTitle = el.innerText.trim() || "Yangi Slayd Taqdimoti";
       saveCurrentSlideState();
     }
+
+    // Persist current prompt text to sessionStorage
+    document.addEventListener('input', function(e) {
+      var el = e.target;
+      if (el && (el.id === 'promptInput' || el.id === 'chatInput' || el.id === 'aiSidebarInput' || (el.classList && el.classList.contains('ai-input')))) {
+        sessionStorage.setItem('ss_draft_prompt', el.value);
+      }
+    });
+    // Restore on load
+    document.addEventListener('DOMContentLoaded', function() {
+      var saved = sessionStorage.getItem('ss_draft_prompt');
+      if (saved) {
+        var el = document.getElementById('promptInput') || document.getElementById('chatInput') || document.getElementById('aiSidebarInput');
+        if (el && !el.value) el.value = saved;
+      }
+    });

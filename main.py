@@ -1468,11 +1468,12 @@ async def create_lemon_checkout(payload: Dict[str, Any] = None):
         return JSONResponse({"error": "Sessiya tugagan. Qayta kiring."}, status_code=401)
     user_id = user_res.user.id
     user_email = (user_res.user.email or payload.get("email") or "").strip()
-    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack")
+    amount_cents = int(payload.get("amount_cents") or 0)
+    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack", amount_cents)
     return data if code == 200 else JSONResponse(data, status_code=code)
 
 
-async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", product: str = "pack"):
+async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", product: str = "pack", amount_cents: int = 0):
     """v45: sayt VA Telegram bot uchun umumiy checkout yaratish. (http_status, dict) qaytaradi."""
     ls = _ls_env()
     variant = ls["variant_id"]
@@ -1488,6 +1489,8 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     checkout_data: Dict[str, Any] = {"custom": {"user_id": str(user_id), "product": "pack"}}
     if user_email:
         checkout_data["email"] = user_email
+    if amount_cents > 0:
+        checkout_data["custom_price"] = int(amount_cents)   # Pay What You Want: cents
     product_options: Dict[str, Any] = {"name": f"Slide Studio — {pack_pages()} varaq"}
     try:
         product_options["enabled_variants"] = [int(variant)]
@@ -1657,11 +1660,14 @@ async def lemon_webhook(request: Request):
     if ls["variant_id"] and vid not in (ls["variant_id"], "") and cust_product != "pack":
         print(f"[LEMON WEBHOOK] boshqa mahsulot (variant {vid}) — e'tiborsiz qoldirildi. Sizniki bo'lsa LEMON_SQUEEZY_VARIANT_ID ni tekshiring.")
         return {"ok": True, "ignored": "other_variant"}     # bizning checkout (custom_data.product=pack) har doim hisoblanadi
-    try:
-        qty = max(1, min(10, int(item.get("quantity") or 1)))
-    except (TypeError, ValueError):
-        qty = 1
-    pages = pack_pages() * qty
+    # Subtotal-based credit calculation (net dollars BEFORE regional VAT/tax)
+    subtotal_cents = _int_or(attrs.get("subtotal"), 0)
+    if subtotal_cents <= 0:
+        subtotal_cents = _int_or(attrs.get("total"), 0)   # fallback if subtotal missing
+    net_dollars = subtotal_cents / 100.0
+    pages = int(round(net_dollars * 100))   # $1.00 net = 100 credits regardless of VAT
+    if pages <= 0:
+        pages = pack_pages()                # absolute fallback
 
     if not order_id:
         # order_id siz idempotentlik (qayta yuborilganda 2 marta hisoblamaslik) kafolatlanmaydi
