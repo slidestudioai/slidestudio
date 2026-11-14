@@ -138,7 +138,8 @@ def test_admin_take_reports_same_balance_as_site(sb, monkeypatch):
     res = admin_core.user_action("t", {"user_id": "u1", "action": "add_credits", "pages": -80})
     site = mon.apply_24h_reset(dict(sb.usage("u1")))
     shown = res["user"]["free_pages"] + res["user"]["paid_pages"]
-    assert shown == (site["free_credits"] + site["paid_credits"]) / U == 10      # avval bot 9.75, sayt 10 derdi
+    # bot va sayt BIR XIL raqam; pullik olinganda bepul limit darhol qayta to'lmaydi (qolgan 9.75 qoladi)
+    assert shown == (site["free_credits"] + site["paid_credits"]) / U == 9.75
 
 
 def test_admin_sequence_from_bug_report(sb, monkeypatch):
@@ -151,7 +152,7 @@ def test_admin_sequence_from_bug_report(sb, monkeypatch):
     for p in (-80, -80, -80, 80, 80):
         b = admin_core.user_action("t", {"user_id": "u1", "action": "add_credits", "pages": p})["user"]
         shown.append(b["free_pages"] + b["paid_pages"])
-    assert shown == [10, 0, 0, 80, 160]
+    assert shown == [9.75, 0, 0, 80, 160]
 
 
 def test_admin_give_does_not_lose_parallel_spend(sb, monkeypatch):
@@ -254,3 +255,47 @@ def test_telegram_without_google_has_no_free_pages():
     from backend import telegram_bot as tb
     text, kb = tb._no_credit_reply("fast", {"email": "tg123@t.me"})
     assert text == tb.LINK_FIRST and kb["inline_keyboard"][0][0]["callback_data"] == "linkinfo"
+
+
+# ---------------------------------------------------------------------------------------------
+# v66: hammasini olsa ham 10 varaq qolib ketmasin
+# ---------------------------------------------------------------------------------------------
+def test_take_everything_leaves_zero_not_daily_limit(sb, monkeypatch):
+    _quiet(monkeypatch)
+    U = mon.UNIT
+    old = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    # pullik 577.7 > kunlik limit => bepul "to'xtatilgan", balansda faqat 577.7 ko'rinadi
+    sb.tables["user_usage"] = [{"user_id": "u1", "email": "u1@x.uz", "paid_credits": int(577.7 * U), "free_credits": 0,
+                                "last_reset_time": old}]
+    res = admin_core.user_action("t", {"user_id": "u1", "action": "add_credits", "pages": -577.7})
+    assert res["user"]["free_pages"] + res["user"]["paid_pages"] == 0
+    site = mon.apply_24h_reset(dict(sb.usage("u1")))                  # sayt / bot keyingi so'rovda
+    assert mon.total_credits(site) == 0
+
+
+def test_partial_take_below_limit_is_exact(sb, monkeypatch):
+    _quiet(monkeypatch)
+    U = mon.UNIT
+    sb.tables["user_usage"] = [{"user_id": "u1", "email": "u1@x.uz", "paid_credits": 100 * U, "free_credits": 0,
+                                "last_reset_time": (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()}]
+    res = admin_core.user_action("t", {"user_id": "u1", "action": "add_credits", "pages": -95})
+    assert res["user"]["free_pages"] + res["user"]["paid_pages"] == 5            # 100 - 95, bepul 10 qo'shilmaydi
+
+
+def test_set_credits_zero_stays_zero(sb, monkeypatch):
+    _quiet(monkeypatch)
+    U = mon.UNIT
+    sb.tables["user_usage"] = [{"user_id": "u1", "email": "u1@x.uz", "paid_credits": 50 * U, "free_credits": 200,
+                                "last_reset_time": (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()}]
+    admin_core.user_action("t", {"user_id": "u1", "action": "set_credits", "free_pages": 0, "paid_pages": 0})
+    assert mon.total_credits(mon.apply_24h_reset(dict(sb.usage("u1")))) == 0
+
+
+def test_daily_override_zero_means_no_free_pages(sb, monkeypatch):
+    _quiet(monkeypatch)
+    sb.tables["user_usage"] = [{"user_id": "u1", "email": "u1@x.uz", "paid_credits": 0, "free_credits": 0,
+                                "last_reset_time": (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()}]
+    admin_core.user_action("t", {"user_id": "u1", "action": "daily_override", "pages": 0})
+    assert mon.total_credits(mon.apply_24h_reset(dict(sb.usage("u1")))) == 0
+    admin_core.user_action("t", {"user_id": "u1", "action": "daily_override", "pages": None})
+    assert sb.usage("u1")["daily_units_override"] is None
