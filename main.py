@@ -1658,7 +1658,12 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     checkout_data: Dict[str, Any] = {"custom": custom}
     if user_email:
         checkout_data["email"] = user_email
-    product_options: Dict[str, Any] = {"name": f"Slide Studio — {q['credits']:,} kredit".replace(",", " ")}
+    product_options: Dict[str, Any] = {
+        "name": f"Slide Studio — {q['credits']:,} kredit".replace(",", " "),
+        # Lemon oynasidagi tavsif (dashboard'dagi "Unlimited ..." matni o'rniga): aniq nima sotib olinayotgani
+        "description": (f"{q['credits']:,} kredit = {q['credits']:,} ta AI slayd varag'i. Muddatsiz. "
+                        f"Narx: ${q['net_cents'] / 100:.2f} + Lemon Squeezy komissiyasi = ${q['gross_cents'] / 100:.2f}.").replace(",", " "),
+    }
     try:
         product_options["enabled_variants"] = [int(variant)]
     except ValueError:

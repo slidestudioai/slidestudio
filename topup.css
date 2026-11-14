@@ -258,3 +258,28 @@
   .tu-overlay, .tu-card, .tu-pkg, .tu-cta, .tu-toast, .tu-pkg-check { transition: none !important; }
   .tu-flash, .tu-balance.tu-bump, .tu-state.tu-success .tu-state-icon { animation: none !important; }
 }
+
+/* v66: keng, lekin past ekranlar (noutbuk 1366×768, Telegram desktop) — hammasi bir ekranga sig'sin */
+@media (min-width: 820px) and (max-height: 900px) {
+  .tu-card { max-width: 780px; }
+  .tu-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .tu-pkg { padding: 12px 12px 10px; }
+  .tu-pkg-price { font-size: 20px; }
+  .tu-head { padding: 16px 20px 8px; }
+  .tu-label { margin: 6px 0 8px; }
+  .tu-summary { margin-top: 12px; padding: 10px 14px; }
+  .tu-cta { margin-top: 12px; height: 48px; }
+  .tu-foot { padding: 10px 20px 12px; }
+}
+
+/* To'lov tugmasi har doim ko'rinib tursin (kontent aylantirilsa ham pastda yopishib turadi) */
+.tu-body { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .22) transparent; }
+.tu-body::-webkit-scrollbar { width: 8px; }
+.tu-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .2); border-radius: 8px; }
+.tu-body::-webkit-scrollbar-track { background: transparent; }
+.tu-grid { padding-top: 10px; margin-top: -10px; }           /* "Eng ommabop" yorlig'i kesilib qolmasin */
+.tu-cta { position: sticky; bottom: 0; z-index: 2; }
+/* tugma ustidagi kontent yumshoq "o'chib" ketadi — soya tugmaning TASHQARISIDA (ustini qoraytirmaydi) */
+.tu-cta:not(:disabled), .tu-cta:disabled {
+  box-shadow: 0 10px 30px rgba(124, 108, 255, .4), inset 0 1px 0 rgba(255, 255, 255, .25), 0 -14px 16px -6px rgba(15, 18, 32, .95);
+}
