@@ -21,6 +21,9 @@
     h2 { font-size: 18px; margin: 28px 0 10px; color: var(--text); }
     p, li { font-size: 15px; color: #3c4043; margin-bottom: 10px; }
     ul { padding-left: 22px; margin-bottom: 12px; }
+    table.prices { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 14px; }
+    table.prices th, table.prices td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    table.prices th { font-weight: 600; }
     a { color: var(--blue); }
     footer { text-align: center; padding: 24px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); background: #fff; }
     footer a { color: var(--muted); margin: 0 8px; text-decoration: none; }
@@ -39,7 +42,7 @@
   <main>
     <div class="card">
       <h1>Terms of Service</h1>
-      <p class="updated">Last updated: October 21, 2026</p>
+      <p class="updated">Last updated: November 14, 2026</p>
 
       <p>Welcome to <strong>Slide Studio</strong> (“Service”, “we”, “us”). By creating an account or using the Service, you agree to these Terms of Service.</p>
 
@@ -48,17 +51,38 @@
 
       <h2>2. Accounts and security</h2>
       <ul>
-        <li>You must provide accurate information when signing in (for example via Google).</li>
+        <li>You sign in with Google. One email address = one account = one credit balance.</li>
+        <li>The Telegram bot and the Telegram Mini App use the same account and the same balance after you link your Google account in the bot. A Telegram account that is not linked to Google has no credit balance and cannot use AI features.</li>
         <li>You are responsible for activity under your account and for keeping access credentials secure.</li>
         <li>We may suspend or terminate accounts that abuse the Service, attempt to circumvent limits, or violate these terms.</li>
+        <li>If an account is deleted (by you or by us), its credit balance and usage history are deleted permanently. Deleted credits cannot be restored or refunded.</li>
       </ul>
 
-      <h2>3. AI credits and usage</h2>
+      <h2>3. Credits and prices</h2>
+      <p>AI features use <strong>credits</strong>. Your balance is shown as one number in the app and in the Telegram bot.</p>
       <ul>
-        <li>Certain features require <strong>slide credits</strong> or similar usage units. Credits are deducted when AI generation or related compute is used.</li>
-        <li>Free and paid balances may apply. Credit balances, reset schedules, and package sizes are shown in the product UI and may change.</li>
-        <li>Credits are non-transferable and have no cash value outside the Service.</li>
-        <li>Because generation uses paid AI and server resources at the time of the request, credits consumed for completed or partially completed generations are generally not returned except as described in our <a href="/refund.html">Refund Policy</a>.</li>
+        <li><strong>1 credit = 1 slide</strong> created, edited, or deleted with Fast AI. Deep AI uses 2 credits per slide.</li>
+        <li>Chat messages and image/GIF/video searches use small parts of a credit (for example, several chat messages = 1 credit). The current rates are shown in the app before you use them.</li>
+        <li>Accounts signed in with Google may receive up to <strong>10 free credits every 24 hours</strong>. Free credits are not added while your paid balance is 10 credits or more. The free amount may change.</li>
+        <li>Paid credits do not expire. Credits are non-transferable and have no cash value outside the Service.</li>
+      </ul>
+      <p>Credit packages:</p>
+      <table class="prices">
+        <tr><th>Package</th><th>Package price</th><th>Credits</th></tr>
+        <tr><td>Starter</td><td>$1.00</td><td>100</td></tr>
+        <tr><td>Popular</td><td>$5.00</td><td>550 (+10% bonus)</td></tr>
+        <tr><td>Pro</td><td>$10.00</td><td>1,200 (+20% bonus)</td></tr>
+        <tr><td>Business</td><td>$20.00</td><td>2,600 (+30% bonus)</td></tr>
+        <tr><td>Custom amount</td><td>from $1.00 to $1,000</td><td>100 credits per $1 (no bonus)</td></tr>
+      </table>
+      <ul>
+        <li><strong>Service fee:</strong> the payment processing fee (currently 6.5% + $0.50) is added to the package price. The package price, the fee, and the total are shown before you pay. Example: the $1.00 package costs $1.61 in total.</li>
+        <li><strong>Taxes:</strong> sales tax or VAT may be added at checkout depending on your country. Taxes are not converted into credits.</li>
+        <li><strong>Credits follow the amount actually paid.</strong> Credits are calculated from the amount you paid (without tax and the service fee). If the amount is changed at checkout and is lower than the package price, the package bonus does not apply and you receive 100 credits per $1 paid.</li>
+        <li>Credits are added to your balance automatically after the payment provider confirms the payment, usually within a few seconds.</li>
+        <li>Because generation uses paid AI and server resources at the time of the request, credits used for completed or partially completed generations are generally not returned except as described in our <a href="/refund.html">Refund Policy</a>.</li>
+        <li>We may correct a balance (add or remove credits) to fix technical errors or in cases of abuse.</li>
+        <li>Prices and package sizes may change. Changes do not affect credits that are already on your balance.</li>
       </ul>
 
       <h2>4. Acceptable use</h2>
@@ -77,7 +101,7 @@
       <p>The Service is provided “as is”. AI output may contain errors. We do not guarantee uninterrupted availability, specific quality of AI results, or fitness for a particular purpose. To the fullest extent permitted by law, we are not liable for indirect or consequential damages arising from use of the Service.</p>
 
       <h2>7. Payments</h2>
-      <p>Paid plans and credit packs are processed by our payment provider (including Lemon Squeezy). Billing terms of the provider also apply. See our <a href="/refund.html">Refund Policy</a> for refunds.</p>
+      <p>Payments are processed by <strong>Lemon Squeezy</strong>, which acts as the merchant of record and handles billing, receipts, and sales tax. Lemon Squeezy's terms also apply to your purchase. We do not receive or store your card details. We currently sell one-time credit packages only (no subscriptions). See our <a href="/refund.html">Refund Policy</a> for refunds.</p>
 
       <h2>8. Changes</h2>
       <p>We may update these Terms. Continued use after changes constitutes acceptance of the updated Terms. Material changes may be highlighted in the product or by email when appropriate.</p>
