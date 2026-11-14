@@ -253,7 +253,9 @@ def _tg_map(user_ids: List[str]) -> Dict[str, int]:
 
 
 def _brief(row: Dict[str, Any], tgmap: Dict[str, int]) -> Dict[str, Any]:
-    u = mon.normalize_user_row(row)
+    # Sayt va bot ko'rsatadigan HAQIQIY balans (24 soatlik bepul tiklanish hisobga olingan).
+    # Avval xom qator ko'rsatilardi: bot «9.75» desa, sayt «10» ko'rsatardi.
+    u = mon.apply_24h_reset(dict(row))
     uid = str(row.get("user_id"))
     email = str(row.get("email") or "")
     vip_rt = False
@@ -341,10 +343,28 @@ def resolve_target(q: str) -> Dict[str, Any]:
         return _get_user_row(q)
     if "@" in q:
         em = q.lower()
-        rows, _ = _select_users(lambda cols: sb.table("user_usage").select(cols).eq("email", em).limit(1))
+        rows, _ = _select_users(lambda cols: sb.table("user_usage").select(cols).eq("email", em).limit(20))
         if rows:
-            return rows[0]
+            return _pick_account(rows)
     raise AdminError("Topilmadi. Telegram ID, email yoki UUID yozing.", 404)
+
+
+def _pick_account(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Bir email bilan bir nechta user_usage qatori bo'lishi mumkin (masalan, ikki xil kirish usuli).
+    Avval `.limit(1)` ishlatilardi: Postgres har safar BOSHQA qatorni qaytarishi mumkin (UPDATE dan keyin tartib
+    o'zgaradi) — /give va /take navbatma-navbat turli akkauntlarga tushardi. Endi tanlov BARQAROR:
+    Telegram'ga ulangan akkaunt > oxirgi faol > eng eski. Qolganlari `_dupes` da qaytadi (adminga ogohlantirish)."""
+    if len(rows) == 1:
+        return rows[0]
+    linked = set(_tg_map([str(r.get("user_id")) for r in rows]).keys())
+
+    def key(r):
+        return (str(r.get("user_id")) in linked, str(r.get("last_active") or ""),
+                "" if r.get("created_at") is None else str(r.get("created_at")))
+    ordered = sorted(rows, key=key, reverse=True)
+    best = dict(ordered[0])
+    best["_dupes"] = [_brief(r, {}) for r in ordered[1:]]
+    return best
 
 
 def user_brief(uid: str) -> Dict[str, Any]:
@@ -371,6 +391,21 @@ def _update_user(uid: str, patch: Dict[str, Any]) -> None:
                 pass
         raise AdminError("Bu amal uchun SUPABASE_SCHEMA.sql (VIP/cheksiz ustunlari) ishga tushirilmagan. "
                          "Supabase → SQL Editor da shu faylni bir marta ishga tushiring.", 409)
+
+
+def _cas_update_credits(uid: str, patch: Dict[str, Any], row: Dict[str, Any]) -> bool:
+    """Faqat bazadagi free/paid hali `row` dagidek bo'lsa yozadi. True = yozildi, False = shu orada o'zgargan."""
+    sb = _sb()
+    q = sb.table("user_usage").update(patch).eq("user_id", str(uid))
+    if row.get("free_credits") is not None:
+        q = q.eq("free_credits", int(row["free_credits"]))
+    if row.get("paid_credits") is not None:
+        q = q.eq("paid_credits", int(row["paid_credits"]))
+    try:
+        res = q.execute()
+    except Exception as e:
+        raise AdminError(f"Saqlanmadi: {str(e)[:120]}", 502)
+    return bool(res.data)
 
 
 def _ledger(uid: str, kind: str, amount_units: int, row: Dict[str, Any], details: dict) -> None:
@@ -428,31 +463,44 @@ def user_action(actor: str, body: Dict[str, Any]) -> Dict[str, Any]:
     elif act == "add_credits":
         pages = _num(body.get("pages"), "pages", -100000, 100000)
         units = int(round(pages * mon.UNIT))
-        if units >= 0:
-            paid = int(u["paid_credits"])
-            newp = paid + units
-            units_delta = newp - paid
-            patch["paid_credits"] = newp
-            patch["slide_credits"] = int(u["free_credits"]) + newp
-            note = f"paket varaq {pages:+g}"
-            if units_delta > 0:
-                tg_text = f"🎁 Balansingizga <b>+{units_delta / mon.UNIT:g}</b> varaq qo'shildi."
-        else:
-            # v60: AYIRISH avval paket varaqlardan, yetmasa BUGUNGI bepul varaqlardan olinadi.
-            # Avval paket 0 bo'lgach kunlik bepul limit darhol qaytib kelardi (100 bor, 200 ayirilsa ham 10 qolardi).
-            # Bepul qismidan olinsa 24 soatlik oyna hozirdan boshlanadi — bepul varaq ertaga (24 soatdan keyin) qaytadi.
-            cur = mon.apply_24h_reset(dict(row))
+        # v66: OPTIMISTIC LOCK — foydalanuvchi shu payt varaq sarflasa (sayt/bot), uning yozuvi yoki admin
+        # o'zgarishi yo'qolmasin: bazadagi free/paid o'qilgan qiymatda bo'lsagina yoziladi, aks holda qayta o'qiladi.
+        for attempt in range(5):
+            if attempt:
+                row = _get_user_row(uid)
+            cur = mon.apply_24h_reset(dict(row))            # sayt/bot ko'radigan balans
             paid, free = int(cur["paid_credits"]), int(cur["free_credits"])
-            take = -units
-            from_paid = min(paid, take)
-            from_free = min(free, take - from_paid)
-            newp, newf = paid - from_paid, free - from_free
+            patch = {}
+            tg_text = ""
+            if units >= 0:
+                newp, newf = paid + units, free
+                units_delta = units
+                note = f"paket varaq {pages:+g}"
+                if units_delta > 0:
+                    tg_text = f"🎁 Balansingizga <b>+{units_delta / mon.UNIT:g}</b> varaq qo'shildi."
+            else:
+                # v60: AYIRISH avval paket varaqlardan, yetmasa BUGUNGI bepul varaqlardan olinadi.
+                # Bepul qismidan olinsa 24 soatlik oyna hozirdan boshlanadi — bepul varaq ertaga qaytadi.
+                take = -units
+                from_paid = min(paid, take)
+                from_free = min(free, take - from_paid)
+                newp, newf = paid - from_paid, free - from_free
+                units_delta = -(from_paid + from_free)
+                if from_free > 0:
+                    patch["last_reset_time"] = _now().isoformat()
+                note = (f"varaq {pages:+g}: paketdan −{from_paid / mon.UNIT:g}"
+                        + (f", bugungi bepuldan −{from_free / mon.UNIT:g} (24 soatdan keyin qaytadi)" if from_free else ""))
+                if from_paid + from_free < take:
+                    note += f" (balansda faqat {(from_paid + from_free) / mon.UNIT:g} bor edi)"
+            if "last_reset_time" not in patch and cur.get("last_reset_time") != row.get("last_reset_time"):
+                patch["last_reset_time"] = cur["last_reset_time"]   # 24 soatlik tiklanish ham saqlansin
             patch.update({"paid_credits": newp, "free_credits": newf, "slide_credits": newp + newf})
-            if from_free > 0:
-                patch["last_reset_time"] = _now().isoformat()
-            units_delta = -(from_paid + from_free)
-            note = (f"varaq {pages:+g}: paketdan −{from_paid / mon.UNIT:g}"
-                    + (f", bugungi bepuldan −{from_free / mon.UNIT:g} (24 soatdan keyin qaytadi)" if from_free else ""))
+            if _cas_update_credits(uid, patch, row):
+                break
+        else:
+            raise AdminError("Balans shu payt o'zgarib turibdi. Bir necha soniyadan keyin qayta urinib ko'ring.", 409)
+        _ledger(uid, "admin_credit", units_delta, {**row, **patch}, {"by": actor, "act": act})
+        units_delta = 0                                         # pastda ikkinchi marta yozilmasin
     elif act == "set_credits":
         fp = body.get("free_pages")
         pp = body.get("paid_pages")
@@ -480,7 +528,8 @@ def user_action(actor: str, body: Dict[str, Any]) -> Dict[str, Any]:
     else:
         raise AdminError("Noma'lum amal")
 
-    _update_user(uid, patch)
+    if act != "add_credits":                                    # add_credits o'zi (CAS bilan) yozdi
+        _update_user(uid, patch)
     merged = dict(row)
     merged.update(patch)
     if units_delta:
