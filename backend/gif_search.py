@@ -233,7 +233,7 @@ def _tenor(q: str, per: int, page: int) -> Result:
     key = _env("TENOR_API_KEY") or "LIVDSRZULELA"
     per = max(8, min(per, 50))
     ep = "search" if q else "featured"
-    url = f"https://tenor.googleapis.com/v2/{ep}?key={_q(key)}&client_key=slidestudio&limit={per}&media_filter=gif,tinygif&contentfilter=medium"
+    url = f"https://tenor.googleapis.com/v2/{ep}?key={_q(key)}&client_key=slidestudio&limit={per}&media_filter=gif,mediumgif,tinygif&contentfilter=medium"
     if q:
         url += f"&q={_q(q)}"
     if page > 1:
@@ -248,9 +248,13 @@ def _tenor(q: str, per: int, page: int) -> Result:
     out = []
     for it in d.get("results") or []:
         mf = it.get("media_formats") or {}
-        full = (mf.get("gif") or {}).get("url") or (mf.get("tinygif") or {}).get("url")
+        # v66: to'liq "gif" ko'pincha 5–20 MB — sekin yuklanib, vaqt tugab ko'rinmay qolardi. Katta bo'lsa "mediumgif".
+        g = mf.get("gif") or {}
+        if (not g.get("url") or _int(g.get("size")) > MAX_BYTES) and (mf.get("mediumgif") or {}).get("url"):
+            g = mf["mediumgif"]
+        full = g.get("url") or (mf.get("tinygif") or {}).get("url")
         thumb = (mf.get("tinygif") or {}).get("url") or full
-        dims = (mf.get("gif") or {}).get("dims") or [0, 0]
+        dims = g.get("dims") or [0, 0]
         if full:
             out.append({"url": full, "thumbnail": thumb, "is_gif": True, "width": _int(dims[0]), "height": _int(dims[1]), "source": "tenor"})
     return out, bool(nxt)

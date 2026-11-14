@@ -120,5 +120,6 @@
   window.addEventListener('online', function () { toast({ uz: 'Internet qaytdi', ru: 'Интернет восстановлен', en: 'Back online' }[lang()] || 'Online', 'success'); });
 
   // ---------- 5) GIF/rasm/video oldindan yuklash — MediaRAM (00a_media_ram.js) va 25_v38_media_fx.js bajaradi ----------
-  window.ssPreloadGifs = function (urls) { try { (urls || []).forEach(function (u) { if (window.MediaRAM) window.MediaRAM.warm(u); }); } catch (e) {} };
+  // v66: warm() MASSIV kutadi — avval bitta satr berilardi, xato jim yutilib GIF'lar oldindan umuman yuklanmasdi
+  window.ssPreloadGifs = function (urls) { try { if (window.MediaRAM) window.MediaRAM.warm([].concat(urls || []).filter(Boolean)); } catch (e) {} };
 })();

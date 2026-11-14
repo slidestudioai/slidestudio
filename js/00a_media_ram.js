@@ -25,6 +25,8 @@
   const PROXY_TIMEOUT = 30000;
   const MAX_PARALLEL = 6;
   const RETRY_AFTER_ERROR_MS = 4000;
+  const HEAD_START = 3500;                       // to'g'ridan-to'g'ri so'rov shuncha ms da kelmasa — proksi ham parallel boshlanadi
+  const FAILED_SKIP_MS = 5 * 60 * 1000;          // taqdimot oldidan: yaqinda yuklanmagan media qayta KUTILMAYDI
 
   const nativeFetch = root.fetch ? root.fetch.bind(root) : null;
   const store = new Map();                       // url -> entry
@@ -132,18 +134,39 @@
     let blob = null;
     let lastErr = null;
 
-    if (nativeFetch && !isBlocked(host)) {
-      try { blob = await fetchBlob(url, entry, 'direct'); }
-      catch (e) {
-        lastErr = e;
-        // CORS xatosi TypeError beradi — shu xostni eslab qolamiz (keyingi safar vaqt yo'qotmaymiz)
-        if (e && e.name === 'TypeError' && navigator.onLine !== false) blockedHosts.set(host, Date.now());
-      }
-    }
-    if (!blob && !isVideo && nativeFetch) {          // video server orqali O'TKAZILMAYDI (og'ir) — brauzer o'zi oqimli o'ynaydi
-      entry.loaded = 0; entry.total = 0;
-      try { blob = await fetchBlob(url, entry, 'proxy'); entry.viaProxy = true; }
-      catch (e2) { lastErr = e2; }
+    // v66: avval sayt 20 soniya kutilib, keyin proksi yana 30 soniya kutilardi (sekin xostda slayd 50 s gacha ochilmasdi).
+    // Endi: to'g'ridan-to'g'ri so'rov boshlanadi; HEAD_START ichida tugamasa (yoki xato bersa) proksi PARALLEL ishga tushadi,
+    // qaysi biri birinchi muvaffaqiyatli kelsa — o'sha olinadi.
+    const tryDirect = nativeFetch && !isBlocked(host);
+    const tryProxy = !isVideo && nativeFetch;          // video server orqali O'TKAZILMAYDI (og'ir) — brauzer o'zi oqimli o'ynaydi
+    if (tryDirect && !tryProxy) {
+      try { blob = await fetchBlob(url, entry, 'direct'); } catch (e) { lastErr = e; }
+    } else if (tryProxy) {
+      blob = await new Promise(function (resolve) {
+        let pending = 0, done = false, proxyStarted = false, headTimer = null;
+        const finish = function (b, via) {
+          if (done) return;
+          if (b) { done = true; clearTimeout(headTimer); if (via === 'proxy') entry.viaProxy = true; resolve(b); return; }
+          if (--pending <= 0 && (proxyStarted || !tryDirect)) { done = true; clearTimeout(headTimer); resolve(null); }
+        };
+        const startProxy = function () {
+          if (proxyStarted || done) return;
+          proxyStarted = true; pending++;
+          fetchBlob(url, entry, 'proxy').then(function (b) { finish(b, 'proxy'); }, function (e2) { lastErr = e2; finish(null); });
+        };
+        if (tryDirect) {
+          pending++;
+          fetchBlob(url, entry, 'direct').then(function (b) { finish(b, 'direct'); }, function (e) {
+            lastErr = e;
+            // CORS xatosi TypeError beradi — shu xostni eslab qolamiz (keyingi safar vaqt yo'qotmaymiz)
+            if (e && e.name === 'TypeError' && navigator.onLine !== false) blockedHosts.set(host, Date.now());
+            startProxy(); finish(null);
+          });
+          headTimer = setTimeout(startProxy, HEAD_START);
+        } else {
+          startProxy();
+        }
+      });
     }
     if (!blob) throw (lastErr || new Error('load-failed'));
 
@@ -369,5 +392,12 @@
     }
   } catch (e) { console.warn('MediaRAM video patch:', e); }
 
-  root.MediaRAM = { load: load, peek: peek, state: state, warm: warm, ready: ready, setPinned: setPinned, on: on, stats: stats, clear: clear, unwrap: unwrap, isBlockedHost: function (u) { return isBlocked(hostOf(u)); } };
+  /** v66: shu media oxirgi FAILED_SKIP_MS ichida yuklanmay qolganmi (taqdimot oldidan qayta kutmaslik uchun) */
+  function failedRecently(url) {
+    const key = unwrap(url) || (/^https?:\/\//i.test(url || '') ? url : null);
+    const e = key && store.get(key);
+    return !!(e && e.status === 'error' && Date.now() - (e.failedAt || 0) < FAILED_SKIP_MS);
+  }
+
+  root.MediaRAM = { failedRecently: failedRecently, load: load, peek: peek, state: state, warm: warm, ready: ready, setPinned: setPinned, on: on, stats: stats, clear: clear, unwrap: unwrap, isBlockedHost: function (u) { return isBlocked(hostOf(u)); } };
 })(window);

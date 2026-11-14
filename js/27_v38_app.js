@@ -205,7 +205,10 @@
       const m = collectMedia();
       const all = m.imgs.concat(m.vids);
       safe(function () { MediaRAM.setPinned(all); });
-      const needMedia = all.filter(function (u) { return !safe(function () { return MediaRAM.peek(u); }); });
+      // v66: RAM da bor yoki yaqinda yuklanmay qolgan media qayta kutilmaydi (avval har namoyishda 25 s gacha qayta yuklanardi)
+      const needMedia = all.filter(function (u) {
+        return !safe(function () { return MediaRAM.peek(u); }) && !safe(function () { return MediaRAM.failedRecently && MediaRAM.failedRecently(u); });
+      });
       const total = needMedia.length + slides.length;
       let skipped = false, done = 0;
       const ov = prepOverlay(), fill = ov.querySelector('.ss-prep-fill'), num = ov.querySelector('.ss-prep-num');

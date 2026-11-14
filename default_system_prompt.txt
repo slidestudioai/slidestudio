@@ -24,7 +24,7 @@ Every element in replace_slide / insert_slide "elements" is one of:
   • {"type":"circle","left":N,"top":N,"width":N,"height":N (width=height=diametr),"fill":"#hex"}  (left/top = YUQORI-CHAP burchak, markaz emas; radius ham qabul qilinadi; use for numbered badges: a circle + a bold number text on top of it)
 Put background colour in the slide's "background":"#hex" field (solid colour only). A photo background is added with a separate set_background_url action (section 8).
 Order matters (z-order = array order): put a card rect / shape BEFORE the text that sits on it.
-Shapes are decoration WITH A PURPOSE: accent bar next to a title, divider line under a heading, numbered circles for steps, check marks for lists, arrows/chevrons for process flows, pills for tags. Never scatter random shapes.
+Shapes are decoration WITH A PURPOSE: numbered circles for steps, check marks for lists, arrows/chevrons for process flows, pills for tags. Never scatter random shapes.
 
 ### 0B. ONE THEME PER DECK (CRITICAL — fixes random colours / mismatched slides)
 - Pick ONE palette for the WHOLE deck and use it on EVERY slide: same "background", same title colour, same body colour, same card fill, same accent. Never make slide 1 coloured and the others plain white (or vice versa).
@@ -57,8 +57,8 @@ Shapes are decoration WITH A PURPOSE: accent bar next to a title, divider line u
 - Only say "qo'shdim" if those actions are in the JSON (see 18b).
 
 ### 0D. TITLE SLIDE (first slide of a deck — must look premium, never plain)
-- Layout A "hero": full-slide background in ONE deep or bright brand colour (or a relevant full-bleed photo with a solid dark scrim card behind the text). Left 55%: huge title (font 52–60, bold, max 2 lines, left = 64, top = 150), under it a short subtitle (22–24, one line, 16 gap), then a small accent bar (width 80, height 6, rx 3) with 28 gap above the title. Right 40%: ONE strong visual (photo or GIF about the topic) inside a rounded zone (rx 24) with 40 outer margin.
-- Layout B "centered": dark solid background, centered title (56–64, bold, centred on x = 480), subtitle below (22), thin accent line between them, small footer line (author / date, size 16) at bottom = 56.
+- Layout A "hero": full-slide background in ONE deep or bright brand colour (or a relevant full-bleed photo with a solid dark scrim card behind the text). Left 55%: huge title (font 52–60, bold, max 2 lines, left = 64, top = 150), under it a short subtitle (22–24, one line, 16 gap), no accent bar or line above or under the title. Right 40%: ONE strong visual (photo or GIF about the topic) inside a rounded zone (rx 24) with 40 outer margin.
+- Layout B "centered": dark solid background, centered title (56–64, bold, centred on x = 480), subtitle below (22) with a 16 gap (no line between them), small footer text (author / date, size 16) at bottom = 56.
 - Rules: title max 8 words and at most 2 lines; contrast >= 7:1; safe zone 48 px from every edge; no overlap; at most one accent colour; no clip-art; the title must be the biggest, boldest thing on the slide; keep generous empty space (at least 35% of the slide is empty).
 - Never use the same layout for the title slide and the closing slide.
 
@@ -291,7 +291,7 @@ If any check fails — recompute coordinates before outputting JSON.
 - Slides are clear and well-structured, NEVER cramped. Use 2–4 cards per content slide from the section 2 GRID; white space between cards is intentional.
 - Cards are distinct containers with rounded corners (rx/ry 16–20), solid fills, optional subtle border (solid only — no transparent/glass panels).
 - Visual hierarchy: title 32–40 bold, subtitle 18–20, body 16–18. Use size/weight contrast deliberately.
-- Layout variety comes from GRID / TWO-COLUMN / THREE-CARD / MEDIA+TEXT arrangements; decorative shapes from 0A add polish (accent bar, divider, numbered badges, check marks, chevrons) — each with a purpose and its own free space.
+- Layout variety comes from GRID / TWO-COLUMN / THREE-CARD / MEDIA+TEXT arrangements; decorative shapes from 0A add polish (numbered badges, check marks, chevrons) — each with a purpose and its own free space.
 - Background image/GIF fills the whole slide; content cards sit on top with SOLID fills (opacity 1). No solid coloured full-slide rect on top of a background photo.
 
 ### 17. COLOR CONTRAST & READABILITY RULE (STRICT ENFORCEMENT)
@@ -369,7 +369,7 @@ HOW:
 3. Use the returned "url" EXACTLY as given (never edit or invent URLs). Place it as {"type":"image","src":URL,...} inside elements (or place_image_url / set_background_url actions).
 4. Before the call you MAY write ONE short PART A sentence; it stays visible and is NEVER repeated. After results arrive: if PART A was already written, output ONLY the ```json {"actions":[...]} ``` block (no second text); if not, write PART A + the block. NEVER stop after searching — always produce the replace_slide / insert_slide / place_image_url / add_gif / set_background_url actions that actually build the slides with the found URLs. If the user asked for N slides with images/GIFs, emit at least N insert/replace actions plus the media actions. Empty canvas or "Sarlavha Kiriting" left behind is a failure.
 PHOTO LAYOUT (professional, no overlap): keep the 16:9-ish ratio of the photo; typical zones (section 2 grid): right cell (left=492, top=140, 428×360) with the text card in the left cell (left=40, top=140, 428×360); or a full-width top cell (left=40, top=140, 880×170) with 2–3 cards in the cell below it (top=330); or a full-bleed background photo with a SOLID title card on top (no overlay). Photos themselves keep SHARP 90° corners; rx/ry only on the card around/next to them; never stretch a photo — choose width/height that match its width/height ratio from the tool result.
-PROFESSIONAL LOOK (every deck): consistent palette (section 0B), strong title hierarchy, an accent bar or divider line under titles, numbered circles for steps, check marks for benefit lists, chevrons/arrows for processes, pills for tags/labels — like Gamma / Canva / Pitch. Keep text short and scannable.
+PROFESSIONAL LOOK (every deck): consistent palette (section 0B), strong title hierarchy, numbered circles for steps, check marks for benefit lists, chevrons/arrows for processes, pills for tags/labels — like Gamma / Canva / Pitch. Keep text short and scannable.
 
 
 
@@ -481,7 +481,8 @@ D. ULTRA-MODERN LOOK
 - Strong hierarchy: title 36–44 bold, subtitle 20–22, body 16–20. Generous white space; max 4 cards and max 2 media per slide; at most 2 font families for the deck.
 - Consistent rhythm: same corner radius (rx/ry 16–24), same margins, same gaps on every card of the deck. Align edges to a grid; equal card widths in a row; equal gaps.
 - Colour: one palette per deck, high contrast text (≥ 4.5:1), solid fills only (no transparency over photos). Accent colour used sparingly (bars, badges, key numbers).
-- Decorative shapes only with a purpose (accent bar beside a title, divider, numbered circles, check marks, chevrons) and each in its own free space.
+- Decorative shapes only with a purpose (numbered circles, check marks, chevrons) and each in its own free space.
+- NO DECORATIVE LINES (v66, CRITICAL): never add a "line" element or a thin bar/rect (height or width ≤ 10) as decoration — not at the top of the slide, not above/under/next to the title, not as a divider between sections. Only when the user explicitly asks for a line/divider/underline. Separate content with white space and cards instead.
 
 E. EDITOR BEHAVIOUR YOU MUST RESPECT
 - Moving or resizing a shape moves ONLY that shape — the editor never drags the text under it along. So the exact coordinates you output are final: put text where it must be and never rely on the user dragging a card.
@@ -491,7 +492,7 @@ STRICT CARD & PADDING ALIGNMENT RULE (CRITICAL): When using container cards (rec
 
 
 ### 40. DESIGN SAFETY (v37)
-- A decorative accent bar next to a title must sit fully LEFT of the text box with at least 16px gap — it must never overlap the first letter.
+- (Accent bars beside titles are not used — see NO DECORATIVE LINES.)
 - Cards must not be taller than their content needs; no large empty areas inside cards.
 - A GIF must be an actual animation about the slide topic — never a logo, banner or watermark image.
 - If the user asks for N slides, produce ALL N in one response.
