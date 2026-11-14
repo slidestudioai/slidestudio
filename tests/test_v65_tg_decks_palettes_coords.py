@@ -75,3 +75,24 @@ def test_stats_and_charts_scenes():
     stat_accent_rects = [it for it in stats_scene.items if it["t"] == "rect" and it.get("w") == 44 and it.get("h") == 6]
     assert len(stat_accent_rects) == 2
     assert stat_accent_rects[0]["fill"] != stat_accent_rects[1]["fill"]
+
+
+def test_tenor_prefers_medium_gif_when_full_is_big(monkeypatch):
+    from backend import gif_search as gs
+    big = gs.MAX_BYTES + 1
+    monkeypatch.setattr(gs, "_get_json", lambda url: {"results": [
+        {"media_formats": {"gif": {"url": "https://t/big.gif", "size": big, "dims": [498, 280]},
+                           "mediumgif": {"url": "https://t/med.gif", "size": 900000, "dims": [320, 180]},
+                           "tinygif": {"url": "https://t/tiny.gif"}}},
+        {"media_formats": {"gif": {"url": "https://t/small.gif", "size": 500000, "dims": [200, 100]},
+                           "tinygif": {"url": "https://t/tiny2.gif"}}}]})
+    out, _ = gs._tenor("cat", 8, 1)
+    assert [o["url"] for o in out] == ["https://t/med.gif", "https://t/small.gif"]
+    assert out[0]["width"] == 320
+
+
+def test_prompt_has_no_default_decorative_lines():
+    import main
+    p = main._read_default_system_prompt()
+    assert "NO DECORATIVE LINES" in p
+    assert "accent bar or divider line under titles" not in p
