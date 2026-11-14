@@ -631,7 +631,12 @@ def user_action(actor: str, body: Dict[str, Any]) -> Dict[str, Any]:
                 from_free = min(free, take - from_paid)
                 newp, newf = paid - from_paid, free - from_free
                 units_delta = -(from_paid + from_free)
-                if from_free > 0:
+                # v66: pullik balans kunlik limitdan katta bo'lsa bepul limit "to'xtatilgan" (balansda ko'rinmaydi).
+                # Admin pullik varaqni olib, balans limitdan pastga tushsa — bepul limit DARHOL qaytmasin
+                # (avval «hammasini olsam ham 10 varaq qoladi» bo'lardi). U 24 soatdan keyin qaytadi.
+                was_suspended = mon.free_suspended(cur)
+                now_suspended = mon.free_suspended({**cur, "paid_credits": newp})
+                if from_free > 0 or (was_suspended and not now_suspended):
                     patch["last_reset_time"] = _now().isoformat()
                 note = (f"varaq {pages:+g}: paketdan −{from_paid / mon.UNIT:g}"
                         + (f", bugungi bepuldan −{from_free / mon.UNIT:g} (24 soatdan keyin qaytadi)" if from_free else ""))
@@ -653,7 +658,10 @@ def user_action(actor: str, body: Dict[str, Any]) -> Dict[str, Any]:
         npd = int(u["paid_credits"]) if pp in (None, "") else int(round(_num(pp, "paid_pages", 0, 1000000) * mon.UNIT))
         units_delta = (nf + npd) - (int(u["free_credits"]) + int(u["paid_credits"]))
         patch.update({"free_credits": nf, "paid_credits": npd, "slide_credits": nf + npd})
-        note = f"balans = {nf / mon.UNIT:g} + {npd / mon.UNIT:g}"
+        if fp not in (None, ""):
+            # bepul qism aniq belgilandi — 24 soatlik oyna hozirdan boshlanadi (darhol qayta to'lib qolmasin)
+            patch["last_reset_time"] = _now().isoformat()
+        note = f"balans = {nf / mon.UNIT:g} bepul + {npd / mon.UNIT:g} pullik"
     elif act == "fill_free":
         daily = mon.daily_units_for(u)
         units_delta = max(0, daily - int(u["free_credits"]))

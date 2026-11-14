@@ -1045,11 +1045,12 @@ async def _google_ok(cid: int, user: dict) -> bool:
 # Admin: «admin» yoki /admin — FAQAT ADMIN_TG_IDS dagi Telegram ID ga ochiladi. Boshqalarga: «Bunday buyruq mavjud emas».
 # Foydalanuvchi ID / email / UUID bo'yicha topiladi. Hammasi bazada (Supabase) saqlanadi va jurnalga yoziladi.
 # ----------------------------------------------------------------------------------------------
-ADMIN_CMDS = {"/give", "/take", "/unlimited", "/fill", "/reset", "/block", "/unblock", "/user", "/merge"}
+ADMIN_CMDS = {"/give", "/take", "/unlimited", "/fill", "/reset", "/block", "/unblock", "/user", "/merge", "/daily"}
 ADMIN_HELP = (
     "🛡 <b>Admin</b>\n"
     "<code>/give ID 50</code> — varaq qo'shish\n"
-    "<code>/take ID 20</code> — varaq ayirish\n"
+    "<code>/take ID 20</code> — varaq ayirish (<code>/take ID all</code> — hammasini 0 qilish)\n"
+    "<code>/daily ID 0</code> — shaxsiy kunlik bepul limit (<code>/daily ID off</code> — odatiy limitga qaytarish)\n"
     "<code>/merge email</code> — bir email'dagi eski akkauntlarni bittaga birlashtirish (<code>/merge all</code> — hammasi)\n"
     "<code>/unlimited ID</code> — cheksiz qilish (<code>/unlimited ID off</code> — olib tashlash)\n"
     "<code>/fill ID</code> — bugungi bepul limitni to'ldirish\n"
@@ -1124,8 +1125,17 @@ async def _admin_command(cid: int, user: dict, cmd: str, arg: str) -> None:
             if len(parts) < 2:
                 await _send(cid, f"Misol: <code>{cmd} {esc(target)} 50</code>")
                 return
-            n = abs(float(parts[1].replace(",", ".")))
-            body.update(action="add_credits", pages=n if cmd == "/give" else -n)
+            if cmd == "/take" and parts[1].lower() in ("all", "hammasi", "barchasi"):
+                body.update(action="set_credits", free_pages=0, paid_pages=0)
+            else:
+                n = abs(float(parts[1].replace(",", ".")))
+                body.update(action="add_credits", pages=n if cmd == "/give" else -n)
+        elif cmd == "/daily":
+            if len(parts) < 2:
+                await _send(cid, f"Misol: <code>/daily {esc(target)} 0</code> yoki <code>/daily {esc(target)} off</code>")
+                return
+            v = parts[1].lower()
+            body.update(action="daily_override", pages=None if v in ("off", "yoq", "yo'q", "default") else abs(float(v.replace(",", "."))))
         elif cmd == "/unlimited":
             body.update(action="unlimited", value=not (len(parts) > 1 and parts[1].lower() in ("off", "0", "yoq", "yo'q", "no")))
         elif cmd == "/fill":
