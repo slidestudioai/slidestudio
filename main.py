@@ -65,7 +65,7 @@ try:
         PAGES_PER_PACK,
         CHECKOUT_PRICE_USD,
         plan_active, is_unlimited, is_ad_free,
-        pack_pages, pack_units, free_daily_units, rt,
+        pack_pages, pack_units, free_daily_units, rt, daily_units_for,
     )
 except ImportError as _mon_err:
     print(f"[ERROR] backend/monitoring.py yuklanmadi: {_mon_err}")
@@ -1359,6 +1359,28 @@ def ledger_spent(user_id: str, since_iso):
     except Exception:
         return None
 
+# Balansni o'zgartiradigan "to'ldirish" yozuvlari: hisoblagich maxraji shulardan keyingi balans bo'ladi.
+TOPUP_LEDGER_KINDS = ["purchase", "refund", "admin_credit", "account_merge_in", "tg_link_in"]
+
+
+def balance_cap_units(user_id: str, u: dict) -> int:
+    """v66: saytdagi hisoblagich «80/80» — maxraj = oxirgi to'ldirish (sotib olish / admin +/-) dan keyingi balans.
+    Pullik varaq yo'q bo'lsa — kunlik limit. Hech qachon joriy balansdan kichik emas."""
+    total = int(u.get("free_credits") or 0) + int(u.get("paid_credits") or 0)
+    if int(u.get("paid_credits") or 0) <= 0:
+        return max(daily_units_for(u), total)
+    top = None
+    if supabase and user_id and not str(user_id).startswith(("dev-", "anon-", "guest-")):
+        try:
+            rows = (supabase.table("usage_ledger").select("free_after,paid_after").eq("user_id", str(user_id))
+                    .in_("kind", TOPUP_LEDGER_KINDS).order("created_at", desc=True).limit(1).execute().data or [])
+            if rows:
+                top = int(rows[0].get("free_after") or 0) + int(rows[0].get("paid_after") or 0)
+        except Exception:
+            top = None
+    return max(total, top or total)
+
+
 _merge_checked: "OrderedDict[str, float]" = OrderedDict()
 
 
@@ -1374,7 +1396,7 @@ def _merge_duplicates_once(uid: str, email: str) -> None:
     try:
         res = admin_core.merge_email_accounts("auto-login", email, keep_uid=uid)
         if res.get("merged"):
-            print(f"[MERGE] {email}: {res['merged']} ta eski akkaunt -> {uid} (+{res.get('moved_pages')} varaq)")
+            print(f"[MERGE] {email}: {res['merged']} ta o'chirilgan akkaunt qoldig'i tozalandi (asosiy: {uid})")
     except Exception as e:
         _merge_checked.pop(uid, None)          # keyingi safar yana urinib ko'ramiz
         print(f"[MERGE] {email}: {str(e)[:160]}")
@@ -1398,6 +1420,7 @@ def user_usage(token: str = ""):
         u = get_or_create_user_usage(user_res.user.id, user_res.user.email or "")
         u["spent_24h"] = ledger_spent(user_res.user.id, u.get("last_reset_time"))
         payload = usage_payload(u)
+        payload["cap_units"] = balance_cap_units(str(user_res.user.id), apply_24h_reset(dict(u)))
         payload["total_tokens"] = u.get("total_tokens", 0)
         payload["daily_tokens"] = u.get("daily_tokens", 0)
         return payload

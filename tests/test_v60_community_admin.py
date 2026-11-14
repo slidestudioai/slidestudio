@@ -194,16 +194,17 @@ def _four_rows(sb):
     sb.add_user("tok-a", "alive", "a@x.uz")
 
 
-def test_merge_moves_everything_into_the_live_account(sb, monkeypatch):
+def test_merge_cleans_deleted_accounts(sb, monkeypatch):
     _quiet(monkeypatch)
     _four_rows(sb)
+    sb.tables["usage_ledger"] = [{"user_id": "dead-2", "kind": "purchase", "amount": 1800}]
     r = admin_core.merge_email_accounts("t", "A@x.uz")
-    assert r["target"] == "alive" and r["merged"] == 3 and r["moved_pages"] == 170
+    assert r["target"] == "alive" and r["merged"] == 3
     rows = [x for x in sb.tables["user_usage"] if x["email"] == "a@x.uz"]
     assert [x["user_id"] for x in rows] == ["alive"]
     a = sb.usage("alive")
-    assert a["paid_credits"] == 180 * mon.UNIT and a["free_credits"] == 200          # bepul ko'chirilmaydi
-    assert a["plan"] == "vip" and a["total_tokens"] == 12
+    assert a["paid_credits"] == 10 * mon.UNIT and a.get("plan") != "vip"          # o'chirilgan = o'chirilgan
+    assert sb.tables["usage_ledger"] == []
     assert sb.tables["tg_links"] == [{"tg_id": 77, "user_id": "alive", "email": "a@x.uz"}]
     assert sb.usage("other")["paid_credits"] == 5 * mon.UNIT                          # boshqa email tegilmaydi
     assert admin_core.merge_email_accounts("t", "a@x.uz")["merged"] == 0              # takror chaqirish xavfsiz
@@ -215,7 +216,7 @@ def test_give_by_email_merges_first(sb, monkeypatch):
     row = admin_core.resolve_target("a@x.uz")
     assert row["user_id"] == "alive" and not row.get("_dupes")
     admin_core.user_action("t", {"user_id": row["user_id"], "action": "add_credits", "pages": 80})
-    assert sb.usage("alive")["paid_credits"] == 260 * mon.UNIT
+    assert sb.usage("alive")["paid_credits"] == 90 * mon.UNIT
 
 
 def test_site_login_merges_old_accounts(sb, client, monkeypatch):
@@ -223,7 +224,7 @@ def test_site_login_merges_old_accounts(sb, client, monkeypatch):
     _four_rows(sb)
     main._merge_checked.clear()
     d = client.get("/api/user/usage", params={"token": "tok-a"}).json()
-    assert d["paid_credits"] == 180 * mon.UNIT
+    assert d["paid_credits"] == 10 * mon.UNIT
     assert len([x for x in sb.tables["user_usage"] if x["email"] == "a@x.uz"]) == 1
 
 
@@ -299,3 +300,33 @@ def test_daily_override_zero_means_no_free_pages(sb, monkeypatch):
     assert mon.total_credits(mon.apply_24h_reset(dict(sb.usage("u1")))) == 0
     admin_core.user_action("t", {"user_id": "u1", "action": "daily_override", "pages": None})
     assert sb.usage("u1")["daily_units_override"] is None
+
+
+
+# ---------------------------------------------------------------------------------------------
+# v66: bitta balans — hisoblagich «80/80», bot faqat bitta raqam
+# ---------------------------------------------------------------------------------------------
+def test_cap_is_what_admin_gave(sb, client, monkeypatch):
+    monkeypatch.setattr(admin_core, "audit", lambda *a, **k: None)
+    U = mon.UNIT
+    sb.add_user("tok-c", "uc", "c@x.uz")
+    sb.tables["user_usage"] = [{"user_id": "uc", "email": "c@x.uz", "paid_credits": 0, "free_credits": 0,
+                                "last_reset_time": datetime.now(timezone.utc).isoformat()}]
+    monkeypatch.setattr(admin_core, "_deps", {**admin_core._deps, "ledger_log": main.ledger_log})
+    admin_core.user_action("t", {"user_id": "uc", "action": "add_credits", "pages": 80})
+    d = client.get("/api/user/usage", params={"token": "tok-c"}).json()
+    assert d["units_total"] == 80 * U and d["cap_units"] == 80 * U                     # 80/80 (avval 80/160)
+    sb.usage("uc")["paid_credits"] -= 5 * U                                            # 5 varaq sarfladi
+    d = client.get("/api/user/usage", params={"token": "tok-c"}).json()
+    assert d["units_total"] == 75 * U and d["cap_units"] == 80 * U                     # 75/80
+
+
+def test_cap_without_paid_is_daily_limit():
+    u = {"free_credits": 120, "paid_credits": 0, "email": "a@x.uz"}
+    assert main.balance_cap_units("", u) == mon.free_daily_units()
+
+
+def test_bot_balance_is_one_number():
+    from backend import telegram_bot as tb
+    txt = tb._balance_block({"free": 3, "paid": 77, "daily": 10, "wait": "5 soat", "suspended": False})
+    assert txt == "💎 Varaqlar: <b>80</b>"
