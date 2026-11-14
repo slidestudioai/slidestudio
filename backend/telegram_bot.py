@@ -1045,11 +1045,12 @@ async def _google_ok(cid: int, user: dict) -> bool:
 # Admin: «admin» yoki /admin — FAQAT ADMIN_TG_IDS dagi Telegram ID ga ochiladi. Boshqalarga: «Bunday buyruq mavjud emas».
 # Foydalanuvchi ID / email / UUID bo'yicha topiladi. Hammasi bazada (Supabase) saqlanadi va jurnalga yoziladi.
 # ----------------------------------------------------------------------------------------------
-ADMIN_CMDS = {"/give", "/take", "/unlimited", "/fill", "/reset", "/block", "/unblock", "/user"}
+ADMIN_CMDS = {"/give", "/take", "/unlimited", "/fill", "/reset", "/block", "/unblock", "/user", "/merge"}
 ADMIN_HELP = (
     "🛡 <b>Admin</b>\n"
     "<code>/give ID 50</code> — varaq qo'shish\n"
     "<code>/take ID 20</code> — varaq ayirish\n"
+    "<code>/merge email</code> — bir email'dagi eski akkauntlarni bittaga birlashtirish (<code>/merge all</code> — hammasi)\n"
     "<code>/unlimited ID</code> — cheksiz qilish (<code>/unlimited ID off</code> — olib tashlash)\n"
     "<code>/fill ID</code> — bugungi bepul limitni to'ldirish\n"
     "<code>/reset ID</code> — varaqlarni 0 qilish, cheksizni olib tashlash\n"
@@ -1069,7 +1070,7 @@ def _dupes_warning(row: dict) -> str:
     for b in d[:4]:
         bal = "♾" if b.get("unlimited") else _fmt_pages(float(b.get("free_pages") or 0) + float(b.get("paid_pages") or 0))
         lines.append(f"• <code>{esc(str(b.get('user_id')))}</code> — {bal} varaq")
-    lines.append("Boshqasi kerak bo'lsa, UUID bilan yozing: <code>/give UUID 50</code>")
+    lines.append(f"Bittaga birlashtirish: <code>/merge {esc(str(row.get('email') or ''))}</code>")
     return "\n".join(lines)
 
 
@@ -1095,6 +1096,26 @@ async def _admin_command(cid: int, user: dict, cmd: str, arg: str) -> None:
         return
     actor = f"tg:{int(user['id'])}"
     target = parts[0]
+    if cmd == "/merge":
+        try:
+            if target.lower() == "all":
+                r = await asyncio.to_thread(adm.merge_all_duplicates, actor)
+                txt = (f"✅ Birlashtirildi: <b>{r['emails']}</b> email, <b>{r['merged']}</b> ta eski akkaunt, "
+                       f"<b>{_fmt_pages(r['moved_pages'])}</b> pullik varaq ko'chirildi.")
+                if r["errors"]:
+                    txt += "\n⚠️ " + "\n⚠️ ".join(esc(x) for x in r["errors"][:10])
+                await _send(cid, txt)
+                return
+            r = await asyncio.to_thread(adm.merge_email_accounts, actor, target)
+            if not r.get("merged"):
+                await _send(cid, "ℹ️ Birlashtiradigan eski akkaunt yo'q." + (
+                    f"\n⚠️ Auth'da faol boshqa akkauntlar: {', '.join(r['alive_others'])}" if r.get("alive_others") else ""))
+                return
+            b = await asyncio.to_thread(adm.user_brief, r["target"])
+            await _send(cid, f"✅ {r['merged']} ta eski akkaunt birlashtirildi (+{_fmt_pages(r['moved_pages'])} pullik varaq)\n{_user_line(b)}")
+        except adm.AdminError as e:
+            await _send(cid, f"⚠️ {esc(e.msg)}")
+        return
     try:
         row = await asyncio.to_thread(adm.resolve_target, target)
         uid = str(row["user_id"])
@@ -2636,6 +2657,16 @@ def _no_credit_text(mode: str, usage: Optional[dict]) -> str:
     return "😔 <b>Varaqlar tugadi.</b>\n" + (f"Bepul varaqlar <b>{w}</b> dan keyin yangilanadi.\n" if w else "") + "Davom etish uchun varaq sotib oling 👇"
 
 
+def _no_credit_reply(mode: str, usage: Optional[dict]) -> Tuple[str, dict]:
+    """Google ulanmagan Telegram akkaunti — balansi ham, AI ham yo'q: «sotib oling» emas, «Google ulang» deyiladi."""
+    if _TG_ONLY_RE.match(str((usage or {}).get("email") or "")):
+        return LINK_FIRST, {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]}
+    return _no_credit_text(mode, usage), _kb_buy()
+
+
+_TG_ONLY_RE = re.compile(r"^tg\d+@t\.me$", re.I)
+
+
 def _kb_buy() -> dict:
     return {"inline_keyboard": [[_btn("➕ Varaq sotib olish", "buy")]]}
 
@@ -2668,7 +2699,7 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
             return
         afford = int(_deps["total_credits"](usage) // _page_units(mode))
         if afford < 1:
-            await _edit(chat_id, msg_id, _no_credit_text(mode, usage), _kb_buy())
+            await _edit(chat_id, msg_id, *_no_credit_reply(mode, usage))
             return
         note = ""
         if n > afford:
@@ -2752,7 +2783,7 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         uid, email = await _ensure_uid(user)
         usage = await asyncio.to_thread(_usage_now_sync, uid, email)
         if _deps["total_credits"](usage) < _deps["MODES"][mode]["chat"]:
-            await _send(chat_id, _no_credit_text(mode, usage), _kb_buy())
+            await _send(chat_id, *_no_credit_reply(mode, usage))
             return
         sent = await _send(chat_id, "✏️ <b>AI o'qimoqda…</b>")
         msg_id = (sent or {}).get("message_id") if isinstance(sent, dict) else None
@@ -3634,7 +3665,7 @@ async def _run_new(chat_id: int, user: dict, text: str) -> None:
             await _send(chat_id, "⛔ Akkauntingiz bloklangan.")
             return
         if _deps["total_credits"](usage) < _deps["MODES"]["fast"]["chat"]:
-            await _send(chat_id, _no_credit_text("fast", usage), _kb_buy())
+            await _send(chat_id, *_no_credit_reply("fast", usage))
             return
         await tg("sendChatAction", chat_id=chat_id, action="typing")
         async with _AiSlot():
@@ -3696,7 +3727,7 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
             await _edit(chat_id, msg_id, "⛔ Akkauntingiz bloklangan.")
             return
         if _deps["total_credits"](usage) < _deps["MODES"][mode]["chat"]:
-            await _edit(chat_id, msg_id, _no_credit_text(mode, usage), _kb_buy())
+            await _edit(chat_id, msg_id, *_no_credit_reply(mode, usage))
             return
         async with _gen_sem:
             data, tokens = await _ai_json(CHAT_SYSTEM, text[:1500] + _account_context(usage, email, user), mode)

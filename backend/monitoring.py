@@ -398,9 +398,14 @@ def is_unlimited(user: Optional[dict]) -> bool:
 def is_ad_free(user: Optional[dict]) -> bool:
     return is_unlimited(user)
 
+_TG_ONLY_EMAIL = re.compile(r"^tg\d+@t\.me$", re.I)
+
+
 def daily_units_for(user: Optional[dict]) -> int:
     """Shu foydalanuvchining kunlik bepul chegarasi (BIRLIK): admin belgilagan > oddiy."""
     user = user or {}
+    if _TG_ONLY_EMAIL.match(str(user.get("email") or "")) and not user.get("daily_units_override"):
+        return 0          # v66: Google ulanmagan Telegram akkaunti — bepul varaq yo'q (1 email = 1 balans)
     ov = user.get("daily_units_override")
     try:
         if ov is not None and str(ov) != "":
