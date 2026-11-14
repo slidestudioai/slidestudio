@@ -43,6 +43,18 @@
     document.head.appendChild(st);
     try { tg.ready(); } catch (e) {}
     try { tg.expand(); } catch (e) {}
+    // v66: Bot API 8.0+ — to'liq ekran. Planshet va kompyuterda ham tor "telefon ramkasi" emas, butun ekranda ochiladi.
+    // Eski Telegram versiyalarida (8.0 dan past) yoki qurilma rad etsa — jim o'tamiz, expand() yetarli.
+    try {
+      var canFs = typeof tg.requestFullscreen === 'function' &&
+        (typeof tg.isVersionAtLeast !== 'function' || tg.isVersionAtLeast('8.0'));
+      if (canFs && !tg.isFullscreen) {
+        if (tg.onEvent) tg.onEvent('fullscreenFailed', function (e) {
+          try { console.info('[tg] fullscreen:', e && e.error); } catch (x) {}
+        });
+        tg.requestFullscreen();
+      }
+    } catch (e) {}
     try { if (tg.disableVerticalSwipes) tg.disableVerticalSwipes(); } catch (e) {}   // tahrirlashda tasodifan yopilmasin
     try { if (tg.enableClosingConfirmation) tg.enableClosingConfirmation(); } catch (e) {}
   }

@@ -378,3 +378,44 @@ def test_create_checkout_shows_lemon_reason(monkeypatch):
     code, data = asyncio.run(main._build_checkout("u1", "", "", "pack", quote=main._topup_quote("starter", 100, 100)))
     assert code == 502 and data["ls_status"] == 422
     assert "custom price field must be at least 50" in data["error"] and "custom_price" in data["error"]
+
+
+# ---------------------------------------------------------------------------------------------
+# v66: webhook — imzo, takror, foydalanuvchi Lemon oynasida narxni o'zgartirsa
+# ---------------------------------------------------------------------------------------------
+def test_webhook_rejects_bad_or_missing_signature(sb, client, lemon):
+    body = json.dumps({"meta": {"event_name": "order_created", "custom_data": {"user_id": "u1"}},
+                       "data": {"id": "9001", "attributes": {"status": "paid", "total": 5000}}}).encode()
+    for sig in ("", "deadbeef", hmac.new(b"wrong-secret", body, hashlib.sha256).hexdigest()):
+        r = client.post("/api/payment/lemon-webhook", content=body,
+                        headers={"X-Signature": sig, "X-Event-Name": "order_created", "Content-Type": "application/json"})
+        assert r.status_code == 401
+    assert sb.usage("u1") is None or sb.usage("u1")["paid_credits"] == 0
+
+
+def test_webhook_same_order_twice_counts_once(sb, client, lemon):
+    custom, gross = _signed_custom("u1", "popular", 500, 550)
+    for _ in range(3):
+        assert _hook(client, "order_created", order_id="9100", custom=custom, total=gross, subtotal=gross).status_code == 200
+    assert sb.usage("u1")["paid_credits"] == 550 * main.UNIT
+
+
+@pytest.mark.parametrize("paid_cents,credits", [(100, 43), (161, 100), (589, 500)])
+def test_webhook_user_lowered_price_in_lemon_gets_net_credits(sb, client, lemon, paid_cents, credits):
+    """Lemon "Suggest a price" maydonida summani kamaytirsa — paket bonusi YO'Q, to'langan nettoga yarasha."""
+    custom, gross = _signed_custom("u1", "business", 2000, 2600)        # $21.93 kutilgan
+    assert _hook(client, "order_created", order_id=f"95{paid_cents}", custom=custom,
+                 total=paid_cents, subtotal=paid_cents).status_code == 200
+    assert sb.usage("u1")["paid_credits"] == credits * main.UNIT
+
+
+def test_checkout_description_is_set(client, monkeypatch):
+    captured = {}
+    monkeypatch.setenv("LEMON_SQUEEZY_API_KEY", "k")
+    monkeypatch.setenv("LEMON_SQUEEZY_STORE_ID", "1")
+    monkeypatch.setenv("LEMON_SQUEEZY_VARIANT_ID", "2")
+    monkeypatch.setattr(main, "_ls_post_checkout", lambda k, b: captured.update(b=b) or
+                        {"status": 201, "json": {"data": {"attributes": {"url": "https://x/c"}}}})
+    asyncio.run(main._build_checkout("u1", "", "", "pack", quote=main._topup_quote("starter", 100, 100)))
+    po = captured["b"]["data"]["attributes"]["product_options"]
+    assert po["name"] == "Slide Studio — 100 kredit" and "$1.61" in po["description"] and "Unlimited" not in po["description"]
