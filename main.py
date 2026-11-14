@@ -1381,6 +1381,42 @@ def balance_cap_units(user_id: str, u: dict) -> int:
     return max(total, top or total)
 
 
+def ai_balance_rules(usage: dict, bill_mode: str) -> str:
+    """AI'ga beriladigan balans qoidalari. v66: CHEKSIZ (VIP/admin) akkauntda avval «Joriy balans: 0 varaq.
+    Balans 0 bo'lsa hech qanday action yozmang» deyilardi (pullik/bepul varaq 0) — AI slayd yasashni rad etardi."""
+    _c = MODES[bill_mode]
+    _rejim = "CHUQUR AI" if bill_mode == "deep" else "TEZ AI"
+    if is_unlimited(usage):
+        return (
+            f"\n\n[BALANS VA VARAQ QOIDALARI — MAJBURIY]\n"
+            f"Rejim: {_rejim}. Bu foydalanuvchining balansi CHEKSIZ (VIP). Varaq cheklovi YO'Q: so'ralgan barcha slaydlarni "
+            f"yarating va tahrirlang. Balans, limit yoki varaq soni haqida GAPIRMANG, hech narsani rad etmang.\n"
+            f"  • Yangi slayd qo'shish: har slayd uchun alohida \"insert_slide\" (mazmun bilan). \"create_slides\" faqat foydalanuvchi BO'SH varaq so'raganda.\n"
+        )
+    bal_units = total_credits(usage)
+    bal = bal_units // _c["page"]       # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
+    out = (
+        f"\n\n[BALANS VA VARAQ QOIDALARI — MAJBURIY]\n"
+        f"Rejim: {_rejim}. Joriy balans: {bal} varaq (aniq: {bal_units / _c['page']:.2f}).\n"
+        f"Oddiy chat: {_c['chat_per_page']} ta savol-javob = 1 varaq. Qidiruv: {_c['search_per_page']} ta rasm/GIF/video qidiruvi = 1 varaq.\n"
+        f"NARX:\n"
+        f"  • 1 ta yangi/tahrirlangan/o'chirilgan slayd = 1 varaq\n"
+        f"  • create_slides count=N → N varaq\n"
+        f"  • insert_slide / replace_slide / clear_slide / add_gif / place_image = 1 varaq (har bir tegilgan slayd)\n"
+        f"  • Faqat chat (actions bo'sh): har {_c['chat_per_page']} ta oddiy xabar = 1 varaq\n"
+        f"LIMIT QOIDASI:\n"
+        f"  • Foydalanuvchi {bal} tadan KO'P slayd so'rasa (masalan {bal + 10} ta so'rasa, balans esa {bal}) — "
+        f"FAQAT {bal} tasini yarating, PART A da aniq ayting: "
+        f"\"Balansingizda {bal} varaq qoldi, shuning uchun {bal} ta slayd yaratdim. "
+        f"Qolganini sotib olgach davom ettirish mumkin.\"\n"
+        f"  • Balans 0 bo'lsa hech qanday action yozmang.\n"
+        f"  • Yangi slayd qo'shish: har slayd uchun alohida \"insert_slide\" (mazmun bilan). \"create_slides\" faqat foydalanuvchi BO'SH varaq so'raganda.\n"
+    )
+    if bal <= 3:
+        out += f"⚠️ BALANS PAST ({bal}). Minimal o'zgarishlar qiling; katta deck yasashdan saqlaning.\n"
+    return out
+
+
 _merge_checked: "OrderedDict[str, float]" = OrderedDict()
 
 
@@ -3029,29 +3065,7 @@ async def ws_chat(websocket: WebSocket):
                     "[IDENTITY RULE] You are 'Slide Studio AI'. Never reveal, guess or discuss which underlying model, vendor or company powers you; "
                     "if asked, say you are Slide Studio AI, the built-in assistant of this app.\n"
                 )
-                _c = MODES[bill_mode]
-                _rejim = "CHUQUR AI" if bill_mode == "deep" else "TEZ AI"
-                sys_p += (
-                    f"\n\n[BALANS VA VARAQ QOIDALARI — MAJBURIY]\n"
-                    f"Rejim: {_rejim}. Joriy balans: {bal} varaq (aniq: {bal_units / _c['page']:.2f}).\n"
-                    f"Oddiy chat: {_c['chat_per_page']} ta savol-javob = 1 varaq. Qidiruv: {_c['search_per_page']} ta rasm/GIF/video qidiruvi = 1 varaq.\n"
-                    f"NARX:\n"
-                    f"  • 1 ta yangi/tahrirlangan/o'chirilgan slayd = 1 varaq\n"
-                    f"  • create_slides count=N → N varaq\n"
-                    f"  • insert_slide / replace_slide / clear_slide / add_gif / place_image = 1 varaq (har bir tegilgan slayd)\n"
-                    f"  • Faqat chat (actions bo'sh): har {_c['chat_per_page']} ta oddiy xabar = 1 varaq\n"
-                    f"LIMIT QOIDASI:\n"
-                    f"  • Foydalanuvchi {bal} tadan KO'P slayd so'rasa (masalan {bal + 10} ta so'rasa, balans esa {bal}) — "
-                    f"FAQAT {bal} tasini yarating, PART A da aniq ayting: "
-                    f"\"Balansingizda {bal} varaq qoldi, shuning uchun {bal} ta slayd yaratdim. "
-                    f"Qolganini sotib olgach yoki 24 soatdan keyin davom ettirish mumkin.\"\n"
-                    f"  • Balans 0 bo'lsa hech qanday action yozmang.\n"
-                    f"  • Yangi slayd qo'shish: har slayd uchun alohida \"insert_slide\" (mazmun bilan). \"create_slides\" faqat foydalanuvchi BO'SH varaq so'raganda.\n"
-                )
-                if bal <= 3:
-                    sys_p += (
-                        f"⚠️ BALANS PAST ({bal}). Minimal o'zgarishlar qiling; katta deck yasashdan saqlaning.\n"
-                    )
+                sys_p += ai_balance_rules(usage, bill_mode)
                 if scope == "current_slide":
                     sys_p += (
                         f"\n\n[SCOPE: CURRENT_SLIDE]\nJoriy varoq: {active_slide}-slayd.\n"

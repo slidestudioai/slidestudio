@@ -330,3 +330,17 @@ def test_bot_balance_is_one_number():
     from backend import telegram_bot as tb
     txt = tb._balance_block({"free": 3, "paid": 77, "daily": 10, "wait": "5 soat", "suspended": False})
     assert txt == "💎 Varaqlar: <b>80</b>"
+
+
+def test_ai_rules_for_unlimited_account_do_not_say_zero():
+    # Google'siz Telegram admin akkaunti: varaq 0, lekin VIP/cheksiz
+    u = {"email": "tg8504247007@t.me", "free_credits": 0, "paid_credits": 0, "vip": True}
+    txt = main.ai_balance_rules(u, "fast")
+    assert "CHEKSIZ" in txt and "Balans 0 bo'lsa" not in txt and "Joriy balans: 0" not in txt
+    u2 = {"email": "a@x.uz", "free_credits": 0, "paid_credits": 0, "unlimited": True}
+    assert "CHEKSIZ" in main.ai_balance_rules(u2, "deep")
+
+
+def test_ai_rules_for_normal_account_show_real_balance():
+    txt = main.ai_balance_rules({"email": "a@x.uz", "free_credits": 0, "paid_credits": 7 * mon.UNIT}, "fast")
+    assert "Joriy balans: 7 varaq" in txt and "CHEKSIZ" not in txt and "BALANS PAST" not in txt
