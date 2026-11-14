@@ -177,31 +177,10 @@
     render();
   }
 
-  /* ---------------- holatlar: forma / kutish / muvaffaqiyat ---------------- */
-  var ICON_WAIT = '<div class="tu-ring"></div>';
-  var ICON_OK = '<svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="#34d399" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-
-  function showForm() {
-    els.formView.hidden = false;
-    els.stateView.hidden = true;
-    els.stateView.classList.remove('tu-success');
-  }
-  function showState(kind, title, text, btnLabel) {
-    els.formView.hidden = true;
-    els.stateView.hidden = false;
-    els.stateView.classList.toggle('tu-success', kind === 'success');
-    els.stateIcon.innerHTML = kind === 'success' ? ICON_OK : ICON_WAIT;
-    els.stateTitle.textContent = title;
-    els.stateText.textContent = text;
-    els.stateBtn.textContent = btnLabel || 'Yopish';
-    els.stateBtn.setAttribute('data-action', kind === 'waiting' ? 'back' : 'close');
-  }
-
   /* ---------------- ochish / yopish ---------------- */
   function open() {
     if (!els.modal) return;
     lastFocus = document.activeElement;
-    showForm();
     hideError();
     setBusy(false);
     if (!sel) selectPackage('popular');
@@ -263,43 +242,90 @@
 
   function onLemonEvent(ev) {
     var name = ev && (ev.event || ev.type);
-    if (name === 'Checkout.Success') onPaid(ev.data);
-  }
-
-  function onPaid() {
-    var credits = sel ? sel.credits : 0;
-    if (els.modal.hidden) {
-      els.modal.hidden = false;
-      requestAnimationFrame(function () { els.modal.classList.add('tu-open'); });
-      document.addEventListener('keydown', onKey, true);
+    if (name === 'Checkout.Success') {
+      // v66: Lemon'ning "rahmat" oynasi ham, «Continue» tugmasi ham kutilmaydi — darhol yopamiz, sahifa yangilanmaydi
+      try { window.LemonSqueezy.Url.Close(); } catch (_) {}
+      paymentConfirmed();
     }
-    showState('success', "To'lov muvaffaqiyatli!", 'Kreditlar qo\'shilmoqda… Bu bir necha soniya olishi mumkin.', 'Davom etish');
-    toast("✅ To'lov muvaffaqiyatli! Kreditlar qo'shilmoqda...");
-    // Lemon o'z "rahmat" oynasini ko'rsatadi — biroz kutib yopamiz, bizning holat ko'rinadi
-    setTimeout(function () { try { window.LemonSqueezy.Url.Close(); } catch (_) {} }, 2600);
-    waitForCredits(credits);
   }
 
-  async function waitForCredits(expected) {
-    var my = ++pollToken;
+  /* ---------------- to'lovni kuzatish (sahifa yangilanmaydi) ----------------
+   * Lemon oynasi ochilgach bizning modal yopiladi. Fonda balans tekshirib turiladi:
+   * kredit tushishi bilan Lemon oynasi (overlay yoki alohida oyna) o'zi yopiladi va pastda xabar chiqadi. */
+  var watch = null;
+
+  function startWatch(expected, win) {
     var st = balanceState();
-    var before = st ? (st.paid_credits | 0) : 0;
-    for (var i = 0; i < 12; i++) {
-      await new Promise(function (r) { setTimeout(r, i === 0 ? 1200 : 2500); });
-      if (my !== pollToken) return;
-      await refreshBalance();
-      var now = balanceState();
-      if (now && (now.paid_credits | 0) > before) {
-        renderBalance(true);
-        var added = expected ? num(expected) : '';
-        els.stateText.textContent = (added ? '+' + added + ' kredit balansingizga qo\'shildi. ' : 'Balansingiz yangilandi. ') + 'Rahmat!';
-        toast('🎉 ' + (added ? '+' + added + ' kredit qo\'shildi!' : 'Balans yangilandi!'));
-        return;
-      }
-    }
-    if (my === pollToken) {
-      els.stateText.textContent = "To'lov qabul qilindi. Kreditlar bir necha daqiqada ko'rinadi — sahifani yangilab ko'ring.";
-    }
+    watch = { id: ++pollToken, expected: expected || 0, win: win || null, fast: false,
+              beforePaid: st ? (st.paid_credits | 0) : 0, beforeTotal: st && typeof st.total === 'number' ? st.total : null,
+              started: Date.now(), closedAt: 0 };
+    setTimeout(function () { tick(watch && watch.id); }, 2500);
+  }
+
+  function paymentConfirmed() {
+    toast("✅ To'lov qabul qilindi. Kreditlar qo'shilmoqda…");
+    if (watch) { watch.fast = true; tick(watch.id); }
+    else { startWatch(sel ? sel.credits : 0, null); if (watch) watch.fast = true; }
+  }
+
+  async function tick(id) {
+    var w = watch;
+    if (!w || w.id !== id || w.busy) return;
+    if (w.win && w.win.closed && !w.closedAt) w.closedAt = Date.now();
+    // oyna yopilgan bo'lsa ham 5 daqiqa kutamiz (webhook kechikishi mumkin); umumiy chegara 25 daqiqa
+    var stopAt = w.closedAt ? w.closedAt + 5 * 60000 : w.started + 25 * 60000;
+    if (Date.now() > stopAt) { if (watch === w) watch = null; return; }
+    w.busy = true;
+    try { await refreshBalance(); } finally { w.busy = false; }
+    if (watch !== w) return;
+    var now = balanceState();
+    if (now && (now.paid_credits | 0) > w.beforePaid) { paidDone(w, now); return; }
+    setTimeout(function () { tick(id); }, w.fast ? 1500 : 3000);
+  }
+
+  function paidDone(w, now) {
+    if (watch === w) watch = null;
+    pollToken++;
+    try { if (w.win && !w.win.closed) w.win.close(); } catch (_) {}
+    try { if (window.LemonSqueezy && window.LemonSqueezy.Url && window.LemonSqueezy.Url.Close) window.LemonSqueezy.Url.Close(); } catch (_) {}
+    close();
+    renderBalance(true);
+    var added = (w.beforeTotal != null && now && typeof now.total === 'number') ? Math.max(0, now.total - w.beforeTotal) : w.expected;
+    toast("🎉 To'lov muvaffaqiyatli! " + (added ? '+' + num(added) + ' kredit qo\'shildi.' : 'Balans yangilandi.'));
+  }
+
+  // Alohida oynadagi to'lov sahifasi redirect bo'lib bizning saytga qaytsa (/?payment=success) — index.html
+  // boshidagi skript shu yerga xabar beradi va o'zini yopadi.
+  function onPaySignal(data) {
+    if (data && data.type === 'ss-payment-success') paymentConfirmed();
+  }
+  window.addEventListener('message', function (e) { if (e.origin === location.origin) onPaySignal(e.data); });
+  try { var bc = new BroadcastChannel('ss-pay'); bc.onmessage = function (e) { onPaySignal(e.data); }; } catch (_) {}
+
+  /* ---------------- qayerda ochiladi ---------------- */
+  function isDesktop() {
+    try { return window.matchMedia('(min-width: 900px)').matches && window.matchMedia('(pointer: fine)').matches; }
+    catch (_) { return false; }
+  }
+
+  // Kompyuterda: Lemon'ning to'liq (keng, ikki ustunli) to'lov sahifasi alohida katta oynada.
+  // Overlay (sahifa ichida) doim telefon kabi tor bo'ladi — uni ichidan o'zgartirib bo'lmaydi.
+  // MUHIM: tugma bosilgan zahoti (await'dan oldin) ochiladi, aks holda brauzer popup'ni bloklaydi.
+  function openPayWindow() {
+    var w = Math.min(1120, (screen.availWidth || 1280) - 40);
+    var h = Math.min(860, (screen.availHeight || 900) - 60);
+    var left = Math.max(0, Math.round((window.screenX || 0) + ((window.outerWidth || w) - w) / 2));
+    var top = Math.max(0, Math.round((window.screenY || 0) + ((window.outerHeight || h) - h) / 2));
+    var win = null;
+    try { win = window.open('', 'ss-pay', 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top); } catch (_) { win = null; }
+    if (!win) return null;
+    try {
+      win.document.write('<!doctype html><meta charset="utf-8"><title>To‘lov — Slide Studio</title>' +
+        '<body style="margin:0;display:grid;place-items:center;height:100vh;background:#0f1220;color:#c9cfe0;font:15px system-ui,sans-serif">' +
+        'Xavfsiz to‘lov sahifasi ochilmoqda…</body>');
+      win.document.close();
+    } catch (_) {}
+    return win;
   }
 
   async function checkout() {
@@ -308,7 +334,14 @@
     var tk = token();
     if (!tk) { showError("To'lov uchun avval tizimga kiring."); return; }
 
+    var tgw = null;
+    try { tgw = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null; } catch (_) {}
+    var mode = tgw && typeof tgw.openLink === 'function' ? 'telegram' : (isDesktop() ? 'window' : 'overlay');
+    var win = null;
+    if (mode === 'window') { win = openPayWindow(); if (!win) mode = 'overlay'; }   // popup bloklansa — overlay
+
     var gross = grossCents(sel.netCents);
+    var expected = sel.credits;
     var body = {
       token: tk,
       email: userEmail(),
@@ -316,7 +349,7 @@
       net_amount: (sel.netCents / 100).toFixed(2),
       gross_amount: (gross / 100).toFixed(2),
       return_url: window.location.origin,
-      embed: true
+      embed: mode === 'overlay'
     };
     setBusy(true);
     try {
@@ -332,19 +365,25 @@
         throw new Error((data.error || data.hint || 'Checkout havolasi olinmadi') + (r.status ? ' [HTTP ' + r.status + ']' : ''));
       }
 
-      var tgw = null;
-      try { tgw = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null; } catch (_) {}
-      if (tgw && typeof tgw.openLink === 'function') {
+      if (mode === 'telegram') {
         tgw.openLink(data.checkout_url);
-        showState('waiting', "To'lov oynasi ochildi", "To'lovni yakunlang — kreditlar avtomatik qo'shiladi.", 'Ortga');
-        waitForCredits(sel.credits);
+        close();
+        toast("To'lovni yakunlang — kreditlar o'zi qo'shiladi.");
+        startWatch(expected, null);
+      } else if (mode === 'window') {
+        win.location.href = data.checkout_url;
+        try { win.focus(); } catch (_) {}
+        close();
+        startWatch(expected, win);
       } else if (ensureLemon()) {
-        showState('waiting', "To'lov oynasi ochildi", "Xavfsiz oynada to'lovni yakunlang. Bu sahifadan chiqmaysiz.", 'Ortga');
+        close();                                         // orqada hech qanday oyna qolmaydi
         window.LemonSqueezy.Url.Open(data.checkout_url);
+        startWatch(expected, null);
       } else {
-        window.location.href = data.checkout_url;      // lemon.js yuklanmagan bo'lsa — oddiy o'tish
+        window.location.href = data.checkout_url;        // lemon.js yuklanmagan bo'lsa — oddiy o'tish
       }
     } catch (err) {
+      try { if (win && !win.closed) win.close(); } catch (_) {}
       showError((err && err.message) || "Xatolik yuz berdi. Qaytadan urinib ko'ring.");
     } finally {
       setBusy(false);
@@ -372,12 +411,6 @@
       payText: m.querySelector('.tu-cta-text'),
       payAmount: document.getElementById('tuPayAmount'),
       balance: document.getElementById('tuBalance'),
-      formView: document.getElementById('tuFormView'),
-      stateView: document.getElementById('tuStateView'),
-      stateIcon: document.getElementById('tuStateIcon'),
-      stateTitle: document.getElementById('tuStateTitle'),
-      stateText: document.getElementById('tuStateText'),
-      stateBtn: document.getElementById('tuStateBtn'),
       toast: document.getElementById('tuToast')
     };
     buildGrid();
@@ -393,10 +426,6 @@
     els.input.addEventListener('focus', function () { if (els.input.value) onCustomInput(); });
     els.input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); checkout(); } });
     els.pay.addEventListener('click', checkout);
-    els.stateBtn.addEventListener('click', function () {
-      if (els.stateBtn.getAttribute('data-action') === 'back') { pollToken++; showForm(); }
-      else close();
-    });
     document.addEventListener('ss:usage', function () { if (!m.hidden) renderBalance(false); });
     ensureLemon();
   }

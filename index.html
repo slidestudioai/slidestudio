@@ -1,6 +1,21 @@
 <!DOCTYPE html>
 <html lang="uz">
 <head>
+  <script>
+    /* v66: alohida to'lov oynasi Lemon'dan /?payment=success ga qaytsa — asosiy oynaga xabar beradi va o'zini yopadi.
+       Oddiy (asosiy) oynada window.close() hech narsa qilmaydi — sahifa odatdagidek ochiladi. */
+    (function () {
+      try {
+        if (!/[?&]payment=success/.test(location.search)) return;
+        var msg = { type: 'ss-payment-success' };
+        try { new BroadcastChannel('ss-pay').postMessage(msg); } catch (e) {}
+        if (window.opener && window.opener !== window) {
+          try { window.opener.postMessage(msg, location.origin); } catch (e) {}
+          window.close();
+        }
+      } catch (e) {}
+    })();
+  </script>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script>
   /* v39: brauzer xotirasi qulfi — slayd/media/loyiha ma'lumotlari localStorage/sessionStorage'ga YOZILMAYDI (faqat RAM).
@@ -508,13 +523,6 @@
         </button>
       </div>
 
-      <div class="tu-body tu-state" id="tuStateView" hidden>
-        <div class="tu-state-icon" id="tuStateIcon" aria-hidden="true"></div>
-        <h4 id="tuStateTitle"></h4>
-        <p id="tuStateText"></p>
-        <button type="button" class="tu-ghost" id="tuStateBtn">Yopish</button>
-      </div>
-
       <footer class="tu-foot">
         <div class="tu-pay-badges" aria-label="Qabul qilinadigan to'lov turlari">
           <span class="tu-pay" title="Visa"><svg viewBox="0 0 48 16" height="12" aria-label="Visa"><text x="0" y="13.5" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="900" font-style="italic" fill="#fff" letter-spacing="0.5">VISA</text></svg></span>
@@ -660,7 +668,7 @@
   <script src="js/43_v50_ui_scale.js?v=1"></script>
   <script src="js/44_v54_fixes.js?v=6"></script>
   <script src="js/45_v63_guest_carry.js?v=1"></script>
-  <script src="js/46_topup.js?v=3" defer></script>
+  <script src="js/46_topup.js?v=4" defer></script>
   <script src="js/47_resize_fix.js" defer></script>
   </body>
 </html>
