@@ -171,3 +171,86 @@ def test_admin_give_does_not_lose_parallel_spend(sb, monkeypatch):
     monkeypatch.setattr(admin_core, "_cas_update_credits", racing)
     admin_core.user_action("t", {"user_id": "u1", "action": "add_credits", "pages": 10})
     assert sb.usage("u1")["paid_credits"] == (50 - 5 + 10) * U and state["n"] == 2
+
+
+# ---------------------------------------------------------------------------------------------
+# v66: 1 email = 1 akkaunt = 1 balans
+# ---------------------------------------------------------------------------------------------
+def _four_rows(sb):
+    U = mon.UNIT
+    now = datetime.now(timezone.utc).isoformat()
+    sb.tables["user_usage"] = [
+        {"user_id": "dead-linked", "email": "a@x.uz", "paid_credits": 80 * U, "free_credits": 200, "last_reset_time": now,
+         "last_active": now, "total_tokens": 5},
+        {"user_id": "dead-2", "email": "a@x.uz", "paid_credits": 90 * U, "free_credits": 0, "last_reset_time": now,
+         "plan": "vip", "plan_until": None},
+        {"user_id": "dead-3", "email": "a@x.uz", "paid_credits": 0, "free_credits": 200, "last_reset_time": now},
+        {"user_id": "alive", "email": "a@x.uz", "paid_credits": 10 * U, "free_credits": 200, "last_reset_time": now,
+         "last_active": "2020-01-01", "total_tokens": 7},
+        {"user_id": "other", "email": "b@x.uz", "paid_credits": 5 * U, "free_credits": 0, "last_reset_time": now},
+    ]
+    sb.tables["tg_links"] = [{"tg_id": 77, "user_id": "dead-linked", "email": "a@x.uz"}]
+    sb.add_user("tok-a", "alive", "a@x.uz")
+
+
+def test_merge_moves_everything_into_the_live_account(sb, monkeypatch):
+    _quiet(monkeypatch)
+    _four_rows(sb)
+    r = admin_core.merge_email_accounts("t", "A@x.uz")
+    assert r["target"] == "alive" and r["merged"] == 3 and r["moved_pages"] == 170
+    rows = [x for x in sb.tables["user_usage"] if x["email"] == "a@x.uz"]
+    assert [x["user_id"] for x in rows] == ["alive"]
+    a = sb.usage("alive")
+    assert a["paid_credits"] == 180 * mon.UNIT and a["free_credits"] == 200          # bepul ko'chirilmaydi
+    assert a["plan"] == "vip" and a["total_tokens"] == 12
+    assert sb.tables["tg_links"] == [{"tg_id": 77, "user_id": "alive", "email": "a@x.uz"}]
+    assert sb.usage("other")["paid_credits"] == 5 * mon.UNIT                          # boshqa email tegilmaydi
+    assert admin_core.merge_email_accounts("t", "a@x.uz")["merged"] == 0              # takror chaqirish xavfsiz
+
+
+def test_give_by_email_merges_first(sb, monkeypatch):
+    _quiet(monkeypatch)
+    _four_rows(sb)
+    row = admin_core.resolve_target("a@x.uz")
+    assert row["user_id"] == "alive" and not row.get("_dupes")
+    admin_core.user_action("t", {"user_id": row["user_id"], "action": "add_credits", "pages": 80})
+    assert sb.usage("alive")["paid_credits"] == 260 * mon.UNIT
+
+
+def test_site_login_merges_old_accounts(sb, client, monkeypatch):
+    _quiet(monkeypatch)
+    _four_rows(sb)
+    main._merge_checked.clear()
+    d = client.get("/api/user/usage", params={"token": "tok-a"}).json()
+    assert d["paid_credits"] == 180 * mon.UNIT
+    assert len([x for x in sb.tables["user_usage"] if x["email"] == "a@x.uz"]) == 1
+
+
+def test_merge_does_nothing_when_auth_unknown(sb, monkeypatch):
+    _quiet(monkeypatch)
+    _four_rows(sb)
+
+    def boom(uid):
+        raise RuntimeError("connection reset")
+    monkeypatch.setattr(sb.auth.admin, "get_user_by_id", boom)
+    import pytest
+    with pytest.raises(admin_core.AdminError):
+        admin_core.merge_email_accounts("t", "a@x.uz")
+    assert len([x for x in sb.tables["user_usage"] if x["email"] == "a@x.uz"]) == 4
+
+
+def test_merge_all(sb, monkeypatch):
+    _quiet(monkeypatch)
+    _four_rows(sb)
+    r = admin_core.merge_all_duplicates("t")
+    assert r["emails"] == 1 and r["merged"] == 3 and not r["errors"]
+
+
+def test_telegram_without_google_has_no_free_pages():
+    assert mon.daily_units_for({"email": "tg123@t.me"}) == 0
+    assert mon.daily_units_for({"email": "a@x.uz"}) == mon.free_daily_units()
+    u = mon.apply_24h_reset({"email": "tg123@t.me", "free_credits": 200, "paid_credits": 0})
+    assert mon.total_credits(u) == 0
+    from backend import telegram_bot as tb
+    text, kb = tb._no_credit_reply("fast", {"email": "tg123@t.me"})
+    assert text == tb.LINK_FIRST and kb["inline_keyboard"][0][0]["callback_data"] == "linkinfo"

@@ -1359,6 +1359,27 @@ def ledger_spent(user_id: str, since_iso):
     except Exception:
         return None
 
+_merge_checked: "OrderedDict[str, float]" = OrderedDict()
+
+
+def _merge_duplicates_once(uid: str, email: str) -> None:
+    """v66: 1 email = 1 balans. Foydalanuvchi saytga kirganda (token tasdiqlangan => shu uid Auth'da BOR)
+    shu email'dagi eski akkaunt qoldiqlari (pullik varaq, VIP, Telegram ulanishi) shu akkauntga birlashtiriladi.
+    Har uid uchun jarayonda bir marta tekshiriladi (ortiqcha so'rov yo'q)."""
+    if not supabase or not uid or not email or uid in _merge_checked:
+        return
+    _merge_checked[uid] = time.time()
+    while len(_merge_checked) > 20000:
+        _merge_checked.popitem(last=False)
+    try:
+        res = admin_core.merge_email_accounts("auto-login", email, keep_uid=uid)
+        if res.get("merged"):
+            print(f"[MERGE] {email}: {res['merged']} ta eski akkaunt -> {uid} (+{res.get('moved_pages')} varaq)")
+    except Exception as e:
+        _merge_checked.pop(uid, None)          # keyingi safar yana urinib ko'ramiz
+        print(f"[MERGE] {email}: {str(e)[:160]}")
+
+
 @app.get("/api/user/usage")
 def user_usage(token: str = ""):
     if not supabase or not token:
@@ -1373,6 +1394,7 @@ def user_usage(token: str = ""):
         user_res = supabase.auth.get_user(token)
         if not user_res or not user_res.user:
             return {"error": "invalid_token"}
+        _merge_duplicates_once(str(user_res.user.id), user_res.user.email or "")
         u = get_or_create_user_usage(user_res.user.id, user_res.user.email or "")
         u["spent_24h"] = ledger_spent(user_res.user.id, u.get("last_reset_time"))
         payload = usage_payload(u)

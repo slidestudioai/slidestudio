@@ -344,6 +344,14 @@ def resolve_target(q: str) -> Dict[str, Any]:
     if "@" in q:
         em = q.lower()
         rows, _ = _select_users(lambda cols: sb.table("user_usage").select(cols).eq("email", em).limit(20))
+        if len(rows) > 1:
+            # 1 email = 1 balans: avval eski (Auth'da yo'q) akkaunt qoldiqlari birlashtiriladi
+            try:
+                res = merge_email_accounts("admin-lookup", em)
+                if res.get("target"):
+                    return _get_user_row(str(res["target"]))
+            except AdminError:
+                pass                                   # Auth tekshirilmadi — barqaror tanlov + ogohlantirish
         if rows:
             return _pick_account(rows)
     raise AdminError("Topilmadi. Telegram ID, email yoki UUID yozing.", 404)
@@ -365,6 +373,143 @@ def _pick_account(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     best = dict(ordered[0])
     best["_dupes"] = [_brief(r, {}) for r in ordered[1:]]
     return best
+
+
+# ----------------------------------------------------------------------------------------------
+# v66: BIR EMAIL = BIR AKKAUNT = BIR BALANS
+# Supabase Auth bitta email uchun bitta foydalanuvchi saqlaydi. user_usage da bir email bilan bir nechta qator
+# bo'lsa — ortiqchalari ESKI (Auth'dan o'chirilgan) akkauntlar qoldig'i. Ularning pullik varaqlari,
+# cheksiz/VIP belgisi va tokenlari HAQIQIY akkauntga ko'chiriladi, eski qator o'chiriladi, Telegram ulanishi
+# haqiqiy akkauntga o'tkaziladi. Bepul (kunlik) varaqlar ko'chirilmaydi.
+# ----------------------------------------------------------------------------------------------
+def _auth_alive(uid: str) -> Optional[bool]:
+    """True = Supabase Auth'da bor, False = yo'q (o'chirilgan), None = tekshirib bo'lmadi (hech narsa qilinmaydi)."""
+    sb = _sb()
+    try:
+        res = sb.auth.admin.get_user_by_id(str(uid))
+        return bool(getattr(res, "user", None))
+    except Exception as e:
+        m = str(e).lower()
+        if "not found" in m or "user_not_found" in m or "404" in m or ("invalid" in m and "uuid" in m):
+            return False
+        return None
+
+
+def _email_rows(email: str) -> List[Dict[str, Any]]:
+    sb = _sb()
+    rows, _ = _select_users(lambda cols: sb.table("user_usage").select(cols).eq("email", email).limit(50))
+    return rows
+
+
+def merge_email_accounts(actor: str, email: str, keep_uid: str = "") -> Dict[str, Any]:
+    """Bir email'dagi barcha qatorlarni bitta (Auth'da mavjud) akkauntga birlashtiradi.
+    keep_uid berilsa (foydalanuvchi hozir shu uid bilan kirgan) — o'sha saqlanadi."""
+    email = (email or "").strip().lower()
+    if not email or "@" not in email or TG_EMAIL_RE.match(email) or email.endswith("@slidestudio.local"):
+        return {"ok": True, "merged": 0, "reason": "skip"}
+    rows = _email_rows(email)
+    if len(rows) <= 1:
+        return {"ok": True, "merged": 0, "target": str(rows[0]["user_id"]) if rows else None}
+    alive: Dict[str, Optional[bool]] = {}
+    for r in rows:
+        uid = str(r["user_id"])
+        alive[uid] = True if keep_uid and uid == str(keep_uid) else _auth_alive(uid)
+    if any(v is None for v in alive.values()):
+        raise AdminError("Supabase Auth'ni tekshirib bo'lmadi — birlashtirish to'xtatildi (hech narsa o'zgarmadi).", 502)
+    live = [r for r in rows if alive[str(r["user_id"])]]
+    if keep_uid and any(str(r["user_id"]) == str(keep_uid) for r in rows):
+        target = next(r for r in rows if str(r["user_id"]) == str(keep_uid))
+    elif live:
+        target = _pick_account(live)
+    else:
+        raise AdminError("Bu email uchun Supabase Auth'da faol akkaunt yo'q. Foydalanuvchi saytga Google bilan "
+                         "bir marta kirsin, keyin qayta urinib ko'ring.", 409)
+    tuid = str(target["user_id"])
+    dead = [r for r in rows if not alive[str(r["user_id"])] and str(r["user_id"]) != tuid]
+    sb = _sb()
+    moved_units, merged = 0, 0
+    for r in dead:
+        ruid = str(r["user_id"])
+        # 1) eski qatordagi pullik varaqlarni "olib qo'yamiz" (CAS: shu orada o'zgarmagan bo'lsa)
+        for _ in range(5):
+            cur = _get_user_row(ruid)
+            units = int(cur.get("paid_credits") or 0)
+            if units <= 0 or _cas_update_credits(ruid, {"paid_credits": 0, "slide_credits": int(cur.get("free_credits") or 0)}, cur):
+                break
+        else:
+            raise AdminError("Eski akkaunt balansi o'zgarib turibdi, keyinroq urinib ko'ring.", 409)
+        # 2) haqiqiy akkauntga qo'shamiz (CAS)
+        if units > 0:
+            for _ in range(5):
+                trow = _get_user_row(tuid)
+                tc = mon.normalize_user_row(trow)
+                newp = int(tc["paid_credits"]) + units
+                if _cas_update_credits(tuid, {"paid_credits": newp, "slide_credits": int(tc["free_credits"]) + newp}, trow):
+                    break
+            else:   # qaytaramiz — varaq yo'qolmasin
+                _cas_update_credits(ruid, {"paid_credits": units}, {**cur, "paid_credits": 0})
+                raise AdminError("Asosiy akkaunt balansi o'zgarib turibdi, keyinroq urinib ko'ring.", 409)
+            moved_units += units
+            _ledger(tuid, "account_merge_in", units, {**trow, "paid_credits": newp}, {"from": ruid, "by": actor})
+        # 3) cheksiz / VIP / tokenlar
+        flags: Dict[str, Any] = {}
+        trow = _get_user_row(tuid)
+        if r.get("unlimited") and not trow.get("unlimited"):
+            flags["unlimited"] = True
+        if str(r.get("plan") or "") == "vip" and str(trow.get("plan") or "free") != "vip":
+            flags["plan"], flags["plan_until"] = "vip", r.get("plan_until")
+        tok = int(r.get("total_tokens") or 0)
+        if tok:
+            flags["total_tokens"] = int(trow.get("total_tokens") or 0) + tok
+        if flags:
+            try:
+                _update_user(tuid, flags)
+            except AdminError:
+                pass
+        # 4) Telegram ulanishi eski akkauntda bo'lsa — haqiqiy akkauntga
+        try:
+            links = sb.table("tg_links").select("tg_id,user_id").eq("user_id", ruid).execute().data or []
+            has_t = sb.table("tg_links").select("tg_id").eq("user_id", tuid).limit(1).execute().data or []
+            for ln in links:
+                if has_t:
+                    sb.table("tg_links").delete().eq("tg_id", ln["tg_id"]).execute()
+                else:
+                    sb.table("tg_links").update({"user_id": tuid, "email": email}).eq("tg_id", ln["tg_id"]).execute()
+                    has_t = [ln]
+        except Exception:
+            pass
+        # 5) eski qatorni o'chiramiz (Auth'da yo'q — hech kim u bilan kira olmaydi)
+        try:
+            sb.table("user_usage").delete().eq("user_id", ruid).execute()
+        except Exception:
+            pass
+        merged += 1
+    left_alive = [str(r["user_id"]) for r in rows if alive[str(r["user_id"])] and str(r["user_id"]) != tuid]
+    if merged or left_alive:
+        audit(actor, "user.merge", tuid, {"email": email, "merged": merged, "moved_units": moved_units, "alive_others": left_alive})
+    return {"ok": True, "target": tuid, "merged": merged, "moved_pages": round(moved_units / mon.UNIT, 2),
+            "alive_others": left_alive}
+
+
+def merge_all_duplicates(actor: str, limit: int = 500) -> Dict[str, Any]:
+    """Bazadagi BARCHA takror emaillarni birlashtiradi (admin /merge all)."""
+    sb = _sb()
+    rows = sb.table("user_usage").select("email").limit(20000).execute().data or []
+    cnt: Dict[str, int] = {}
+    for r in rows:
+        e = str(r.get("email") or "").strip().lower()
+        if e and not TG_EMAIL_RE.match(e) and not e.endswith("@slidestudio.local"):
+            cnt[e] = cnt.get(e, 0) + 1
+    out = {"emails": 0, "merged": 0, "moved_pages": 0.0, "errors": []}
+    for e in [e for e, n in cnt.items() if n > 1][:limit]:
+        try:
+            r = merge_email_accounts(actor, e)
+            out["emails"] += 1
+            out["merged"] += r.get("merged", 0)
+            out["moved_pages"] += r.get("moved_pages", 0)
+        except AdminError as ex:
+            out["errors"].append(f"{e}: {ex.msg}")
+    return out
 
 
 def user_brief(uid: str) -> Dict[str, Any]:
