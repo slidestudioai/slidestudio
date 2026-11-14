@@ -44,6 +44,13 @@
   function fmt(n) { n = Math.round(n * 100) / 100; return String(n % 1 === 0 ? n : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')); }
 
   function totalUnits() { return Math.max(0, (_state.free_credits | 0) + (_state.paid_credits | 0)); }
+  // v66: hisoblagich maxraji. Server beradi (cap_units = oxirgi sotib olish / admin +/- dan keyingi balans).
+  // Server bermagan bo'lsa: pullik bor — joriy balans, yo'q — kunlik limit. Hech qachon balansdan kichik emas.
+  function capUnits() {
+    const t = totalUnits();
+    let c = (typeof _state.cap_units === 'number' && _state.cap_units > 0) ? _state.cap_units : ((_state.paid_credits | 0) > 0 ? t : FREE_UNITS);
+    return Math.max(1, c, t);
+  }
   function totalCredits() { return Math.floor(totalUnits() / MODES.fast.page_units); }   // moslik: Tez-varaq (butun)
 
   function formatReset(sec) {
@@ -93,12 +100,9 @@
       return '<div class="ss-meter-wrap"><div class="ss-meter"><div class="ss-meter-row"><span class="ss-meter-name">' + (_state.plan === 'vip' ? 'VIP' : 'Cheksiz') +
         '</span><b>∞</b></div><div class="ss-meter-track"><div class="ss-meter-fill" data-pct="100" style="width:0"></div></div><div class="ss-meter-foot"><span>Varaq cheklovsiz · reklamasiz</span></div></div></div>';
     }
-    const paid = _state.paid_credits | 0;
+    // v66: faqat BITTA balans (kunlik limit alohida ko'rsatilmaydi). Maxraj = oxirgi to'ldirishdagi balans (80/80).
     const m = MODES[curMode()];
-    const resetTxt = _state.window_started ? 'yangilanishiga: ' + formatReset(_state.next_reset_in_seconds) : "24 soat birinchi AI so'rovdan boshlanadi";
-    let h = '<div class="ss-meter-wrap">' + meterHTML('Bepul (bugun)', _state.free_credits, FREE_UNITS, 'free',
-      '<span>' + resetTxt + '</span><span>bugun sarflandi: ' + fmt(toPages(_state.spent_units | 0, curMode())) + '</span>');
-    if (paid > 0) h += meterHTML('Pullik paket', paid, Math.max(PACK_UNITS, paid), 'paid', "<span>muddatsiz, reset bo'lmaydi</span>");
+    let h = '<div class="ss-meter-wrap">' + meterHTML('Balans', totalUnits(), capUnits(), (_state.paid_credits | 0) > 0 ? 'paid' : 'free', '');
     h += crossLine();
     h += '<div class="ss-meter-foot"><span>' + m.chat_per_page + ' ta savol = 1 varaq</span><span>' + m.search_per_page + ' ta qidiruv = 1 varaq</span></div>';
     return h + '</div>';
@@ -154,9 +158,9 @@
       b.classList.remove('low', 'empty'); b.classList.add('paid');
       return;
     }
-    const paid = _state.paid_credits | 0, free = _state.free_credits | 0;
-    const capU = Math.max(1, FREE_UNITS + (paid > 0 ? Math.max(PACK_UNITS, paid) : 0));
-    const leftU = free + paid, m = curMode();
+    const paid = _state.paid_credits | 0;
+    const capU = capUnits();
+    const leftU = totalUnits(), m = curMode();
     b.querySelector('.q-n').textContent = fmt(toPages(leftU, m)) + '/' + fmt(toPages(capU, m));
     b.querySelector('.q-bar u').style.width = Math.min(100, Math.round(leftU / capU * 100)) + '%';
     b.classList.toggle('low', leftU > 0 && leftU / capU <= 0.2);
@@ -202,6 +206,7 @@
     if (data.modes && typeof data.modes === 'object') Object.keys(data.modes).forEach(function (k) { MODES[k] = Object.assign({}, MODES[k], data.modes[k]); });
     if (typeof data.free_credits === 'number') _state.free_credits = data.free_credits;
     if (typeof data.paid_credits === 'number') _state.paid_credits = data.paid_credits;
+    if (typeof data.cap_units === 'number') _state.cap_units = data.cap_units;
     if (typeof data.next_reset_in_seconds === 'number') _state.next_reset_in_seconds = data.next_reset_in_seconds;
     if (typeof data.window_started === 'boolean') _state.window_started = data.window_started;
     else _state.window_started = (_state.next_reset_in_seconds | 0) > 0;

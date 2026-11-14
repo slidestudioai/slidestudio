@@ -20,7 +20,8 @@
 -- ============================================================================
 -- 0) "Database error saving new user" xatosining oldini olish.
 --    auth.users dagi eski loyihadan qolgan triggerlarni olib tashlaymiz
---    (balans qatorini backend o'zi yaratadi, hech qanday trigger kerak emas).
+--    (balans qatorini backend o'zi yaratadi, INSERT trigger kerak emas).
+--    Faqat bitta AFTER DELETE trigger (o'chirilgan akkauntni tozalash) 11-bo'limda qayta yaratiladi.
 -- ============================================================================
 do $$
 declare r record;
@@ -431,3 +432,79 @@ $$;
 
 revoke all on function public.transfer_paid_credits(text, text) from public, anon, authenticated;
 grant execute on function public.transfer_paid_credits(text, text) to service_role;
+
+
+-- ============================================================================
+-- 11) TOZALIK: Supabase'dan (Authentication → Users) o'chirilgan akkauntning
+--     barcha qoldiqlari ham avtomatik o'chadi — bir email = bitta akkaunt = bitta balans.
+--     O'chiriladi: balans (user_usage), sarf tarixi (usage_ledger), referal kodi,
+--     Telegram ulanishi, ulash kodlari, bot slaydlari.
+--     Saqlanadi: payment_events (Lemon webhook qayta kelsa ikki marta hisoblanmasin), fikrlar, audit.
+--     Trigger xato bersa ham foydalanuvchini o'chirish TO'XTAMAYDI (faqat ogohlantirish).
+-- ============================================================================
+create or replace function public.cleanup_deleted_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  begin
+    delete from public.user_usage     where user_id = old.id::text;
+    delete from public.usage_ledger   where user_id = old.id::text;
+    delete from public.referral_codes where user_id = old.id::text;
+    delete from public.tg_links       where user_id = old.id;
+    delete from public.tg_link_codes  where user_id = old.id;
+    delete from public.tg_decks       where user_id = old.id;
+  exception when others then
+    raise warning 'cleanup_deleted_user(%): %', old.id, sqlerrm;
+  end;
+  return old;
+end;
+$$;
+
+drop trigger if exists ss_cleanup_deleted_user on auth.users;
+create trigger ss_cleanup_deleted_user
+  after delete on auth.users
+  for each row execute function public.cleanup_deleted_user();
+
+-- Avval (trigger yo'q paytda) o'chirilgan akkauntlardan qolgan "yetim" qatorlarni tozalash.
+-- Shu fayl ishga tushganda bir marta bajariladi; keyin ham qo'lda chaqirish mumkin:
+--   select public.cleanup_orphan_accounts();
+create or replace function public.cleanup_orphan_accounts()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  n_usage int := 0; n_ledger int := 0; n_links int := 0; n_codes int := 0; n_decks int := 0; n_ref int := 0;
+begin
+  delete from public.user_usage u
+   where not exists (select 1 from auth.users a where a.id::text = u.user_id);
+  get diagnostics n_usage = row_count;
+  delete from public.usage_ledger l
+   where not exists (select 1 from auth.users a where a.id::text = l.user_id);
+  get diagnostics n_ledger = row_count;
+  delete from public.referral_codes r
+   where not exists (select 1 from auth.users a where a.id::text = r.user_id);
+  get diagnostics n_ref = row_count;
+  delete from public.tg_links t
+   where not exists (select 1 from auth.users a where a.id = t.user_id);
+  get diagnostics n_links = row_count;
+  delete from public.tg_link_codes c
+   where not exists (select 1 from auth.users a where a.id = c.user_id);
+  get diagnostics n_codes = row_count;
+  delete from public.tg_decks d
+   where d.user_id is not null and not exists (select 1 from auth.users a where a.id = d.user_id);
+  get diagnostics n_decks = row_count;
+  return jsonb_build_object('user_usage', n_usage, 'usage_ledger', n_ledger, 'referral_codes', n_ref,
+                            'tg_links', n_links, 'tg_link_codes', n_codes, 'tg_decks', n_decks);
+end;
+$$;
+
+revoke all on function public.cleanup_orphan_accounts() from public, anon, authenticated;
+grant execute on function public.cleanup_orphan_accounts() to service_role;
+revoke all on function public.cleanup_deleted_user() from public, anon, authenticated;
+
+select public.cleanup_orphan_accounts();

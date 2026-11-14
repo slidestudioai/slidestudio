@@ -631,13 +631,8 @@ def _balance_block(i: dict) -> str:
         return LINK_FIRST
     if i.get("unlimited"):
         return "♾ Varaqlar: <b>cheksiz</b>"
-    daily = float(i.get("daily") or 0)
-    lines = [f"💎 Varaqlar: <b>{_fmt_pages(float(i['free']) + float(i['paid']))}</b>"]
-    if daily and not i.get("suspended"):
-        lines.append(f"🎁 Shundan bugungi bepul: <b>{_fmt_pages(i['free'])}</b>/{_fmt_pages(daily)}")
-    if i.get("wait") and not i.get("suspended"):
-        lines.append(f"🔄 Bepul varaqlar <b>{i['wait']}</b> dan keyin yangilanadi")
-    return "\n".join(lines)
+    # v66: faqat HOZIRGI balans — kunlik limit alohida ko'rsatilmaydi va alohida hisoblanmaydi
+    return f"💎 Varaqlar: <b>{_fmt_pages(float(i['free']) + float(i['paid']))}</b>"
 
 
 def _welcome_text(name: str, info: Optional[dict]) -> str:
@@ -1045,15 +1040,13 @@ async def _google_ok(cid: int, user: dict) -> bool:
 # Admin: «admin» yoki /admin — FAQAT ADMIN_TG_IDS dagi Telegram ID ga ochiladi. Boshqalarga: «Bunday buyruq mavjud emas».
 # Foydalanuvchi ID / email / UUID bo'yicha topiladi. Hammasi bazada (Supabase) saqlanadi va jurnalga yoziladi.
 # ----------------------------------------------------------------------------------------------
-ADMIN_CMDS = {"/give", "/take", "/unlimited", "/fill", "/reset", "/block", "/unblock", "/user", "/merge", "/daily"}
+ADMIN_CMDS = {"/give", "/take", "/unlimited", "/reset", "/block", "/unblock", "/user", "/merge"}
 ADMIN_HELP = (
     "🛡 <b>Admin</b>\n"
     "<code>/give ID 50</code> — varaq qo'shish\n"
-    "<code>/take ID 20</code> — varaq ayirish (<code>/take ID all</code> — hammasini 0 qilish)\n"
-    "<code>/daily ID 0</code> — shaxsiy kunlik bepul limit (<code>/daily ID off</code> — odatiy limitga qaytarish)\n"
-    "<code>/merge email</code> — bir email'dagi eski akkauntlarni bittaga birlashtirish (<code>/merge all</code> — hammasi)\n"
+    "<code>/take ID 20</code> — varaq ayirish (balansning o'zidan)\n"
+    "<code>/merge email</code> — o'chirilgan eski akkaunt qoldiqlarini tozalash (<code>/merge all</code> — hammasi)\n"
     "<code>/unlimited ID</code> — cheksiz qilish (<code>/unlimited ID off</code> — olib tashlash)\n"
-    "<code>/fill ID</code> — bugungi bepul limitni to'ldirish\n"
     "<code>/reset ID</code> — varaqlarni 0 qilish, cheksizni olib tashlash\n"
     "<code>/block ID</code> · <code>/unblock ID</code>\n"
     "<code>/user ID</code> — foydalanuvchi holati\n\n"
@@ -1071,7 +1064,7 @@ def _dupes_warning(row: dict) -> str:
     for b in d[:4]:
         bal = "♾" if b.get("unlimited") else _fmt_pages(float(b.get("free_pages") or 0) + float(b.get("paid_pages") or 0))
         lines.append(f"• <code>{esc(str(b.get('user_id')))}</code> — {bal} varaq")
-    lines.append(f"Bittaga birlashtirish: <code>/merge {esc(str(row.get('email') or ''))}</code>")
+    lines.append(f"Tozalash: <code>/merge {esc(str(row.get('email') or ''))}</code>")
     return "\n".join(lines)
 
 
@@ -1101,8 +1094,7 @@ async def _admin_command(cid: int, user: dict, cmd: str, arg: str) -> None:
         try:
             if target.lower() == "all":
                 r = await asyncio.to_thread(adm.merge_all_duplicates, actor)
-                txt = (f"✅ Birlashtirildi: <b>{r['emails']}</b> email, <b>{r['merged']}</b> ta eski akkaunt, "
-                       f"<b>{_fmt_pages(r['moved_pages'])}</b> pullik varaq ko'chirildi.")
+                txt = f"✅ Tozalandi: <b>{r['emails']}</b> email, <b>{r['merged']}</b> ta o'chirilgan akkaunt qoldig'i."
                 if r["errors"]:
                     txt += "\n⚠️ " + "\n⚠️ ".join(esc(x) for x in r["errors"][:10])
                 await _send(cid, txt)
@@ -1113,7 +1105,7 @@ async def _admin_command(cid: int, user: dict, cmd: str, arg: str) -> None:
                     f"\n⚠️ Auth'da faol boshqa akkauntlar: {', '.join(r['alive_others'])}" if r.get("alive_others") else ""))
                 return
             b = await asyncio.to_thread(adm.user_brief, r["target"])
-            await _send(cid, f"✅ {r['merged']} ta eski akkaunt birlashtirildi (+{_fmt_pages(r['moved_pages'])} pullik varaq)\n{_user_line(b)}")
+            await _send(cid, f"✅ {r['merged']} ta o'chirilgan akkaunt qoldig'i tozalandi\n{_user_line(b)}")
         except adm.AdminError as e:
             await _send(cid, f"⚠️ {esc(e.msg)}")
         return
@@ -1125,21 +1117,10 @@ async def _admin_command(cid: int, user: dict, cmd: str, arg: str) -> None:
             if len(parts) < 2:
                 await _send(cid, f"Misol: <code>{cmd} {esc(target)} 50</code>")
                 return
-            if cmd == "/take" and parts[1].lower() in ("all", "hammasi", "barchasi"):
-                body.update(action="set_credits", free_pages=0, paid_pages=0)
-            else:
-                n = abs(float(parts[1].replace(",", ".")))
-                body.update(action="add_credits", pages=n if cmd == "/give" else -n)
-        elif cmd == "/daily":
-            if len(parts) < 2:
-                await _send(cid, f"Misol: <code>/daily {esc(target)} 0</code> yoki <code>/daily {esc(target)} off</code>")
-                return
-            v = parts[1].lower()
-            body.update(action="daily_override", pages=None if v in ("off", "yoq", "yo'q", "default") else abs(float(v.replace(",", "."))))
+            n = abs(float(parts[1].replace(",", ".")))
+            body.update(action="add_credits", pages=n if cmd == "/give" else -n)
         elif cmd == "/unlimited":
             body.update(action="unlimited", value=not (len(parts) > 1 and parts[1].lower() in ("off", "0", "yoq", "yo'q", "no")))
-        elif cmd == "/fill":
-            body.update(action="fill_free")
         elif cmd in ("/block", "/unblock"):
             body.update(action="block", value=cmd == "/block")
         elif cmd == "/reset":
@@ -1251,8 +1232,7 @@ def _user_card_kb(b: dict) -> dict:
     return _akb([
         [_btn("➕ 10", "a:ua:g10"), _btn("➕ 50", "a:ua:g50"), _btn("➕ 100", "a:ua:g100")],
         [_btn("➖ 10", "a:ua:t10"), _btn("➖ 50", "a:ua:t50"), _btn("✍️ Boshqa son", "a:ua:num")],
-        [_btn("♾ Cheksizni o'chirish" if b.get("unlimited") else "♾ Cheksiz qilish", "a:ua:unl"),
-         _btn("🔄 Bugungi limitni to'ldirish", "a:ua:fill")],
+        [_btn("♾ Cheksizni o'chirish" if b.get("unlimited") else "♾ Cheksiz qilish", "a:ua:unl")],
         [_btn("🧹 Varaqni 0 qilish", "a:ua:rst"), _btn("✅ Blokdan chiqarish" if b.get("blocked") else "⛔ Bloklash", "a:ua:blk")],
         [_btn("👤 Boshqa foydalanuvchi", "a:u"), _btn("🏠 Menyu", "a:home")],
     ])
@@ -1293,8 +1273,6 @@ async def _admin_user_action(cid: int, mid: Optional[int], user: dict, adm, code
         elif code == "unl":
             cur = await asyncio.to_thread(adm.user_brief, uid)
             body.update(action="unlimited", value=not cur.get("unlimited"))
-        elif code == "fill":
-            body.update(action="fill_free")
         elif code == "blk":
             cur = await asyncio.to_thread(adm.user_brief, uid)
             body.update(action="block", value=not cur.get("blocked"))
@@ -3811,12 +3789,10 @@ def _account_context(usage: Optional[dict], email: str, user: dict) -> str:
         if usage.get("unlimited") or _deps["total_credits"](usage) >= 10 ** 8:
             return "\n\n[ACCOUNT] Balance: UNLIMITED pages."
         fast, deep = _pages_left(usage, "fast"), _pages_left(usage, "deep")
-        p = _deps["usage_payload"](usage)
-        wait = _fmt_wait(p.get("next_reset_in_seconds")) if p.get("window_started") else ""
-        daily = ((p.get("modes") or {}).get("fast") or {}).get("free_daily_pages", 0)
+        # v66: AI ham faqat BITTA balans raqamini biladi (kunlik limit alohida aytilmaydi)
         return (f"\n\n[ACCOUNT — real data, use it] Balance: {_fmt_pages(fast)} pages in Fast AI mode "
                 f"(= {_fmt_pages(deep)} pages in Deep AI mode). 1 slide costs 1 page (Deep AI: {_deep_mult()} pages). "
-                f"Free daily pages: {daily}" + (f", next free refill in {wait}" if wait else "") + ". "
+                "Do not talk about a separate daily limit — there is only this one balance. "
                 "Extra pages: «💳 Balans» → «Varaq sotib olish». Never offer more slides than the balance allows.")
     except Exception:
         return ""
