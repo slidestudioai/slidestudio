@@ -1059,6 +1059,20 @@ ADMIN_HELP = (
 )
 
 
+def _dupes_warning(row: dict) -> str:
+    """Bir email bilan bir nechta akkaunt bo'lsa — qaysi biri tanlanganini va boshqalarini ko'rsatadi."""
+    d = row.get("_dupes") or []
+    if not d:
+        return ""
+    lines = [f"\n\n⚠️ Bu email bilan <b>{len(d) + 1}</b> ta akkaunt bor. Tanlandi: <code>{esc(str(row.get('user_id')))}</code> "
+             "(Telegram'ga ulangan / oxirgi faol)."]
+    for b in d[:4]:
+        bal = "♾" if b.get("unlimited") else _fmt_pages(float(b.get("free_pages") or 0) + float(b.get("paid_pages") or 0))
+        lines.append(f"• <code>{esc(str(b.get('user_id')))}</code> — {bal} varaq")
+    lines.append("Boshqasi kerak bo'lsa, UUID bilan yozing: <code>/give UUID 50</code>")
+    return "\n".join(lines)
+
+
 def _user_line(b: dict) -> str:
     who = b.get("email") or ""
     if b.get("tg_id"):
@@ -1102,10 +1116,10 @@ async def _admin_command(cid: int, user: dict, cmd: str, arg: str) -> None:
             body.update(action="unlimited", value=False)
         elif cmd == "/user":
             b = (await asyncio.to_thread(adm.user_brief, uid))
-            await _send(cid, _user_line(b))
+            await _send(cid, _user_line(b) + _dupes_warning(row))
             return
         res = await asyncio.to_thread(adm.user_action, actor, body)
-        await _send(cid, f"✅ {esc(res.get('note') or 'Bajarildi')}\n{_user_line(res['user'])}")
+        await _send(cid, f"✅ {esc(res.get('note') or 'Bajarildi')}\n{_user_line(res['user'])}" + _dupes_warning(row))
     except adm.AdminError as e:
         await _send(cid, f"⚠️ {esc(e.msg)}")
     except ValueError:
@@ -1875,6 +1889,9 @@ async def _admin_input(cid: int, user: dict, msg: dict, st: dict) -> bool:
         except Exception:
             await _send(cid, "⚠️ Topib bo'lmadi.", _akb([_HOME]))
             return True
+        warn = _dupes_warning(row)
+        if warn:
+            await _send(cid, warn.strip())
         await _admin_user_card(cid, None, adm, str(row["user_id"]))
         return True
     if aw == "num":
