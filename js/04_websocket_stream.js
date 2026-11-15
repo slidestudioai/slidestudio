@@ -1152,7 +1152,11 @@
       aiProcessingQueue = aiProcessingQueue
         .then(() => executeAiCommands(parsedData))
         .catch(err => { console.error("AI command error:", err); try { isAiApplyingCommands = false; } catch (e) {} })
-        .then(() => { _aiQueuePending = Math.max(0, _aiQueuePending - 1); });
+        .then(() => {
+          _aiQueuePending = Math.max(0, _aiQueuePending - 1);
+          // v66: AI slaydni o'zgartirgach «Bekor qilish» tugmasi paydo bo'lsin (faqat haqiqiy o'zgarishda)
+          if (!_aiQueuePending) { try { if (typeof refreshChatMessageActions === 'function') refreshChatMessageActions(); } catch (e) {} }
+        });
       return aiProcessingQueue;
     }
     window.enqueueAiCommands = enqueueAiCommands;
@@ -1162,7 +1166,11 @@
       aiProcessingQueue = aiProcessingQueue
         .then(() => fn())
         .catch(err => { console.error('AI task error:', err); })
-        .then(() => { _aiQueuePending = Math.max(0, _aiQueuePending - 1); });
+        .then(() => {
+          _aiQueuePending = Math.max(0, _aiQueuePending - 1);
+          // v66: AI slaydni o'zgartirgach «Bekor qilish» tugmasi paydo bo'lsin (faqat haqiqiy o'zgarishda)
+          if (!_aiQueuePending) { try { if (typeof refreshChatMessageActions === 'function') refreshChatMessageActions(); } catch (e) {} }
+        });
       return aiProcessingQueue;
     }
     window.enqueueAiTask = enqueueAiTask;

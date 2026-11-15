@@ -36,6 +36,10 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+import contextvars
+
+from backend import bot_i18n as i18n
+
 try:
     from backend import tg_decks as decks
 except Exception as _e:  # pragma: no cover
@@ -97,10 +101,83 @@ def _http() -> httpx.AsyncClient:
     return _client
 
 
+# ----------------------------------------------------------------------------------------------
+# v66: TIL (uz / ru / en). Tanlangan til Supabase'da (tg_prefs) saqlanadi. Joriy update'ning tili _ctx_lang da;
+# tg() har bir xabar/tugmani yuborishdan oldin shu tilga o'giradi (backend/bot_i18n.py).
+# ----------------------------------------------------------------------------------------------
+_ctx_lang: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar("tg_lang", default=None)
+_lang_cache: "OrderedDict[int, str]" = OrderedDict()          # tg_id -> tanlangan til ("" = hali tanlanmagan)
+_TR_METHODS = {"sendMessage", "editMessageText", "sendPhoto", "sendVideo", "editMessageCaption",
+               "editMessageReplyMarkup", "answerCallbackQuery"}
+
+
+def _lang_load_sync(tid: int) -> str:
+    sb = (_deps.get("supabase_getter") or (lambda: None))()
+    if not sb:
+        return ""
+    try:
+        r = sb.table("tg_prefs").select("lang").eq("tg_id", int(tid)).limit(1).execute().data or []
+        return (i18n.norm_lang(r[0].get("lang")) or "") if r else ""
+    except Exception:
+        return ""                                             # jadval yo'q (SUPABASE_SCHEMA.sql ishga tushmagan) — taxmin bilan ishlaymiz
+
+
+def _lang_save_sync(tid: int, lang: str) -> None:
+    sb = (_deps.get("supabase_getter") or (lambda: None))()
+    if not sb:
+        return
+    try:
+        sb.table("tg_prefs").upsert({"tg_id": int(tid), "lang": lang,
+                                     "updated_at": datetime.now(timezone.utc).isoformat()}).execute()
+    except Exception as e:
+        print(f"[TG] tg_prefs saqlanmadi (SUPABASE_SCHEMA.sql 12-bo'lim ishga tushirilganmi?): {str(e)[:120]}")
+
+
+def _lang_remember(tid: int, lang: str) -> None:
+    _lang_cache[int(tid)] = lang
+    _lang_cache.move_to_end(int(tid))
+    while len(_lang_cache) > 50000:
+        _lang_cache.popitem(last=False)
+
+
+async def _saved_lang(tid: int) -> str:
+    """Foydalanuvchi o'zi tanlagan til ("" — hali tanlamagan)."""
+    tid = int(tid)
+    if tid in _lang_cache:
+        return _lang_cache[tid]
+    v = await asyncio.to_thread(_lang_load_sync, tid)
+    _lang_remember(tid, v)
+    return v
+
+
+async def _use_lang(user: dict) -> str:
+    """Shu update uchun til: tanlangani, bo'lmasa Telegram tili bo'yicha taxmin."""
+    lang = ""
+    try:
+        lang = await _saved_lang(int(user["id"]))
+    except Exception:
+        pass
+    lang = lang or i18n.guess(user.get("language_code"))
+    _ctx_lang.set(lang)
+    return lang
+
+
+def _cur_lang(chat_id: Any = None) -> str:
+    return _ctx_lang.get() or (_lang_cache.get(chat_id) if isinstance(chat_id, int) else "") or "uz"
+
+
 async def tg(method: str, **payload: Any) -> Optional[Any]:
     """Telegram Bot API chaqiruvi. Xato bo'lsa None (exception ko'tarmaydi)."""
     if not ENABLED:
         return None
+    if method in _TR_METHODS:
+        lang = _cur_lang(payload.get("chat_id"))
+        if lang != "uz":
+            for k in ("text", "caption"):
+                if isinstance(payload.get(k), str):
+                    payload[k] = i18n.translate(payload[k], lang)
+            if isinstance(payload.get("reply_markup"), dict):
+                payload["reply_markup"] = i18n.translate_markup(payload["reply_markup"], lang)
     for attempt in range(2):
         try:
             r = await _http().post(f"{API}/{method}", json=payload)
@@ -171,26 +248,13 @@ BTN_ABOUT = "ℹ️ Yordam"
 MENU = {BTN_NEW: "new", BTN_MY: "my", BTN_BAL: "bal", BTN_SITE: "site", BTN_SET: "set", BTN_ABOUT: "about", BTN_INV: "inv",
         # eski klaviaturalar foydalanuvchilarda turgan bo'lishi mumkin (Pro tugmasi endi balansga olib boradi):
         "👑 Pro": "bal", "🎨 Yangi slayd": "new", "📂 Slaydlarim": "my", "📂 Slaydlarim / Tozalash": "my", "💳 Balans / To'ldirish": "bal", "ℹ️ Bot haqida": "about"}
+for _k, _v in list(MENU.items()):              # v66: ruscha / inglizcha menyu tugmalari ham taniladi
+    for _t in i18n.button_aliases(_k):
+        MENU.setdefault(_t, _v)
 LINE = "━━━━━━━━━━━━━━━━━━"
 DEFAULT_SLIDES = 8
 
-HELP = (
-    "<b>Qanday ishlaydi</b>\n"
-    "1. <b>🎨 Yangi slayd</b> ni bosing va mavzuni yozing — bot slayd tayyorlaydi.\n"
-    "2. Tayyor bo'lgach <b>PPTX / PDF / HTML</b> tugmalaridan birini bosing — fayl yuboriladi.\n"
-    "3. O'zgartirish uchun <b>✏️ Tahrirlash</b> ni bosing va yozing: <i>«3-slaydni qisqartir»</i>.\n"
-    "4. Eski slaydlaringiz — <b>📂 Slaydlarim</b> da.\n"
-    "5. 1 slayd = 1 varaq. Varaq tugasa — «💳 Balans» orqali sotib oling.\n"
-    "6. <b>🎁 Do'st taklif qilish</b> — har bir do'st uchun +15 varaq.\n\n"
-    "<b>Buyruqlar</b>\n"
-    "/new — yangi slayd\n"
-    "/my — slaydlarim\n"
-    "/credits — balans\n"
-    "/buy — varaq sotib olish\n"
-    "/invite — do'st taklif qilish\n"
-    "/settings — Google akkaunt\n"
-    "/id — Telegram ID"
-)
+HELP = i18n.HELP_UZ          # v66: 3 tilda — backend/bot_i18n.py
 ABOUT = HELP
 GREETING_RE = re.compile(r"^(salom|assalomu\s*alaykum|assalom|hello|hi|hey|привет|здравствуй\w*|qalay|nima gap|start|boshla)[\s!.,?]*$", re.I)
 COUNT_RE = re.compile(r"(\d{1,2})\s*(?:ta|tadan|ta\.)?\s*[-–]?\s*(?:slayd\w*|slaid\w*|slide\w*|слайд\w*|varaq\w*|sahifa\w*|page\w*)", re.I)
@@ -198,9 +262,11 @@ MIN_SLIDES, MAX_SLIDES = 3, 20
 
 
 def _app_url(topic: str = "") -> str:
+    lang = _ctx_lang.get()
+    lq = f"&lang={lang}" if lang else ""                      # v66: Mini App bot tilida ochiladi
     if topic:
-        return f"{SITE_URL}/?src=tg&topic={quote(topic[:200], safe='')}"
-    return f"{SITE_URL}/?src=tg"
+        return f"{SITE_URL}/?src=tg{lq}&topic={quote(topic[:200], safe='')}"
+    return f"{SITE_URL}/?src=tg{lq}"
 
 
 def _btn(text: str, data: str) -> dict:
@@ -239,7 +305,8 @@ def _editor_url(st: dict) -> str:
     """Mini App / brauzer havolasi: shu slaydning o'zini muharrirga ochadi (token bilan; fayl serverda saqlanmaydi)."""
     did, cid = st.get("deck_id"), st.get("cid")
     if did and cid:
-        return f"{SITE_URL}/?src=tg&tgdeck={_make_token('D', did, cid, 3 * 86400)}"
+        lang = _ctx_lang.get()
+        return f"{SITE_URL}/?src=tg{'&lang=' + lang if lang else ''}&tgdeck={_make_token('D', did, cid, 3 * 86400)}"
     return _app_url(st.get("topic") or "")
 
 
@@ -3468,6 +3535,7 @@ async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> Non
         first,
         [_btn(("✅ " if not deep else "") + "⚡ Tez", "smode:fast"), _btn(("✅ " if deep else "") + "🧠 Chuqur", "smode:deep")],
         [_btn("💳 Balans", "bal")],
+        [_btn("🌐 Til / Язык / Language", "langpick")],
     ]}
     await _edit(cid, mid, text, kb)
 
@@ -3503,6 +3571,13 @@ async def _handle_callback(cb: dict) -> None:
     if not isinstance(cid, int) or not isinstance(user.get("id"), int) or _limited(cid, 14):
         return
     st = _state(cid)
+    await _use_lang(user)
+    if data.startswith("lang:"):
+        await _choose_lang(cid, mid, user, data[5:])
+        return
+    if data == "langpick":
+        await _send(cid, i18n.PICK_TEXT, i18n.picker_markup())
+        return
     if data.startswith("a:"):
         await _admin_cb(cid, mid, user, data)
         return
@@ -3812,6 +3887,27 @@ async def _late_balance(chat_id: int, user: dict) -> None:
         await _send(chat_id, "⚠️ Balansni hozir o'qib bo'lmadi. «💳 Balans» tugmasini bosib qayta urinib ko'ring.")
 
 
+async def _choose_lang(cid: int, mid: Optional[int], user: dict, code: str) -> None:
+    """Til tugmasi bosildi: saqlaymiz, menyu va Mini App tugmasini shu tilda qayta yuboramiz."""
+    lang = i18n.norm_lang(code) or "uz"
+    tid = int(user["id"])
+    await asyncio.to_thread(_lang_save_sync, tid, lang)
+    _lang_remember(tid, lang)
+    _ctx_lang.set(lang)
+    if mid:
+        await tg("editMessageText", chat_id=cid, message_id=mid, text="✅ " + i18n.NAMES[lang], reply_markup={"inline_keyboard": []})
+    if _https():                                              # shu chat uchun «Muharrir» tugmasi ham shu tilda ochilsin
+        await tg("setChatMenuButton", chat_id=cid, menu_button={"type": "web_app", "text": i18n.translate("🚀 Muharrir", lang),
+                                                                "web_app": {"url": _app_url()}})
+    st = _state(cid)
+    arg = st.pop("start_arg", None) or ""
+    if arg.lower().startswith("link_"):
+        await _do_link(cid, user, arg[5:])
+    elif arg.lower().startswith("ref_"):
+        await _handle_ref_start(cid, user, arg[4:])
+    await _send_welcome(cid, user)
+
+
 async def _send_welcome(chat_id: int, user: dict) -> None:
     try:
         info = await asyncio.wait_for(_balance_info(user), timeout=6)
@@ -3843,6 +3939,7 @@ async def handle_update(data: dict) -> None:
         return
     if _limited(chat_id):
         return
+    await _use_lang(user)
 
     if _is_admin(user):
         _ast = _state(chat_id)
@@ -3873,11 +3970,18 @@ async def handle_update(data: dict) -> None:
         st = _state(chat_id)
         if cmd == "/start":
             st["ui"] = None
+            if not await _saved_lang(int(user["id"])):          # v66: birinchi marta — avval til tanlanadi
+                st["start_arg"] = arg
+                await _send(chat_id, i18n.PICK_TEXT, i18n.picker_markup())
+                return
             if arg.lower().startswith("link_"):               # saytdagi «Telegram» tugmasidan: t.me/bot?start=link_KOD
                 await _do_link(chat_id, user, arg[5:])
             elif arg.lower().startswith("ref_"):              # do'st havolasi: t.me/bot?start=ref_KOD
                 await _handle_ref_start(chat_id, user, arg[4:])
             await _send_welcome(chat_id, user)
+        elif cmd in ("/lang", "/language", "/til", "/язык"):
+            st["start_arg"] = None
+            await _send(chat_id, i18n.PICK_TEXT, i18n.picker_markup())
         elif cmd == "/help":
             await _send(chat_id, HELP, kb_reply())
         elif cmd == "/new":
@@ -4270,8 +4374,13 @@ async def _set_commands() -> None:
         {"command": "link", "description": "Google akkauntni ulash"},
         {"command": "settings", "description": "Sozlamalar"},
         {"command": "mode", "description": "Tez ⚡ / Chuqur 🧠 AI"},
+        {"command": "lang", "description": "Til / Язык / Language"},
         {"command": "help", "description": "Yordam"},
     ])
+    for _lc, _cmds in i18n.COMMANDS.items():                 # v66: ruscha / inglizcha Telegram'da shu tilda
+        await tg("setMyCommands", language_code=_lc,
+                 commands=[{"command": "start", "description": "Main menu" if _lc == "en" else "Главное меню"}]
+                 + [{"command": c, "description": d} for c, d in _cmds])
     await tg("setChatMenuButton", menu_button={"type": "web_app", "text": "🚀 Muharrir", "web_app": {"url": _app_url()}})
 
 
