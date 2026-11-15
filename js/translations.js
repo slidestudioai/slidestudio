@@ -171,6 +171,7 @@ window.SS_I18N = {
     "Slaydga rasm qo'shish": ["Добавить изображение на слайд", "Add an image to the slide"],
     "Mikrofonga ruxsat bering (brauzer manzil satridagi 🔒 belgisi).": ["Разрешите доступ к микрофону (значок 🔒 в адресной строке).", "Allow microphone access (the 🔒 icon in the address bar)."],
     "Ovozni matnga aylantirish uchun internet kerak.": ["Для распознавания речи нужен интернет.", "Speech recognition needs an internet connection."],
+    "Mikrofon topilmadi. Qurilmaga mikrofon ulanganini tekshiring.": ["Микрофон не найден. Проверьте, что он подключён.", "No microphone found. Check that one is connected."],
     "Mikrofonni yoqib bo'lmadi.": ["Не удалось включить микрофон.", "Could not start the microphone."],
     "Bu brauzer ovozli o'qishni qo'llab-quvvatlamaydi.": ["Этот браузер не поддерживает чтение вслух.", "This browser does not support read-aloud."],
     "Rasm yuklash hozircha tayyor emas.": ["Загрузка изображений пока недоступна.", "Image upload is not ready yet."],

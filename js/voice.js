@@ -90,20 +90,34 @@
       }
       writeToInput(baseText + finalText + interim);
     };
+    var restarts = 0;
     rec.onerror = function (ev) {
       var e = ev && ev.error;
-      if (e === 'not-allowed' || e === 'service-not-allowed') toast("Mikrofonga ruxsat bering (brauzer manzil satridagi 🔒 belgisi).", 'error');
-      else if (e === 'network') toast("Ovozni matnga aylantirish uchun internet kerak.", 'error');
-      else if (e === 'language-not-supported') toast("Bu brauzer " + LANGS[langIdx][1] + " tilini tanimaydi. Tilni uzoq bosib almashtiring.", 'error');
-      // 'no-speech' / 'aborted' — jim to'xtaymiz
+      // v66: jiddiy xatoda QAYTA URINILMAYDI (avval onend qayta start qilib, qizil xabar 5–10 marta miltillardi)
+      if (e === 'not-allowed' || e === 'service-not-allowed') {
+        listening = false;
+        toast("Mikrofonga ruxsat bering (brauzer manzil satridagi 🔒 belgisi).", 'error');
+      } else if (e === 'audio-capture') {
+        listening = false;
+        toast("Mikrofon topilmadi. Qurilmaga mikrofon ulanganini tekshiring.", 'error');
+      } else if (e === 'network') {
+        listening = false;
+        toast("Ovozni matnga aylantirish uchun internet kerak.", 'error');
+      } else if (e === 'language-not-supported') {
+        listening = false;
+        toast("Bu brauzer " + LANGS[langIdx][1] + " tilini tanimaydi. Tilni uzoq bosib almashtiring.", 'error');
+      }
+      // 'no-speech' / 'aborted' — jim; gapirib turgan bo'lsa onend da davom etadi
     };
     rec.onend = function () {
-      if (listening) { try { rec.start(); return; } catch (e) {} }   // brauzer o'zi to'xtatsa — davom etamiz
+      // brauzer jimlikdan keyin o'zi to'xtatadi — gapirish davom etsa qayta yoqamiz (cheklangan marta)
+      if (listening && restarts < 20) { restarts++; try { rec.start(); return; } catch (e) {} }
       listening = false;
       var b = micBtn(); if (b) b.classList.remove('ss-listening');
       writeToInput((baseText + finalText).replace(/\s+$/, ''));
       try { el.focus(); } catch (e) {}
     };
+    rec.onresult = (function (orig) { return function (ev) { restarts = 0; return orig.call(this, ev); }; })(rec.onresult);
     try {
       rec.start();
       listening = true;
