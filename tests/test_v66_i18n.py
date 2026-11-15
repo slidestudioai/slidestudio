@@ -153,3 +153,10 @@ def test_off_topic_refusal_is_multilingual_without_professional():
     assert "I can only help with creating and editing presentations and slides." in p
     assert "Men faqat taqdimot va slaydlar yaratish hamda tahrirlash bo'yicha yordam bera olaman." in p
     assert "professional taqdimot" not in p and "refuse with exactly:\n" not in p
+
+
+def test_browser_translation_allowed_but_icons_protected(client):
+    html = client.get("/").text
+    assert 'translate="no"' not in html.split("<head>")[0]          # sahifa tarjimonga ochiq
+    js = open(os.path.join(ROOT, "js", "i18n.js"), encoding="utf-8").read()
+    assert "protectIcons" in js and "setAttribute('translate', 'no')" in js

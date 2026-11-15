@@ -227,7 +227,34 @@
     try { document.dispatchEvent(new CustomEvent('ss:lang', { detail: { lang: l } })); } catch (e) {}
   }
 
+  /* ---------------- brauzer tarjimoni (Google Translate) uchun ikonka himoyasi ----------------
+   * Ikonkalar — shrift ligaturalari: "add", "image", "mic" kabi SO'ZLAR belgiga aylanadi. Tarjimon bu so'zlarni ham
+   * o'girib, tugmalarni buzardi. Faqat ikonkalarga translate="no" qo'yiladi — qolgan matnlarni tarjimon bemalol o'giradi. */
+  var ICON_SEL = '.material-symbols-outlined, .material-icons, .material-symbols-rounded';
+  function protectIcons(root) {
+    try {
+      if (!root || root.nodeType !== 1) return;
+      if (root.matches && root.matches(ICON_SEL)) { root.setAttribute('translate', 'no'); root.classList.add('notranslate'); }
+      var list = root.querySelectorAll ? root.querySelectorAll(ICON_SEL) : [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].getAttribute('translate') !== 'no') { list[i].setAttribute('translate', 'no'); list[i].classList.add('notranslate'); }
+      }
+    } catch (e) {}
+  }
+  function startIconGuard() {
+    protectIcons(document.body);
+    try {
+      new MutationObserver(function (list) {
+        for (var i = 0; i < list.length; i++) {
+          var a = list[i].addedNodes;
+          for (var j = 0; j < a.length; j++) if (a[j].nodeType === 1) protectIcons(a[j]);
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+    } catch (e) {}
+  }
+
   function init() {
+    startIconGuard();
     document.documentElement.lang = lang;
     ensureSwitcher();
     if (lang !== 'uz') walk(document.body);
