@@ -22,6 +22,7 @@ window.SS_I18N = {
     /* ---------- umumiy / yuklanish ---------- */
     "Yuklanmoqda...": ["Загрузка...", "Loading..."],
     "Yuklanmoqda…": ["Загрузка…", "Loading…"],
+    "⏳ Yuklanmoqda...": ["⏳ Загрузка...", "⏳ Loading..."],
     "Xabar": ["Сообщение", "Message"],
     "Yangi Slayd Taqdimoti": ["Новая презентация", "New presentation"],
     "Yopish": ["Закрыть", "Close"],
