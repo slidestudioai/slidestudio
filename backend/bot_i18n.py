@@ -291,8 +291,8 @@ def norm_lang(code: Optional[str]) -> Optional[str]:
 
 
 def guess(language_code: Optional[str]) -> str:
-    """Telegram language_code bo'yicha taxmin (tanlanmagan bo'lsa). O'zbek bozori — odatiy uz."""
-    return norm_lang(language_code) or "uz"
+    """Telegram language_code bo'yicha taxmin (til hali tanlanmagan bo'lsa). Asosiy til — ingliz."""
+    return norm_lang(language_code) or "en"
 
 
 def translate(text: Any, lang: Optional[str]) -> Any:

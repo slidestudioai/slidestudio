@@ -94,7 +94,7 @@
       try { globalImageCounter = 0; } catch (e) {}
       try { _lastRenderedSlideIndex = -1; } catch (e) {}
       try {
-        projectTitle = 'Yangi Slayd Taqdimoti';
+        projectTitle = (window.ssPh ? ssPh('project', 'Yangi Slayd Taqdimoti') : 'Yangi Slayd Taqdimoti');
         var te = document.getElementById('presentationTitle'); if (te) te.innerText = projectTitle;
       } catch (e) {}
       addSlide('title');                                       // boshlang'ich holat (tarixga yoziladi)

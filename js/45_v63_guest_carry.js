@@ -56,7 +56,7 @@
     try {
       if (slides.length > 1) return false;
       var p = JSON.parse(slides[0].json || '{}');
-      var objs = (p.objects || []).filter(function (o) { return o && !(o.type === 'textbox' && /^(Sarlavha Kiriting|)$/.test(String(o.text || '').trim())); });
+      var objs = (p.objects || []).filter(function (o) { return o && !(o.type === 'textbox' && (String(o.text || '').trim() === '' || (window.SSI18n && SSI18n.phKeyOf(o.text) === 'titleMain') || /^Sarlavha Kiriting$/.test(String(o.text || '').trim()))); });
       return !objs.length && !p.backgroundImage && !p.backgroundGif;
     } catch (e) { return false; }
   }

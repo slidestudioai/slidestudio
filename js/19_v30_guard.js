@@ -24,7 +24,8 @@
 
   // v57: yangi loyihadagi «Sarlavha Kiriting» kabi namuna matn — bo'sh slayd hisoblanadi
   // (avval «4 ta slayd yarat» desangiz 5 ta kutilib, «3/5 yaratildi» degan noto'g'ri xabar chiqardi)
-  var PLACEHOLDER_RE = /^(sarlavha kiriting|sarlavha|matn kiriting|click to add (title|text)|title|заголовок)$/i;
+  // v66: uchala tildagi namuna matnlar (translations.js placeholders) ham bo'sh hisoblanadi
+  var PLACEHOLDER_RE = /^(sarlavha kiriting|sarlavha|matn kiriting(\.\.\.)?|yangi matn|enter title|enter text(\.\.\.)?|new text|введите заголовок|введите текст(\.\.\.)?|новый текст|click to add (title|text)|title|заголовок)$/i;
   function slideIsEmpty(s) {
     try {
       var p = JSON.parse(s.json || '{}'); var o = p.objects || [];

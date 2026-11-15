@@ -76,7 +76,7 @@ def test_menu_understands_all_languages():
 
 def test_guess_from_telegram_language():
     assert i18n.guess("ru") == "ru" and i18n.guess("en-US") == "en" and i18n.guess("uz") == "uz"
-    assert i18n.guess("de") == "uz" and i18n.guess(None) == "uz"
+    assert i18n.guess("de") == "en" and i18n.guess(None) == "en"          # asosiy til — ingliz
 
 
 # ------------------------------------------------------------------ /start oqimi

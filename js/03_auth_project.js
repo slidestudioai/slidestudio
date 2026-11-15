@@ -590,7 +590,7 @@
     window.saveProjectToSupabase = saveProjectToSupabase;
     function onTitleChange() {
       const el = document.getElementById('presentationTitle');
-      projectTitle = el.innerText.trim() || "Yangi Slayd Taqdimoti";
+      projectTitle = el.innerText.trim() || (window.ssPh ? ssPh('project', "Yangi Slayd Taqdimoti") : "Yangi Slayd Taqdimoti");
       saveCurrentSlideState();
     }
 
