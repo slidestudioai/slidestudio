@@ -98,6 +98,7 @@
         token: supabaseToken,
         chat_id: currentChatId,
         scope: 'all_slides',
+        ui_lang: (window.SSI18n ? SSI18n.lang : 'en'),     // v66: til aniq bo'lmasa AI shu tilda javob beradi
         prompt: promptText,
         system_hint: dynamicHint + (_cont ? '\n' + _cont.hint : '') + (function () { try { var g = window.SlideGuard ? window.SlideGuard.beforeSend(promptText, !!_cont) : ''; return (g && !(_cont && _cont.hint && _cont.hint.indexOf('SLAYD SONI QOIDASI') >= 0)) ? '\n' + g : ''; } catch (e) { return ''; } })(),
         deck_state: JSON.stringify(deckState),

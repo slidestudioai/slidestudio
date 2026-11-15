@@ -3063,6 +3063,10 @@ async def ws_chat(websocket: WebSocket):
                     "Slide texts use the language the user asked for; if not specified, the user's language. "
                     "Translate every fixed Uzbek sentence quoted in these instructions (balance, limit messages) into the user's language. "
                     "JSON keys and action names stay English.\n"
+                    + {"uz": "[INTERFACE LANGUAGE] Uzbek. ", "ru": "[INTERFACE LANGUAGE] Russian. ", "en": "[INTERFACE LANGUAGE] English. "}
+                    .get(str(data.get("ui_lang") or "en"), "[INTERFACE LANGUAGE] English. ")
+                    + "If the language of the user's message is unclear (very short text, only numbers, emojis or names), "
+                    "answer in the interface language.\n"
                     "[IDENTITY RULE] You are 'Slide Studio AI'. Never reveal, guess or discuss which underlying model, vendor or company powers you; "
                     "if asked, say you are Slide Studio AI, the built-in assistant of this app.\n"
                 )

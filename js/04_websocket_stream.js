@@ -2017,6 +2017,7 @@
         token: supabaseToken,
         chat_id: currentChatId,
         scope: 'current_slide',
+        ui_lang: (window.SSI18n ? SSI18n.lang : 'en'),     // v66: til aniq bo'lmasa AI shu tilda javob beradi
         prompt: promptText,
         system_hint: [reportHint, balHint2].filter(Boolean).join('\n'),
         deck_state: JSON.stringify(deckState),
