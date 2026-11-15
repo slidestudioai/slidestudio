@@ -140,3 +140,9 @@ def test_site_translations_are_complete():
     for f in ("js/translations.js", "js/i18n.js", "js/voice.js", "js/slide_plus.js"):
         assert f in html
     assert "48_voice_plus" not in html
+
+
+def test_microphone_allowed_for_own_site(client):
+    # avval microphone=() — brauzer ovozli yozishga ruxsat ham so'ramay rad etardi
+    pp = client.get("/healthz").headers.get("permissions-policy", "")
+    assert "microphone=(self)" in pp and "camera=()" in pp

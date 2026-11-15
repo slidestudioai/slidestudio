@@ -1019,7 +1019,8 @@ async def _security_middleware(request: Request, call_next):
     # v43: Telegram Web/Desktop Mini App'ni iframe ichida ochadi -> faqat o'z domen va telegram ruxsat etiladi
     h.setdefault("Content-Security-Policy", "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://telegram.org")
     h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    # v66: mikrofon faqat O'Z saytimizga ruxsat (ovozli yozish). Avval microphone=() — brauzer ruxsat ham so'ramay rad etardi
+    h.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
         h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     # v52: JS/CSS. index.html ichidagi ?v=<hash> fayl o'zgarganda AVTOMATIK o'zgaradi (qarang _render_index),

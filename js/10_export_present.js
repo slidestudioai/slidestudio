@@ -1343,54 +1343,34 @@
       }
       actions.innerHTML = '';
       actions.setAttribute('data-i18n-ctx', 'ai');      // i18n: «Bekor qilish» bu yerda Undo ma'nosida
-      if (sender === 'user') {
-        const copyBtn = document.createElement('button');
-        copyBtn.className = 'ai-action-btn';
-        copyBtn.type = 'button';
-        copyBtn.dataset.role = 'copy';
-        copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span> Nusxalash';
-        copyBtn.onclick = (e) => {
-          e.stopPropagation();
-          const txt = (msgDiv.querySelector('.msg-text') || {}).innerText || '';
-          copyToClipboard(txt, copyBtn);
-        };
-        actions.appendChild(copyBtn);
-      }
+      // v66: tugmalar faqat BELGI (matnsiz); nomi — sichqoncha ustiga borganda (title) va ekran o'quvchida (aria-label)
+      const iconBtn = (icon, label, role, onClick, extraClass) => {
+        const b = document.createElement('button');
+        b.className = 'ai-action-btn ss-icon-only' + (extraClass ? ' ' + extraClass : '');
+        b.type = 'button';
+        if (role) b.dataset.role = role;
+        b.title = label;
+        b.setAttribute('aria-label', label);
+        b.innerHTML = '<span class="material-symbols-outlined">' + icon + '</span>';
+        b.onclick = (e) => { e.stopPropagation(); onClick(b); };
+        return b;
+      };
+      const copyMsg = (btn) => copyToClipboard((msgDiv.querySelector('.msg-text') || {}).innerText || '', btn);
       if (sender === 'bot' && typeof window.ssMakeSpeakButton === 'function') {
         try { actions.appendChild(window.ssMakeSpeakButton(msgDiv)); } catch (e) {  }
       }
+      actions.appendChild(iconBtn('content_copy', 'Nusxalash', 'copy', copyMsg));
       if (sender === 'bot' && msgDiv === getLastMessageDiv('bot')) {
-        const regBtn = document.createElement('button');
-        regBtn.className = 'ai-action-btn';
-        regBtn.type = 'button';
-        regBtn.innerHTML = '<span class="material-symbols-outlined">refresh</span> Qayta yaratish';
-        regBtn.onclick = (e) => { e.stopPropagation(); regenerateLastResponse(); };
-        actions.appendChild(regBtn);
+        actions.appendChild(iconBtn('refresh', 'Qayta yaratish', 'regenerate', () => regenerateLastResponse()));
         // v66: «Bekor qilish» / «Qaytarish» faqat AI slaydlarni HAQIQATAN o'zgartirgan bo'lsa (oddiy matnli javobda — yo'q)
         if (window._aiUndone && window._postAiSlidesSnapshot) {     // v61: bekor qilingan — AI natijasini qaytarish
-          const redoAiBtn = document.createElement('button');
-          redoAiBtn.className = 'ai-action-btn ai-redo-btn';
-          redoAiBtn.type = 'button';
-          redoAiBtn.innerHTML = '<span class="material-symbols-outlined">redo</span> Qaytarish';
-          redoAiBtn.title = "Bekor qilingan AI natijasini qaytarish";
-          redoAiBtn.onclick = (e) => { e.stopPropagation(); redoAiChanges(); };
-          actions.appendChild(redoAiBtn);
+          actions.appendChild(iconBtn('redo', 'Qaytarish', 'redo', () => redoAiChanges(), 'ai-redo-btn'));
         } else if (window._preAiSlidesSnapshot && aiChangedSlides()) {
-          const undoAiBtn = document.createElement('button');
-          undoAiBtn.className = 'ai-action-btn ai-undo-btn';
-          undoAiBtn.type = 'button';
-          undoAiBtn.innerHTML = '<span class="material-symbols-outlined">undo</span> Bekor qilish';
-          undoAiBtn.onclick = (e) => { e.stopPropagation(); undoAiChanges(); };
-          actions.appendChild(undoAiBtn);
+          actions.appendChild(iconBtn('undo', 'Bekor qilish', 'undo', () => undoAiChanges(), 'ai-undo-btn'));
         }
       }
       if (sender === 'user' && msgDiv === getLastMessageDiv('user')) {
-        const editBtn = document.createElement('button');
-        editBtn.className = 'ai-action-btn';
-        editBtn.type = 'button';
-        editBtn.innerHTML = '<span class="material-symbols-outlined">edit</span> Tahrirlash';
-        editBtn.onclick = (e) => { e.stopPropagation(); editUserMessage(msgDiv); };
-        actions.appendChild(editBtn);
+        actions.appendChild(iconBtn('edit', 'Tahrirlash', 'edit', () => editUserMessage(msgDiv)));
       }
       if (sender === 'bot') { try { addInterruptedButtons(actions, msgDiv); } catch (e) {  } }
     }
@@ -1428,7 +1408,9 @@
         if (!btnEl) { showToast('Nusxalandi!'); return; }
         const original = btnEl.innerHTML;
         btnEl.classList.add('copied');
-        btnEl.innerHTML = '<span class="material-symbols-outlined">check</span> Nusxalandi!';
+        btnEl.innerHTML = btnEl.classList.contains('ss-icon-only')
+          ? '<span class="material-symbols-outlined">check</span>'          // v66: belgili tugma — faqat ✓
+          : '<span class="material-symbols-outlined">check</span> Nusxalandi!';
         setTimeout(() => {
           btnEl.classList.remove('copied');
           btnEl.innerHTML = original;

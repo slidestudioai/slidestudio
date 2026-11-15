@@ -1304,3 +1304,10 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
 }
 
 /* === Top-Up Credits Modal === */
+
+/* v66: AI chat xabaridagi tugmalar — faqat belgi (matnsiz), nomi title'da */
+.ai-msg-actions .ai-action-btn.ss-icon-only,
+.ai-msg-actions .ai-action-btn.ss-speak-btn { padding: 5px; min-width: 30px; height: 30px; justify-content: center; gap: 0; }
+.ai-msg-actions .ai-action-btn.ss-icon-only .material-symbols-outlined,
+.ai-msg-actions .ai-action-btn.ss-speak-btn .material-symbols-outlined { font-size: 17px; margin: 0; }
+.ai-msg-actions .ai-action-btn.ss-icon-only.copied { color: #16a34a; }
