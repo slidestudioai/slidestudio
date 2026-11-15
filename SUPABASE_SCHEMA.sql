@@ -508,3 +508,15 @@ grant execute on function public.cleanup_orphan_accounts() to service_role;
 revoke all on function public.cleanup_deleted_user() from public, anon, authenticated;
 
 select public.cleanup_orphan_accounts();
+
+
+-- ============================================================================
+-- 12) Telegram bot tili (uz / ru / en) — /start da tanlanadi, Mini App ham shu tilda ochiladi.
+--     Telegram ID ga bog'liq (Google ulanmagan foydalanuvchida ham ishlaydi).
+-- ============================================================================
+create table if not exists public.tg_prefs (
+  tg_id      bigint primary key,
+  lang       text   not null default 'uz' check (lang in ('uz', 'ru', 'en')),
+  updated_at timestamptz not null default now()
+);
+alter table public.tg_prefs enable row level security;

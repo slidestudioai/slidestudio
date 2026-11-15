@@ -1,16 +1,16 @@
-/* js/48_voice_plus.js (v66) — ovozli yozish, ovozli o'qish va slayd ustidagi «+» (rasm qo'shish)
+/* js/voice.js (v66) — ovozli yozish (Speech-to-Text) va ovozli o'qish (Text-to-Speech)
  *
  *  1) 🎤 Ovozli yozish (AI chat): brauzerning BEPUL SpeechRecognition'i. Gapirgan sari matn maydonga yozilib boradi.
  *     Chrome / Edge / Safari'da ishlaydi. Firefox va ba'zi Telegram WebView'larida yo'q — u yerda tugma ko'rinmaydi.
  *     Til: UZ (odatiy) · RU · EN — tugmani uzoq bosib (yoki o'ng tugma) almashtiriladi.
  *  2) 🔊 Ovozli o'qish (AI xabari): brauzerning BEPUL speechSynthesis'i. O'zbek ovozi bo'lmasa — eng yaqini
  *     (turk) ishlatiladi; kirill matn — rus ovozi.
- *  3) «+» slaydning chap-yuqori burchagida: qurilmadan rasm qo'shish (triggerDirectImageUpload).
+ *  Til: sayt tili (SSI18n) bo'yicha: uz-UZ / ru-RU / en-US. «+» tugmasi — js/slide_plus.js.
  */
 (function () {
   'use strict';
-  if (window.__ssVoicePlus) return;
-  window.__ssVoicePlus = true;
+  if (window.__ssVoice) return;
+  window.__ssVoice = true;
 
   function toast(m, k) { try { if (typeof showToast === 'function') showToast(m, k || 'success'); } catch (e) {} }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -29,12 +29,6 @@
     '@keyframes ssMicPulse{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}50%{box-shadow:0 0 0 7px rgba(220,38,38,0)}}',
     '.ai-action-btn.ss-speak-btn{padding:4px 8px;min-width:0}',
     '.ai-action-btn.ss-speak-btn.ss-speaking{color:#6d28d9;background:#ede9fe}',
-    '#ssSlidePlus{position:absolute;z-index:30;width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;',
-    ' display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#7c3aed,#2563eb);',
-    ' box-shadow:0 4px 14px rgba(37,99,235,.35);transition:transform .15s ease,box-shadow .2s ease;padding:0}',
-    '#ssSlidePlus:hover{transform:scale(1.08);box-shadow:0 6px 18px rgba(37,99,235,.45)}',
-    '#ssSlidePlus:focus-visible{outline:2px solid #1d4ed8;outline-offset:2px}',
-    '#ssSlidePlus .material-symbols-outlined{font-size:22px}',
     '@media (prefers-reduced-motion:reduce){.ss-mic-btn.ss-listening{animation:none}}'
   ].join('');
   document.head.appendChild(css);
@@ -44,7 +38,14 @@
    * ===================================================================== */
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var LANGS = [['uz-UZ', 'UZ'], ['ru-RU', 'RU'], ['en-US', 'EN']];
-  var langIdx = Math.max(0, LANGS.map(function (l) { return l[0]; }).indexOf(lsGet('ss-mic-lang') || 'uz-UZ'));
+  function siteSpeechLang() { try { return window.SSI18n ? window.SSI18n.speechLang() : 'uz-UZ'; } catch (e) { return 'uz-UZ'; } }
+  // odatda sayt tili; foydalanuvchi uzoq bosib boshqasini tanlagan bo'lsa — o'sha (eslab qolinadi)
+  var langIdx = Math.max(0, LANGS.map(function (l) { return l[0]; }).indexOf(lsGet('ss-mic-lang') || siteSpeechLang()));
+  document.addEventListener('ss:lang', function () {
+    if (lsGet('ss-mic-lang')) return;
+    langIdx = Math.max(0, LANGS.map(function (l) { return l[0]; }).indexOf(siteSpeechLang()));
+    setLangBadge();
+  });
   var rec = null, listening = false, baseText = '', finalText = '';
 
   function micBtn() { return document.getElementById('micBtnSidebar'); }
@@ -160,10 +161,13 @@
       .replace(/\s+/g, ' ').trim();
   }
 
+  // AI foydalanuvchi tilida javob beradi — matnning o'z tili aniqlanadi; aniq bo'lmasa sayt tili olinadi
   function detectLang(t) {
     if (/[а-яё]/i.test(t)) return /[ўқғҳ]/i.test(t) ? 'uz' : 'ru';
     if (/[oO]['ʻ‘’`]|[gG]['ʻ‘’`]|\b(va|bu|uchun|bilan|ham|emas|qiling|slayd|yoki|men|siz)\b/i.test(t)) return 'uz';
-    return 'en';
+    if (/\b(the|and|you|your|slides?|with|for|is|are|this|that)\b/i.test(t)) return 'en';
+    var sl = window.SSI18n ? window.SSI18n.lang : 'uz';
+    return sl;
   }
 
   function pickVoice(lang) {
@@ -225,49 +229,8 @@
   if (synth && synth.onvoiceschanged !== undefined) synth.onvoiceschanged = function () {};   // ovozlar ro'yxatini yuklatadi
   window.addEventListener('pagehide', stopSpeaking);
 
-  /* =====================================================================
-   * 3) «+» — slaydning chap-yuqori burchagida rasm qo'shish
-   * ===================================================================== */
-  function initPlus() {
-    var wrap = document.getElementById('canvasWrapper');
-    var card = document.getElementById('canvasCard');
-    if (!wrap || !card || document.getElementById('ssSlidePlus')) return;
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.id = 'ssSlidePlus';
-    b.title = "Rasm qo'shish";
-    b.setAttribute('aria-label', "Slaydga rasm qo'shish");
-    b.innerHTML = '<span class="material-symbols-outlined">add</span>';
-    b.addEventListener('click', function (e) {
-      e.preventDefault(); e.stopPropagation();
-      if (typeof window.triggerDirectImageUpload === 'function') window.triggerDirectImageUpload();
-      else toast("Rasm yuklash hozircha tayyor emas.", 'error');
-    });
-    wrap.appendChild(b);
-
-    var raf = 0;
-    function place() {
-      raf = 0;
-      var wr = wrap.getBoundingClientRect(), cr = card.getBoundingClientRect();
-      if (!cr.width || !wr.width) { b.style.display = 'none'; return; }
-      b.style.display = '';
-      // slayd burchagidan biroz chapga va tepaga (joy bo'lmasa — burchak ustiga), wrapper ichida qoladi
-      var x = cr.left - wr.left + wrap.scrollLeft - 17;
-      var y = cr.top - wr.top + wrap.scrollTop - 17;
-      b.style.left = Math.max(4, x) + 'px';
-      b.style.top = Math.max(4, y) + 'px';
-    }
-    function schedule() { if (!raf) raf = requestAnimationFrame(place); }
-    window.addEventListener('resize', schedule);
-    wrap.addEventListener('scroll', schedule, { passive: true });
-    try { new ResizeObserver(schedule).observe(wrap); } catch (e) {}
-    try { new MutationObserver(schedule).observe(card, { attributes: true, attributeFilter: ['style', 'class'] }); } catch (e) {}
-    setInterval(schedule, 1500);                        // zaxira: boshqa modullar o'lchamni o'zgartirsa ham
-    schedule();
-  }
-
   function init() {
-    initMic(); initPlus();
+    initMic();
     // modul yuklanguncha chizilgan xabarlarga ham 🔊 tugmasi qo'shilsin
     try { if (typeof window.refreshChatMessageActions === 'function') window.refreshChatMessageActions(); } catch (e) {}
   }

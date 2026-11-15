@@ -1342,11 +1342,31 @@
         msgDiv.appendChild(actions);
       }
       actions.innerHTML = '';
-      // v66: «Nusxalash» va «Qayta yaratish» olib tashlandi (interfeys toza bo'lsin). AI xabarida — 🔊 ovozli o'qish.
+      actions.setAttribute('data-i18n-ctx', 'ai');      // i18n: «Bekor qilish» bu yerda Undo ma'nosida
+      if (sender === 'user') {
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'ai-action-btn';
+        copyBtn.type = 'button';
+        copyBtn.dataset.role = 'copy';
+        copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span> Nusxalash';
+        copyBtn.onclick = (e) => {
+          e.stopPropagation();
+          const txt = (msgDiv.querySelector('.msg-text') || {}).innerText || '';
+          copyToClipboard(txt, copyBtn);
+        };
+        actions.appendChild(copyBtn);
+      }
       if (sender === 'bot' && typeof window.ssMakeSpeakButton === 'function') {
         try { actions.appendChild(window.ssMakeSpeakButton(msgDiv)); } catch (e) {  }
       }
       if (sender === 'bot' && msgDiv === getLastMessageDiv('bot')) {
+        const regBtn = document.createElement('button');
+        regBtn.className = 'ai-action-btn';
+        regBtn.type = 'button';
+        regBtn.innerHTML = '<span class="material-symbols-outlined">refresh</span> Qayta yaratish';
+        regBtn.onclick = (e) => { e.stopPropagation(); regenerateLastResponse(); };
+        actions.appendChild(regBtn);
+        // v66: «Bekor qilish» / «Qaytarish» faqat AI slaydlarni HAQIQATAN o'zgartirgan bo'lsa (oddiy matnli javobda — yo'q)
         if (window._aiUndone && window._postAiSlidesSnapshot) {     // v61: bekor qilingan — AI natijasini qaytarish
           const redoAiBtn = document.createElement('button');
           redoAiBtn.className = 'ai-action-btn ai-redo-btn';
@@ -1355,7 +1375,7 @@
           redoAiBtn.title = "Bekor qilingan AI natijasini qaytarish";
           redoAiBtn.onclick = (e) => { e.stopPropagation(); redoAiChanges(); };
           actions.appendChild(redoAiBtn);
-        } else if (window._preAiSlidesSnapshot) {
+        } else if (window._preAiSlidesSnapshot && aiChangedSlides()) {
           const undoAiBtn = document.createElement('button');
           undoAiBtn.className = 'ai-action-btn ai-undo-btn';
           undoAiBtn.type = 'button';
@@ -1374,6 +1394,20 @@
       }
       if (sender === 'bot') { try { addInterruptedButtons(actions, msgDiv); } catch (e) {  } }
     }
+    /** v66: oxirgi AI so'rovi slaydlarni o'zgartirdimi (AI'dan oldingi nusxa bilan solishtiriladi). */
+    function aiChangedSlides() {
+      try {
+        const pre = JSON.parse(window._preAiSlidesSnapshot || 'null');
+        if (!pre || !Array.isArray(pre.slides)) return false;
+        const cur = slides || [];
+        if (pre.slides.length !== cur.length) return true;
+        for (let i = 0; i < cur.length; i++) {
+          if ((pre.slides[i] && pre.slides[i].json) !== (cur[i] && cur[i].json)) return true;
+        }
+        return false;
+      } catch (e) { return false; }
+    }
+    window.aiChangedSlides = aiChangedSlides;
     function getLastMessageDiv(sender) {
       const chatBody = document.getElementById('aiChatBody');
       const all = chatBody.querySelectorAll('.ai-msg');
