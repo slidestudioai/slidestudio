@@ -1,4 +1,5 @@
-/* js/slide_plus.js (v66) — slayd ustidagi «+» tugmasi: qurilmadan rasm qo'shish (triggerDirectImageUpload)
+/* js/slide_plus.js (v66) — slayd ustidagi «+» tugmasi: qurilmadan rasm qo'shish (eski skrepka o'rnida)
+ *  Rasmlar «Rasmlar:» qatoriga raqamlanib tushadi (triggerSidebarImageUpload) — AI ularni slaydlarga joylaydi.
  *  Joyi: slaydning chap-yuqori burchagidan TASHQARIDA (biroz chapda va tepada), slaydga yopishmaydi.
  *  Chapda joy yetmasa — slayd burchagining ustida; umuman joy bo'lmasa (telefon) — slayd ichida, burchakdan 12 px nariroqda.
  */
@@ -27,12 +28,15 @@
     var b = document.createElement('button');
     b.type = 'button';
     b.id = 'ssSlidePlus';
-    b.title = "Rasm qo'shish";
-    b.setAttribute('aria-label', "Slaydga rasm qo'shish");
+    b.title = "Rasm qo'shish (AI joylashtiradi)";
+    b.setAttribute('aria-label', "Rasm qo'shish (AI joylashtiradi)");
     b.innerHTML = '<span class="material-symbols-outlined">add</span>';
     b.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
-      if (typeof window.triggerDirectImageUpload === 'function') window.triggerDirectImageUpload();
+      // Eski skrepka bilan bir xil: rasmlar tepadagi «Rasmlar:» qatoriga RAQAMLANIB qo'shiladi,
+      // keyin AI ularni tanlab slaydga joylaydi (to'g'ridan-to'g'ri slaydga emas).
+      if (typeof window.triggerSidebarImageUpload === 'function') window.triggerSidebarImageUpload();
+      else if (typeof window.triggerDirectImageUpload === 'function') window.triggerDirectImageUpload();
       else toast("Rasm yuklash hozircha tayyor emas.", 'error');
     });
     wrap.appendChild(b);
