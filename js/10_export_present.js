@@ -1342,24 +1342,11 @@
         msgDiv.appendChild(actions);
       }
       actions.innerHTML = '';
-      const copyBtn = document.createElement('button');
-      copyBtn.className = 'ai-action-btn';
-      copyBtn.type = 'button';
-      copyBtn.dataset.role = 'copy';
-      copyBtn.innerHTML = '<span class="material-symbols-outlined">content_copy</span> Nusxalash';
-      copyBtn.onclick = (e) => {
-        e.stopPropagation();
-        const txt = (msgDiv.querySelector('.msg-text') || {}).innerText || '';
-        copyToClipboard(txt, copyBtn);
-      };
-      actions.appendChild(copyBtn);
+      // v66: «Nusxalash» va «Qayta yaratish» olib tashlandi (interfeys toza bo'lsin). AI xabarida — 🔊 ovozli o'qish.
+      if (sender === 'bot' && typeof window.ssMakeSpeakButton === 'function') {
+        try { actions.appendChild(window.ssMakeSpeakButton(msgDiv)); } catch (e) {  }
+      }
       if (sender === 'bot' && msgDiv === getLastMessageDiv('bot')) {
-        const regBtn = document.createElement('button');
-        regBtn.className = 'ai-action-btn';
-        regBtn.type = 'button';
-        regBtn.innerHTML = '<span class="material-symbols-outlined">refresh</span> Qayta yaratish';
-        regBtn.onclick = (e) => { e.stopPropagation(); regenerateLastResponse(); };
-        actions.appendChild(regBtn);
         if (window._aiUndone && window._postAiSlidesSnapshot) {     // v61: bekor qilingan — AI natijasini qaytarish
           const redoAiBtn = document.createElement('button');
           redoAiBtn.className = 'ai-action-btn ai-redo-btn';

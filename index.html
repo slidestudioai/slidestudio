@@ -371,7 +371,11 @@
         <div class="ai-balance-strip" id="aiBalanceStrip" style="display:none"></div>
         <div class="chat-previews-bar" id="chatPreviewsBar"></div>
         <div class="ai-sidebar-input-box">
-          <button class="attach-btn" id="attachBtnSidebar" title="Rasm biriktirish">
+          <!-- v66: skrepka o'rniga mikrofon (gapiring — matn o'zi yoziladi). Rasm qo'shish: slayd ustidagi «+» tugmasi -->
+          <button type="button" class="attach-btn ss-mic-btn ss-mic-off" id="micBtnSidebar" title="Ovozli yozish (gapiring — matnga aylanadi)">
+            <span class="material-symbols-outlined" style="font-size:20px;">mic</span><i class="ss-mic-lang">UZ</i>
+          </button>
+          <button class="attach-btn" id="attachBtnSidebar" title="Rasm biriktirish" style="display:none">
             <span class="material-symbols-outlined" style="font-size:20px;">attach_file</span>
           </button>
           <textarea id="aiSidebarInput" rows="1" placeholder="Butun slayd uchun buyruq..." oninput="autoGrowSidebarInput(this)" onkeydown="handleSidebarInputKey(event)"></textarea>
@@ -670,5 +674,6 @@
   <script src="js/45_v63_guest_carry.js?v=1"></script>
   <script src="js/46_topup.js?v=4" defer></script>
   <script src="js/47_resize_fix.js" defer></script>
+  <script src="js/48_voice_plus.js?v=1" defer></script>
   </body>
 </html>
