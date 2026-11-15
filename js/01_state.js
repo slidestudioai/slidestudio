@@ -12,7 +12,7 @@
     let activeIndex = 0;
     let presentationIndex = 0;
     let currentProjectId = null;
-    let projectTitle = "Yangi Slayd Taqdimoti";
+    let projectTitle = (window.ssPh ? ssPh('project', "Yangi Slayd Taqdimoti") : "Yangi Slayd Taqdimoti");
     let projectStatus = "draft";
     let supabaseClient = null;
     let supabaseToken = "dev-token";

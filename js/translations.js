@@ -10,6 +10,14 @@
 window.SS_I18N = {
   names: { uz: "O‘zbekcha", ru: "Русский", en: "English" },
   short: { uz: "UZ", ru: "RU", en: "EN" },
+  // Slayd/loyiha uchun boshlang'ich (namuna) matnlar — canvas ichida, shuning uchun alohida (i18n.js: SSI18n.ph(key))
+  placeholders: {
+    titleMain: { uz: "Sarlavha Kiriting", ru: "Введите заголовок", en: "Enter title" },
+    title:     { uz: "Sarlavha", ru: "Заголовок", en: "Title" },
+    body:      { uz: "Matn kiriting...", ru: "Введите текст...", en: "Enter text..." },
+    newText:   { uz: "Yangi Matn", ru: "Новый текст", en: "New text" },
+    project:   { uz: "Yangi Slayd Taqdimoti", ru: "Новая презентация", en: "New presentation" }
+  },
   text: {
     /* ---------- umumiy / yuklanish ---------- */
     "Yuklanmoqda...": ["Загрузка...", "Loading..."],

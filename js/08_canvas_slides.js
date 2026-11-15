@@ -15,7 +15,7 @@
         if (layout === 'blank') {
 
         } else if (layout === 'title') {
-          const title = new fabric.Textbox('Sarlavha Kiriting', {
+          const title = new fabric.Textbox((window.ssPh ? ssPh('titleMain', 'Sarlavha Kiriting') : 'Sarlavha Kiriting'), {
             left: 100, top: 180, width: 760, fontSize: 44,
             fontWeight: 'bold', textAlign: 'center', fill: '#1f1f1f', fontFamily: 'Montserrat',
             id: 'el_title_' + Date.now()
@@ -25,12 +25,12 @@
           canvas.add(title);
         } else {
 
-          const title = new fabric.Textbox('Sarlavha', {
+          const title = new fabric.Textbox((window.ssPh ? ssPh('title', 'Sarlavha') : 'Sarlavha'), {
             left: 80, top: 50, width: 800, fontSize: 32,
             fontWeight: 'bold', fill: '#1f1f1f', fontFamily: 'Montserrat',
             id: 'el_title_' + Date.now()
           });
-          const body = new fabric.Textbox('Matn kiriting...', {
+          const body = new fabric.Textbox((window.ssPh ? ssPh('body', 'Matn kiriting...') : 'Matn kiriting...'), {
             left: 80, top: 140, width: 800, fontSize: 20,
             fill: '#444746', fontFamily: 'Roboto',
             id: 'el_body_' + Date.now()
@@ -922,7 +922,7 @@
       });
     }
     function addTextBox() {
-      const textbox = new fabric.Textbox('Yangi Matn', {
+      const textbox = new fabric.Textbox((window.ssPh ? ssPh('newText', 'Yangi Matn') : 'Yangi Matn'), {
         left: 200, top: 200, width: 400, fontSize: 28, fill: '#1f1f1f',
         fontFamily: 'Arial',
         id: 'el_text_' + Date.now()

@@ -7,7 +7,7 @@
  *     shuning uchun eski modullarni bittalab o'zgartirish shart emas.
  *   • Tarjima QILINMAYDI: AI/foydalanuvchi xabarlari (.msg-text), slayd (canvas) va miniatyuralar, input/textarea
  *     qiymatlari, contenteditable, [data-no-i18n].
- *   • Til tanlash tartibi: URL ?lang= (Telegram botdan) → localStorage → Telegram tili → brauzer tili → uz.
+ *   • Til tanlash tartibi: URL ?lang= (Telegram botdan) → localStorage (foydalanuvchi tanlagan) → ASOSIY til: en.
  *
  * API: SSI18n.lang · SSI18n.set(lang) · SSI18n.t(uzText) · hodisa: document 'ss:lang' {detail:{lang}}
  */
@@ -17,6 +17,7 @@
 
   var D = window.SS_I18N || { text: {}, patterns: [], names: { uz: 'O‘zbekcha', ru: 'Русский', en: 'English' }, short: { uz: 'UZ', ru: 'RU', en: 'EN' } };
   var LANGS = ['uz', 'ru', 'en'];
+  var DEFAULT_LANG = 'en';                                          // asosiy (birinchi ochilishdagi) til
   var IDX = { ru: 0, en: 1 };
 
   /* ---------------- lug'at (apostroflar bir xillashtiriladi) ---------------- */
@@ -40,12 +41,7 @@
     try { q = new URLSearchParams(location.search).get('lang'); } catch (e) {}
     if (LANGS.indexOf(q) >= 0) { lsSet(q); return q; }              // botda tanlangan til Mini App'ga shu yo'l bilan keladi
     var s = lsGet(); if (LANGS.indexOf(s) >= 0) return s;
-    try {
-      var tu = window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user;
-      var t = tu && fromCode(tu.language_code); if (t) return t;
-    } catch (e) {}
-    var n = fromCode((navigator.languages && navigator.languages[0]) || navigator.language);
-    return n === 'ru' || n === 'en' ? n : 'uz';
+    return DEFAULT_LANG;                                            // v66: birinchi ochilishda — ingliz tili
   }
   var lang = detect();
 
@@ -191,12 +187,42 @@
     document.querySelectorAll('#ssLangMenu [data-lang]').forEach(function (x) { x.setAttribute('aria-checked', x.dataset.lang === lang ? 'true' : 'false'); });
   }
 
+  /* ---------------- slayd/loyiha namuna matnlari (canvas ichida) ---------------- */
+  var PH = D.placeholders || {};
+  function ph(key, l) { var p = PH[key]; return p ? (p[l || lang] || p.uz) : ''; }
+  function phKeyOf(text) {                                        // matn qaysi namuna (istalgan tilda)?
+    var t = norm(text || '');
+    for (var k in PH) for (var i = 0; i < LANGS.length; i++) if (norm(PH[k][LANGS[i]]) === t) return k;
+    return null;
+  }
+  /** Foydalanuvchi o'zgartirmagan namuna matnlarni joriy tilga o'tkazadi (til almashganda / birinchi ochilishda). */
+  function relabelPlaceholders() {
+    try {
+      var c = (typeof canvas !== 'undefined') ? canvas : null;
+      var changed = false;
+      if (c && c.getObjects) {
+        c.getObjects().forEach(function (o) {
+          if (!o || !/text/i.test(o.type || '') || o.isEditing) return;
+          var k = phKeyOf(o.text);
+          if (k && o.text !== ph(k)) { o.set('text', ph(k)); changed = true; }
+        });
+        if (changed) { c.requestRenderAll && c.requestRenderAll(); try { if (typeof saveCurrentSlideState === 'function') saveCurrentSlideState(); } catch (e) {} }
+      }
+      var tEl = document.getElementById('presentationTitle');
+      if (tEl && document.activeElement !== tEl && phKeyOf(tEl.textContent) === 'project') {
+        tEl.textContent = ph('project');
+        try { if (typeof projectTitle !== 'undefined') projectTitle = ph('project'); } catch (e) {}
+      }
+    } catch (e) {}
+  }
+
   function set(l) {
     if (LANGS.indexOf(l) < 0 || l === lang) return;
     lang = l;
     lsSet(l);
     document.documentElement.lang = l;
     walk(document.body);                 // uz ga qaytsa ham — asl matnlar tiklanadi
+    relabelPlaceholders();
     paintSwitcher();
     try { document.dispatchEvent(new CustomEvent('ss:lang', { detail: { lang: l } })); } catch (e) {}
   }
@@ -206,6 +232,13 @@
     ensureSwitcher();
     if (lang !== 'uz') walk(document.body);
     startObserver();
+    // birinchi slayd canvas tayyor bo'lgach namuna matnlar ham shu tilda bo'lsin
+    var tries = 0, iv2 = setInterval(function () {
+      tries++;
+      var ready = false;
+      try { ready = typeof canvas !== 'undefined' && canvas && canvas.getObjects && typeof slides !== 'undefined' && slides.length > 0; } catch (e) {}
+      if (ready || tries > 60) { clearInterval(iv2); if (ready) relabelPlaceholders(); }
+    }, 250);
     // header kech chizilsa ham almashtirgich paydo bo'lsin
     if (!document.getElementById('ssLangBtn')) { var n = 0, iv = setInterval(function () { ensureSwitcher(); if (document.getElementById('ssLangBtn') || ++n > 40) clearInterval(iv); }, 250); }
   }
@@ -214,9 +247,13 @@
     get lang() { return lang; },
     set: set,
     t: t,
+    ph: ph,                                  // SSI18n.ph('titleMain') → joriy tildagi namuna matn
+    phKeyOf: phKeyOf,
+    isPlaceholder: function (text) { return !!phKeyOf(text); },
     speechLang: function () { return lang === 'ru' ? 'ru-RU' : lang === 'en' ? 'en-US' : 'uz-UZ'; },
     apply: walk
   };
+  window.ssPh = function (key, fallback) { return ph(key) || fallback || ''; };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
