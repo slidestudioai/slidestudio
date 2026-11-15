@@ -146,3 +146,10 @@ def test_microphone_allowed_for_own_site(client):
     # avval microphone=() — brauzer ovozli yozishga ruxsat ham so'ramay rad etardi
     pp = client.get("/healthz").headers.get("permissions-policy", "")
     assert "microphone=(self)" in pp and "camera=()" in pp
+
+
+def test_off_topic_refusal_is_multilingual_without_professional():
+    p = main._read_default_system_prompt()
+    assert "I can only help with creating and editing presentations and slides." in p
+    assert "Men faqat taqdimot va slaydlar yaratish hamda tahrirlash bo'yicha yordam bera olaman." in p
+    assert "professional taqdimot" not in p and "refuse with exactly:\n" not in p
