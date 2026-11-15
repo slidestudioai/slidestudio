@@ -168,6 +168,8 @@ window.SS_I18N = {
 
     /* ---------- ovoz va «+» ---------- */
     "Rasm qo'shish": ["Добавить изображение", "Add image"],
+    "Rasm qo'shish (AI joylashtiradi)": ["Добавить изображения (AI разместит)", "Add images (the AI places them)"],
+    "Rasmlarni o'qib bo'lmadi": ["Не удалось прочитать изображения", "Could not read the images"],
     "Slaydga rasm qo'shish": ["Добавить изображение на слайд", "Add an image to the slide"],
     "Mikrofonga ruxsat bering (brauzer manzil satridagi 🔒 belgisi).": ["Разрешите доступ к микрофону (значок 🔒 в адресной строке).", "Allow microphone access (the 🔒 icon in the address bar)."],
     "Ovozni matnga aylantirish uchun internet kerak.": ["Для распознавания речи нужен интернет.", "Speech recognition needs an internet connection."],
@@ -308,6 +310,7 @@ window.SS_I18N = {
     ["^\\+(\\d+)% bonus$", "+$1% бонус", "+$1% bonus"],
     ["^\\$([\\d.,]+) = ([\\d.,]+) kredit · komissiya bilan \\$([\\d.,]+)$", "$$$1 = $2 кредитов · с комиссией $$$3", "$$$1 = $2 credits · $$$3 with fee"],
     ["^Eng ko'p miqdor — \\$([\\d.,]+)$", "Максимальная сумма — $$$1", "Maximum amount — $$$1"],
+    ["^(\\d+) ta rasm yuklandi — AI joylashtiradi$", "Загружено изображений: $1 — AI разместит", "$1 images uploaded — the AI will place them"],
     ["^(\\d+) ta element tanlandi$", "Выбрано элементов: $1", "$1 elements selected"],
     ["^Ovozli yozish \\((\\w+)\\) — bosing va gapiring\\. Tilni almashtirish: uzoq bosing$", "Голосовой ввод ($1) — нажмите и говорите. Сменить язык: долгое нажатие", "Voice input ($1) — tap and speak. Change language: long press"],
     ["^Ovozli yozish tili: (\\w+)$", "Язык голосового ввода: $1", "Voice input language: $1"],
