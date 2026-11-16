@@ -85,12 +85,14 @@
       'system-ui': 'Arial', 'cursive': 'Comic Sans MS', 'fantasy': 'Impact',
       'montserrat': 'Arial', 'roboto': 'Arial', 'inter': 'Arial', 'poppins': 'Arial',
       'opensans': 'Arial', 'open sans': 'Arial', 'nunito': 'Arial', 'lato': 'Arial',
-      'source sans pro': 'Arial', 'helvetica': 'Arial', 'helvetica neue': 'Arial'
+      'source sans pro': 'Arial', 'helvetica': 'Arial', 'helvetica neue': 'Arial',
+      // v67: tor (condensed) shriftlar Arial'da kengayib, qator ko'payib ketmasin
+      'oswald': 'Arial Narrow', 'bebas neue': 'Arial Narrow', 'anton': 'Arial Narrow'
     };
     // Maxsus shriftlar ko'p kompyuterda yo'q — Arial/Calibri ishlatiladi (oʻ gʻ harflari yaxshi chiqadi)
     if (g[low]) return g[low];
     // Faqat Windows/macOS standartlari qolsin
-    var safe = /^(arial|calibri|cambria|georgia|times new roman|courier new|verdana|tahoma|trebuchet ms|comic sans ms|impact|segoe ui|consolas)$/i;
+    var safe = /^(arial|arial black|arial narrow|calibri|cambria|georgia|times new roman|courier new|verdana|tahoma|trebuchet ms|comic sans ms|impact|segoe ui|consolas)$/i;
     return safe.test(first) ? first : 'Arial';
   }
 
@@ -104,6 +106,85 @@
     var cy = top + dx * Math.sin(ang) + dy * Math.cos(ang);
     var rot = Math.round((((angDeg % 360) + 360) % 360) * 10) / 10;
     return { x: r4((cx - w / 2) * SX), y: r4((cy - h / 2) * SY), w: r4(Math.max(w, 1) * SX), h: r4(Math.max(h, 1) * SY), rotate: rot };
+  }
+
+  /* ==================================================================
+   * v67: 1:1 GEOMETRIYA STANDARTI (Fabric.js ⇄ PptxGenJS)
+   *  - 1 px = 1/96 dyuym = 0.75 pt = 9525 EMU (960×540 px slayd = 10×5.625 dyuym, 16:9).
+   *  - Fabric obyektning tashqi qutisi chegarani (stroke) ham o'z ichiga oladi:
+   *      strokeUniform=false: (width + sw) × scale,   strokeUniform=true: width × scale + sw
+   *    PowerPoint'da chiziq shakl geometriyasi chetida (markazda) chiziladi — shuning uchun
+   *    markaz tashqi qutidan olinadi, quti esa sof geometriya (width × scale) bo'ladi.
+   *    Natijada qalin chegarali kartochka PowerPoint'da ham aynan shu joyda turadi.
+   * ================================================================== */
+  function r6(v) { return Math.round(v * 1e6) / 1e6; }   // dyuym, ~1 EMU aniqlik
+  function absScale(el) { return { sx: Math.abs(num(el.scaleX, 1)) || 1, sy: Math.abs(num(el.scaleY, 1)) || 1 }; }
+  function fullDims(el, w0, h0) {
+    var s = absScale(el), sw = Math.max(0, num(el.strokeWidth, 0));
+    if (el.strokeUniform) return { w: w0 * s.sx + sw, h: h0 * s.sy + sw };
+    return { w: (w0 + sw) * s.sx, h: (h0 + sw) * s.sy };
+  }
+  function centerOf(el, fw, fh) {
+    var left = num(el.left, 0), top = num(el.top, 0);
+    var ang = num(el.angle, 0) * Math.PI / 180;
+    var ox = el.originX || 'left', oy = el.originY || 'top';
+    var dx = ox === 'center' ? 0 : (ox === 'right' ? -fw / 2 : fw / 2);
+    var dy = oy === 'center' ? 0 : (oy === 'bottom' ? -fh / 2 : fh / 2);
+    return { x: left + dx * Math.cos(ang) - dy * Math.sin(ang), y: top + dx * Math.sin(ang) + dy * Math.cos(ang) };
+  }
+  /** Shaklning sof geometriya qutisi (dyuymda). w0/h0 — Fabric'dagi (masshtabsiz) width/height. */
+  function placeGeom(el, w0, h0, allowZero) {
+    var s = absScale(el), fd = fullDims(el, w0, h0), c = centerOf(el, fd.w, fd.h);
+    var gw = w0 * s.sx, gh = h0 * s.sy;
+    if (!allowZero) { gw = Math.max(gw, 1); gh = Math.max(gh, 1); }
+    var angDeg = num(el.angle, 0);
+    var rot = Math.round((((angDeg % 360) + 360) % 360) * 100) / 100;
+    return { x: r6((c.x - gw / 2) * SX), y: r6((c.y - gh / 2) * SY), w: r6(gw * SX), h: r6(gh * SY), rotate: rot, cx: c.x, cy: c.y, gw: gw, gh: gh };
+  }
+  function scaleAvgOf(el) { var s = absScale(el); return (s.sx + s.sy) / 2; }
+  /** Chegara (stroke): rang, qalinlik (pt), uzuq chiziq */
+  function lineOf(el) {
+    var s = parseColor(el.stroke), sw = num(el.strokeWidth, 0);
+    if (!s || !(sw > 0)) return null;
+    var wpx = el.strokeUniform ? sw : sw * scaleAvgOf(el);
+    var o = { color: s.hex, width: Math.max(0.1, Math.round(wpx * 0.75 * 100) / 100) };
+    var tr = transparencyOf(s, el.opacity);
+    if (tr > 0) o.transparency = tr;
+    var da = el.strokeDashArray;
+    if (Array.isArray(da) && da.length >= 2 && da[0] > 0) o.dashType = (da[0] <= sw * 1.5) ? 'sysDot' : (da[0] >= sw * 6 ? 'lgDash' : 'dash');
+    return o;
+  }
+  function fillOptsOf(el) {
+    var f = el.fill;
+    if (f && typeof f === 'object' && !Array.isArray(f.colorStops)) return undefined;    // naqsh (pattern) — fallback
+    var c = parseColor(f);
+    return c ? { color: c.hex, transparency: transparencyOf(c, el.opacity) } : null;
+  }
+  /**
+   * Fabric soyasi → PowerPoint <a:outerShdw>.
+   *  Fabric: offsetX/offsetY px (obyekt masshtabi bilan, nonScaling bo'lmasa), blur px; soya obyekt bilan aylanmaydi.
+   *  PPTX : dist (pt) = √(ox²+oy²)·0.75, dir = atan2(oy, ox) (soat yo'nalishida), blurRad (pt), rotWithShape=0.
+   *  PptxGenJS 3.12 xatolarini chetlab o'tamiz: blur 0 → 8pt, offset 0 → 4pt, angle 0 → 270° bo'lib qolardi.
+   */
+  function shadowOf(el) {
+    var sh = el.shadow;
+    if (!sh || typeof sh !== 'object') return null;
+    var c = parseColor(sh.color) || { hex: '000000', alpha: 1 };
+    var s = sh.nonScaling ? { sx: 1, sy: 1 } : absScale(el);
+    var ox = num(sh.offsetX, 0) * s.sx, oy = num(sh.offsetY, 0) * s.sy;
+    var blur = Math.max(0, num(sh.blur, 0)) * (s.sx + s.sy) / 2;
+    var alpha = c.alpha * (el.opacity == null ? 1 : num(el.opacity, 1));
+    var dist = Math.sqrt(ox * ox + oy * oy);
+    if (alpha <= 0.004 || (dist < 0.05 && blur < 0.05)) return null;
+    var ang = dist < 0.05 ? 90 : Math.round(((Math.atan2(oy, ox) * 180 / Math.PI) % 360 + 360) % 360);
+    if (ang === 0 || ang === 360) ang = 359;      // 0 qiymati kutubxonada 270° ga aylanadi (≈0.02·dist px farq)
+    return {
+      type: 'outer', color: c.hex,
+      blur: blur < 0.05 ? 0.00001 : Math.round(blur * 0.75 * 100) / 100,      // → blurRad="0" (qattiq soya)
+      offset: dist < 0.05 ? 0.00001 : Math.round(dist * 0.75 * 1000) / 1000,
+      angle: ang,
+      opacity: Math.round(Math.min(1, alpha) * 1000) / 1000
+    };
   }
 
   function transparencyOf(colorObj, opacity) {
@@ -248,48 +329,81 @@
     return c ? c.hex : 'FFFFFF';
   }
 
+  var FABRIC_FS_MULT = 1.13;          // fabric.Text.prototype._fontSizeMult — qator balandligi = fontSize × lineHeight × 1.13
+  var FABRIC_FS_FRACTION = 0.222;     // fabric.Text.prototype._fontSizeFraction — tayanch chiziq (baseline) siljishi
+  // Shriftning pastki qismi (descent / em) — PowerPoint aniq qator oralig'ida birinchi qatorni L − descent ga qo'yadi
+  var FONT_DESCENT = { 'arial': 0.212, 'arial black': 0.21, 'arial narrow': 0.212, 'calibri': 0.25, 'cambria': 0.222, 'georgia': 0.219,
+    'times new roman': 0.216, 'courier new': 0.3, 'verdana': 0.21, 'tahoma': 0.207, 'trebuchet ms': 0.222, 'comic sans ms': 0.29,
+    'impact': 0.21, 'segoe ui': 0.25, 'consolas': 0.26 };
+  /** Fabric'ning o'zi qanday qatorlarga bo'lsa — PowerPoint'ga ham aynan shu qatorlar (boshqa shriftda ham qator soni o'zgarmaydi) */
+  function wrappedLines(el, text) {
+    if (typeof fabric === 'undefined' || el.type !== 'textbox') return null;
+    try {
+      var tb = new fabric.Textbox(text, {
+        width: num(el.width, 400), fontSize: num(el.fontSize, 24), fontFamily: el.fontFamily || 'Arial',
+        fontWeight: el.fontWeight || 'normal', fontStyle: el.fontStyle || 'normal', charSpacing: num(el.charSpacing, 0),
+        splitByGrapheme: !!el.splitByGrapheme, lineHeight: num(el.lineHeight, 1.16)
+      });
+      var ls = (tb._textLines || []).map(function (l) { return l.join('').replace(/\s+$/, ''); });
+      return ls.length ? ls : null;
+    } catch (e) { return null; }
+  }
+
   function addTextEl(slide, el) {
-    var text = String(el.text == null ? '' : el.text).replace(/\r\n?/g, '\n').replace(/[\u200B-\u200D\uFEFF\u00AD]/g, '');
+    var text = String(el.text == null ? '' : el.text).replace(/\r\n?/g, '\n').replace(/[​-‍﻿­]/g, '');
     var bg = parseColor(el.backgroundColor);
     if (!text.trim() && !bg) return true;
-    var sx = num(el.scaleX, 1) || 1, sy = num(el.scaleY, 1) || 1;
-    var w = Math.max(10, num(el.width, 400) * sx);
-    var h = Math.max(10, num(el.height, 60) * sy);
-    var b = placeBox(el, w, h);
-
-    var pad = Math.min(0.15, Math.max(0.04, b.w * 0.025));
-
-    var scaleAvg = (Math.abs(sx) + Math.abs(sy)) / 2 || 1;
-    var fsPx = num(el.fontSize, 24) * scaleAvg;
-
-    var pt = Math.max(1, Math.round(fsPx * 0.75 * 2) / 2);
+    var w0 = Math.max(10, num(el.width, 400)), h0 = Math.max(10, num(el.height, 60));
+    var b = placeGeom(el, w0, h0);
+    var fsPx = num(el.fontSize, 24) * scaleAvgOf(el);
+    var pt = Math.max(1, Math.round(fsPx * 0.75 * 100) / 100);
     var col = parseColor(el.fill) || { hex: '1F1F1F', alpha: 1 };
     var weight = el.fontWeight;
     var bold = weight === 'bold' || weight === 'bolder' || num(weight, 400) >= 600;
     var italic = el.fontStyle === 'italic' || el.fontStyle === 'oblique';
-    var align = ({ left: 'left', center: 'center', right: 'right', justify: 'justify' })[el.textAlign] || 'left';
-
-    var lh = Math.max(0.8, Math.min(3, num(el.lineHeight, 1.16)));
-
-    // Qatorlar soniga qarab balandlikni biroz oshirib, matn kesilib qolmasin
-    var lines = (text.split('\n').length || 1);
-    var hBoost = Math.max(b.h, r4((pt / 72) * lh * lines * 1.28 + 0.06));
+    var align = ({ left: 'left', center: 'center', right: 'right', justify: 'justify', 'justify-left': 'justify', 'justify-center': 'justify', 'justify-right': 'justify' })[el.textAlign] || 'left';
+    var lh = Math.max(0.5, Math.min(3, num(el.lineHeight, 1.16)));
+    // v67: qator qadami ANIQ (pt) — Fabric bilan bir xil: fontSize × lineHeight × 1.13
+    var lineSp = Math.round(pt * lh * FABRIC_FS_MULT * 100) / 100;
+    var lines = align !== 'justify' ? wrappedLines(el, text) : null;
+    var outText = lines ? lines.join('\n') : text;
+    var n = lines ? lines.length : (text.split('\n').length || 1);
+    // shrift metrikasi biroz farq qilsa ham qator buzilmasin — kenglik zaxirasi faqat matn OQADIGAN tomonga
+    var pad = Math.min(0.15, Math.max(0.04, b.w * 0.025));
+    var x = b.x;
+    if (align === 'center' || align === 'justify' || b.rotate) x = b.x - pad / 2;
+    else if (align === 'right') x = b.x - pad;
+    var hNeed = n * lineSp / 72;
+    var h = b.rotate ? b.h : Math.max(b.h, hNeed);
+    // Birinchi qator tayanch chizig'i: Fabric = fontSize·1.13·(1 − 0.222), PowerPoint = L − descent.
+    // Farqicha qutini yuqoriga suramiz — matn saytdagi bilan bir xil balandlikda turadi.
+    var face = cleanFont(el.fontFamily);
+    var desc = FONT_DESCENT[face.toLowerCase()] || 0.212;
+    var shiftPx = fsPx * (lh * FABRIC_FS_MULT - desc - FABRIC_FS_MULT * (1 - FABRIC_FS_FRACTION));
+    var y = b.y;
+    if (!b.rotate && isFinite(shiftPx)) { y = b.y - shiftPx * SY; h = h + Math.max(0, shiftPx) * SY; }
     var opts = {
-      x: r4(b.x - pad / 2), y: b.y, w: r4(b.w + pad), h: r4(Math.max(b.h, hBoost)),
-      fontSize: pt, fontFace: cleanFont(el.fontFamily), color: col.hex,
+      x: r4(x), y: r6(y), w: r4(b.w + pad), h: r4(h),
+      fontSize: pt, fontFace: face, color: col.hex,
       bold: bold, italic: italic, align: align, valign: 'top',
-      margin: 0, wrap: true, fit: 'none', lineSpacingMultiple: Math.round(lh * 100) / 100
+      margin: 0, wrap: true, fit: 'none', lineSpacing: lineSp
     };
-    if (el.underline) opts.underline = true;
+    if (el.underline) opts.underline = { style: 'sng' };
     if (el.linkUrl && /^(https?:|mailto:)/i.test(el.linkUrl)) opts.hyperlink = { url: el.linkUrl };
     if (el.linethrough) opts.strike = 'sngStrike';
     if (b.rotate) opts.rotate = b.rotate;
+    if (el.flipX) opts.flipH = true;
+    if (el.flipY) opts.flipV = true;
     var cs = num(el.charSpacing, 0);
-    if (cs) opts.charSpacing = Math.round(cs / 1000 * pt * 2) / 2;
+    if (cs) opts.charSpacing = Math.round(cs / 1000 * pt * 100) / 100;
     var tr = transparencyOf(col, el.opacity);
     if (tr > 0) opts.transparency = tr;
     if (bg) opts.fill = { color: bg.hex, transparency: transparencyOf(bg, el.opacity) };
-    slide.addText(text, opts);
+    var ts = parseColor(el.stroke);
+    if (ts && num(el.strokeWidth, 0) > 0) opts.outline = { color: ts.hex, size: Math.max(0.1, Math.round(num(el.strokeWidth, 1) * scaleAvgOf(el) * 0.75 * 100) / 100) };
+    var sh = shadowOf(el);
+    if (sh && !bg) opts.shadow = sh;          // to'ldirilmagan matn qutisida soya harflarga tushadi (Fabric kabi)
+    slide.addText(outText, opts);
     return true;
   }
 
@@ -824,50 +938,176 @@
     return true;
   }
 
-  function shapeStyle(el) {
-    var f = parseColor(el.fill), s = parseColor(el.stroke);
-    var o = {
-      fill: f ? { color: f.hex, transparency: transparencyOf(f, el.opacity) } : { color: 'FFFFFF', transparency: 100 },
-      line: s && num(el.strokeWidth, 0) > 0
-        ? { color: s.hex, width: Math.max(0.25, Math.round(num(el.strokeWidth, 1) * 0.75 * 4) / 4), transparency: transparencyOf(s, el.opacity) }
-        : { color: 'FFFFFF', transparency: 100 }
-    };
+  function shapeOpts(el, box) {
+    var o = { x: box.x, y: box.y, w: box.w, h: box.h };
+    var f = fillOptsOf(el);
+    if (f) o.fill = f;                                    // yo'q bo'lsa — <a:noFill/> (soya faqat chegaradan tushadi, Fabric kabi)
+    o.line = lineOf(el) || { color: 'FFFFFF', transparency: 100 };
+    if (box.rotate) o.rotate = box.rotate;
+    if (el.flipX) o.flipH = true;
+    if (el.flipY) o.flipV = true;
+    var sh = shadowOf(el);
+    if (sh) o.shadow = sh;
+    var slk = elementLink(el);
+    if (slk) o.hyperlink = slk;
     return o;
   }
 
+  /** rect / roundRect / ellipse / triangle — PowerPoint'ning o'z (preset) shakllari, geometriya 1:1 */
   async function addShapeEl(pptx, slide, el) {
-    var sx = num(el.scaleX, 1) || 1, sy = num(el.scaleY, 1) || 1;
-    var t = el.type, w, h, shape = null, extra = {};
+    if (fillOptsOf(el) === undefined) return false;                  // naqshli to'ldirish — rasm sifatida
+    var t = el.type, w0, h0, shape = null, extra = {};
+    var s = absScale(el);
     if (t === 'rect') {
-      w = num(el.width, 100) * sx; h = num(el.height, 100) * sy;
-
-      var rxPx = Math.max(num(el.rx, 0) * sx, num(el.ry, 0) * sy);
-      var maxR = Math.min(w, h) / 2;
-      if (rxPx > 0.5 && maxR > 0) {
-
-        shape = pptx.ShapeType.roundRect;
-        extra.rectRadius = r4(Math.min(rxPx, maxR) * SX);   // pptxgenjs: dyuymda
-      } else {
-        shape = pptx.ShapeType.rect;
-      }
+      w0 = num(el.width, 100); h0 = num(el.height, 100);
+      var rxPx = Math.max(num(el.rx, 0) * s.sx, num(el.ry, 0) * s.sy);
+      var maxR = Math.min(w0 * s.sx, h0 * s.sy) / 2;
+      if (rxPx > 0.5 && maxR > 0) { shape = pptx.ShapeType.roundRect; extra.rectRadius = r6(Math.min(rxPx, maxR) * SX); }   // dyuymda (adj = r / min(w,h))
+      else shape = pptx.ShapeType.rect;
     } else if (t === 'circle') {
+      var sa = num(el.startAngle, 0), ea = num(el.endAngle, 360);
+      if (Math.abs((ea - sa) % 360) > 0.01 && Math.abs(ea - sa) < 359.99) return false;   // yoy (arc) — rasm sifatida
       var r = num(el.radius, num(el.width, 100) / 2);
-      w = r * 2 * sx; h = r * 2 * sy; shape = pptx.ShapeType.ellipse;
+      w0 = r * 2; h0 = r * 2; shape = pptx.ShapeType.ellipse;
     } else if (t === 'ellipse') {
-      w = num(el.rx, 50) * 2 * sx; h = num(el.ry, 50) * 2 * sy; shape = pptx.ShapeType.ellipse;
+      w0 = num(el.rx, 50) * 2; h0 = num(el.ry, 50) * 2; shape = pptx.ShapeType.ellipse;
     } else if (t === 'triangle') {
-      w = num(el.width, 100) * sx; h = num(el.height, 100) * sy; shape = pptx.ShapeType.triangle;
+      w0 = num(el.width, 100); h0 = num(el.height, 100); shape = pptx.ShapeType.triangle;   // cho'qqi tepada o'rtada — Fabric bilan bir xil
     } else {
       return false;
     }
-    var b = placeBox(el, w, h);
-    var o = Object.assign({ x: b.x, y: b.y, w: b.w, h: b.h }, shapeStyle(el), extra);
+    var b = placeGeom(el, w0, h0);
+    slide.addShape(shape, Object.assign(shapeOpts(el, b), extra));
+    return true;
+  }
+
+  /* path / polygon / polyline → PowerPoint «custGeom» (erkin shakl): nuqtalar AYNAN Fabric'dagidek,
+     PowerPoint'da shakl sifatida tanlanadi, suriladi, rangi o'zgaradi, «Edit Points» bilan tahrirlanadi. */
+  function pathGeometry(el) {
+    if (typeof fabric === 'undefined') return null;
+    var tmp;
+    try {
+      if (el.type === 'path') tmp = new fabric.Path(el.path, { strokeWidth: 0 });
+      else tmp = new (el.type === 'polyline' ? fabric.Polyline : fabric.Polygon)(el.points || [], { strokeWidth: 0 });
+    } catch (e) { return null; }
+    var w0 = num(tmp.width, 0), h0 = num(tmp.height, 0);
+    var po = tmp.pathOffset || { x: w0 / 2, y: h0 / 2 };
+    return { w0: w0, h0: h0, minX: po.x - w0 / 2, minY: po.y - h0 / 2, path: tmp.path, points: tmp.points, closed: el.type === 'polygon' };
+  }
+  function geomPoints(g, kx, ky) {
+    var pts = [], X = function (v) { return r6((v - g.minX) * kx); }, Y = function (v) { return r6((v - g.minY) * ky); };
+    if (g.path) {
+      var started = false;
+      g.path.forEach(function (c) {
+        switch (c[0]) {
+          case 'M': pts.push({ x: X(c[1]), y: Y(c[2]), moveTo: true }); started = true; break;
+          case 'L': pts.push({ x: X(c[1]), y: Y(c[2]) }); break;
+          case 'C': pts.push({ x: X(c[5]), y: Y(c[6]), curve: { type: 'cubic', x1: X(c[1]), y1: Y(c[2]), x2: X(c[3]), y2: Y(c[4]) } }); break;
+          case 'Q': pts.push({ x: X(c[3]), y: Y(c[4]), curve: { type: 'quadratic', x1: X(c[1]), y1: Y(c[2]) } }); break;
+          case 'Z': case 'z': if (started) pts.push({ close: true }); break;
+          default: break;
+        }
+      });
+    } else if (g.points) {
+      g.points.forEach(function (p, i) { var q = { x: X(p.x), y: Y(p.y) }; if (i === 0) q.moveTo = true; pts.push(q); });
+      if (g.closed && pts.length) pts.push({ close: true });
+    }
+    // PptxGenJS: ≥100 qiymatni EMU deb oladi — dyuymdagi qiymatlar doim < 100 (slayd 10 dyuym)
+    return pts;
+  }
+  async function addPathEl(pptx, slide, el) {
+    if (fillOptsOf(el) === undefined) return false;
+    var g = pathGeometry(el);
+    if (!g || !(g.w0 > 0 || g.h0 > 0)) return false;
+    var s = absScale(el);
+    var b = placeGeom(el, g.w0, g.h0, true);
+    // nol o'lchamli (to'g'ri chiziq ko'rinishidagi) yo'l: PowerPoint 0 kenglikdagi path'ni chizmaydi — 1px zaxira
+    var gw = Math.max(b.gw, 1), gh = Math.max(b.gh, 1);
+    b.x = r6((b.cx - gw / 2) * SX); b.y = r6((b.cy - gh / 2) * SY); b.w = r6(gw * SX); b.h = r6(gh * SY);
+    var pts = geomPoints(g, s.sx * SX, s.sy * SY);
+    if (pts.length < 2) return false;
+    if (b.gw < 1) pts.forEach(function (p) { if (p.x != null) p.x = r6(p.x + (gw - b.gw) / 2 * SX); });
+    if (b.gh < 1) pts.forEach(function (p) { if (p.y != null) p.y = r6(p.y + (gh - b.gh) / 2 * SY); });
+    var o = shapeOpts(el, b);                           // ochiq yo'l (zigzag, galochka chizig'i) — to'ldirishsiz
+    o.points = pts;
+    slide.addShape(pptx.ShapeType.custGeom || 'custGeom', o);
+    return true;
+  }
+
+  /** fabric.Line → PowerPoint chizig'i (prst="line"), yo'nalishi flipV/flipH bilan */
+  async function addLineEl(pptx, slide, el) {
+    var ln = lineOf(el);
+    if (!ln) return true;
+    var x1 = num(el.x1, 0), y1 = num(el.y1, 0), x2 = num(el.x2, 0), y2 = num(el.y2, 0);
+    var w0 = Math.abs(x2 - x1) || num(el.width, 0), h0 = Math.abs(y2 - y1) || num(el.height, 0);
+    var b = placeGeom(el, w0, h0, true);
+    var o = { x: b.x, y: b.y, w: Math.max(b.w, 0), h: Math.max(b.h, 0), line: ln };
+    var anti = (x2 - x1) * (y2 - y1) < 0;
+    if (anti !== !!el.flipY) o.flipV = true;
+    if (el.flipX) o.flipH = !o.flipH;
     if (b.rotate) o.rotate = b.rotate;
-    if (el.flipX) o.flipH = true;
-    if (el.flipY) o.flipV = true;
-    var slk = elementLink(el);
-    if (slk) o.hyperlink = slk;
-    slide.addShape(shape, o);
+    var sh = shadowOf(el);
+    if (sh) o.shadow = sh;
+    slide.addShape(pptx.ShapeType.line, o);
+    return true;
+  }
+
+  /* Guruh (group): ichidagi har bir shakl/matn ALOHIDA, tahrirlanadigan obyekt bo'lib chiqadi
+     (oldin butun guruh bitta rasm bo'lardi). Joylashuv Fabric matritsalari bilan aniq hisoblanadi. */
+  var FLAT_OK = /^(textbox|i-text|text|rect|circle|ellipse|triangle|path|polygon|polyline|line|group)$/;
+  function canFlatten(g, depth) {
+    if (typeof fabric === 'undefined' || !fabric.util || !fabric.util.qrDecompose) return false;
+    if (!g || g.type !== 'group' || g.ssKind || g.clipPath || depth > 4) return false;
+    if (num(g.skewX, 0) || num(g.skewY, 0)) return false;
+    var kids = g.objects || [];
+    if (!kids.length) return false;
+    return kids.every(function (k) {
+      if (!k || !FLAT_OK.test(k.type || '') || k.clipPath || num(k.skewX, 0) || num(k.skewY, 0)) return false;
+      if (k.type === 'group') return canFlatten(k, depth + 1);
+      return true;
+    });
+  }
+  function matrixOf(o) {
+    var fd = fullDims(o, num(o.width, 0), num(o.height, 0)), c = centerOf(o, fd.w, fd.h);
+    return fabric.util.composeMatrix({ translateX: c.x, translateY: c.y, angle: num(o.angle, 0), scaleX: num(o.scaleX, 1), scaleY: num(o.scaleY, 1), flipX: !!o.flipX, flipY: !!o.flipY });
+  }
+  function flattenGroup(g, parentM, parentOpacity, out) {
+    var gm = fabric.util.multiplyTransformMatrices(parentM, matrixOf(g));
+    var op = parentOpacity * (g.opacity == null ? 1 : num(g.opacity, 1));
+    (g.objects || []).forEach(function (k) {
+      if (!k || k.visible === false) return;
+      if (k.type === 'group') { flattenGroup(k, gm, op, out); return; }
+      var m = fabric.util.multiplyTransformMatrices(gm, matrixOf(k));
+      var d = fabric.util.qrDecompose(m);
+      var flip = d.scaleY < 0;
+      var flat = Object.assign({}, k, {
+        left: d.translateX, top: d.translateY, originX: 'center', originY: 'center',
+        angle: d.angle, scaleX: Math.abs(d.scaleX), scaleY: Math.abs(d.scaleY), flipX: false, flipY: flip, skewX: 0, skewY: 0,
+        opacity: op * (k.opacity == null ? 1 : num(k.opacity, 1))
+      });
+      if (!flat.shadow && g.shadow) flat.shadow = g.shadow;
+      out.push(flat);
+    });
+    return out;
+  }
+
+  /** Vektor obyekt (shakl / yo'l / chiziq / matn) — PowerPoint'ning o'z obyekti; bo'lmasa false */
+  async function addVectorEl(pptx, slide, el) {
+    var t = el.type;
+    if (t === 'textbox' || t === 'i-text' || t === 'text') return addTextEl(slide, el);
+    if (t === 'rect' || t === 'circle' || t === 'ellipse' || t === 'triangle') return addShapeEl(pptx, slide, el);
+    if (t === 'path' || t === 'polygon' || t === 'polyline') return addPathEl(pptx, slide, el);
+    if (t === 'line') return addLineEl(pptx, slide, el);
+    return false;
+  }
+  async function addFlatGroup(pptx, slide, el) {
+    var flat = flattenGroup(el, [1, 0, 0, 1, 0, 0], 1, []);
+    var lk = elementLink(el);
+    for (var i = 0; i < flat.length; i++) {
+      if (lk && !flat[i].linkUrl) flat[i].linkUrl = el.linkUrl;
+      var ok = await addVectorEl(pptx, slide, flat[i]);
+      if (!ok) ok = await addFallbackEl(slide, flat[i]);
+    }
     return true;
   }
 
@@ -1066,8 +1306,9 @@
             else if (t === 'image') ok = await addImageEl(slide, el, stats);
             else if (el.ssKind === 'table' && el.ssSpec) ok = addTableEl(slide, el);
             else if (el.ssKind === 'chart' && el.ssSpec) ok = addChartEl(pptx, slide, el);
-            else if (t === 'rect' || t === 'circle' || t === 'ellipse' || t === 'triangle') ok = await addShapeEl(pptx, slide, el);
-            else ok = await addFallbackEl(slide, el);
+            else if (t === 'group' && canFlatten(el, 0)) ok = await addFlatGroup(pptx, slide, el);
+            else ok = await addVectorEl(pptx, slide, el);
+            if (!ok && !/^(image|gifImage)$/.test(t) && !el.isGif) ok = await addFallbackEl(slide, el);
             if (!ok) {
               if (t === 'image' || el.isGif || t === 'gifImage') {
                 var okF = await addFallbackEl(slide, el);

@@ -220,6 +220,7 @@
           }
           if (o.flipX) entry.flipX = true;
           if (o.flipY) entry.flipY = true;
+          if (o.ssKit) { entry.kit = o.ssKit; entry.kitRole = o.ssRole || 'part'; }   // v67: dizayn to'plami (kartochka/ramka) qismi
           if (isText) {
             entry.text = (o.text || '').substring(0, 600);
             entry.fontSize = o.fontSize ? Math.round(o.fontSize * (o.scaleY || 1)) : null;
