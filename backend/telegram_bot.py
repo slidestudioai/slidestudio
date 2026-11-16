@@ -603,7 +603,7 @@ _ulocks: Dict[str, asyncio.Lock] = {}
 
 
 def _ulock(uid: str) -> asyncio.Lock:
-    """v52: sayt (WebSocket), Lemon webhook va bot BIR XIL lock'dan foydalanadi — aks holda to'lov krediti bot yozuvi bilan
+    """v52: sayt (WebSocket), to'lov webhook va bot BIR XIL lock'dan foydalanadi — aks holda to'lov krediti bot yozuvi bilan
     ustma-ust yozilib ketardi (read-modify-write poygasi)."""
     shared = _deps.get("user_lock")
     if shared:
@@ -3406,7 +3406,7 @@ async def _do_buy(cid: int, user: dict, product: str = "pack") -> None:
     adm = _deps.get("admin")
     if adm and adm.is_tg_admin(user.get("id")):
         await _send(cid, f"🛠 <b>To'lov sozlanmagan</b> (faqat sizga ko'rinadi)\n<code>{esc(reason[:600])}</code>\n\n"
-                         "Tekshiring: LEMON_SQUEEZY_API_KEY, _STORE_ID, _VARIANT_ID, _WEBHOOK_SECRET.\n"
+                         "Tekshiring: DODO_PAYMENTS_API_KEY, DODO_PRODUCT_ID, DODO_WEBHOOK_SECRET.\n"
                          "Vaqtincha: /give ID SON bilan varaq bering.", kb_main())
         return
     await _send(cid, "⚙️ To'lov hozircha ishlamayapti. Birozdan keyin urinib ko'ring.", kb_main())

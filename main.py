@@ -11,6 +11,7 @@ from collections import OrderedDict
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta, timezone
 import uvicorn
+import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from starlette.websockets import WebSocketState
 
@@ -954,6 +955,7 @@ _RL: Dict[str, list] = {}
 _RL_LOCK = threading.Lock()
 _RL_RULES = (            # (path prefix, limit per 60s per IP)
     ("/api/payment/create-checkout", 10),
+    ("/api/create-checkout", 10),
     ("/api/telegram/auth", 20),
     ("/api/user/usage", 60),
     ("/api/media-search", 120),
@@ -961,7 +963,7 @@ _RL_RULES = (            # (path prefix, limit per 60s per IP)
     ("/api/proxy-video", 60),
     ("/api/", 240),
 )
-_RL_EXEMPT = ("/api/payment/lemon-webhook", "/webhook/lemonsqueezy")
+_RL_EXEMPT = ("/webhooks", "/webhoks", "/api/payment/dodo-webhook")
 
 # v53: X-Forwarded-For ning BOSHIDAGI qiymatni mijoz o'zi yozishi mumkin (soxta IP -> rate limit ishlamasdi).
 # Ishonchli qiymat — o'ngdan TRUSTED_PROXY_HOPS-chi element (Render proksisi haqiqiy IP ni oxiriga qo'shadi).
@@ -1474,7 +1476,7 @@ def billing_plans():
         "deep_pages_per_pack": pack_units() // MODES["deep"]["page"],
         "free_daily": rt("free_daily_pages"),
         "deep_free_daily": free_daily_units() // MODES["deep"]["page"],
-        "note": "Lemon Squeezy komissiyasi: 6.5% + $0.50 — to'lovda mijozga qo'shiladi",
+        "note": "Dodo Payments (Merchant of Record): mijoz tanlagan summani to'laydi, 1 USD = 100 kredit",
         "topup_packages": {k: _topup_quote_public(_topup_quote(k, v["net_cents"], v["credits"])) for k, v in TOPUP_PACKAGES.items()},
     }
 
@@ -1489,68 +1491,83 @@ def _clean_env(name: str, bearer: bool = False) -> str:
         v = v[7:]
     return _re.sub(r"[\s\x00-\x1f\x7f\u200b\ufeff]+", "", v)
 
-def _ls_env():
+DODO_BASE_URLS = {"test": "https://test.dodopayments.com", "live": "https://live.dodopayments.com"}
+
+
+def _dodo_env():
+    """Dodo Payments sozlamalari. Rejim: DODO_PAYMENTS_ENV=test|live (standart: test).
+    Live'ga o'tish uchun: DODO_PAYMENTS_ENV=live + live API kalit / mahsulot / webhook secret."""
+    mode = (os.environ.get("DODO_PAYMENTS_ENV") or "test").strip().lower()
+    if mode not in DODO_BASE_URLS:
+        mode = "test"
+    base = (os.environ.get("DODO_PAYMENTS_BASE_URL") or "").strip().rstrip("/") or DODO_BASE_URLS[mode]
     return {
-        "api_key": _clean_env("LEMON_SQUEEZY_API_KEY", bearer=True),
-        "store_id": _clean_env("LEMON_SQUEEZY_STORE_ID"),
-        "variant_id": _clean_env("LEMON_SQUEEZY_VARIANT_ID"),
-        "secret": _clean_env("LEMON_SQUEEZY_WEBHOOK_SECRET"),
-        "test_mode": (os.environ.get("LEMON_SQUEEZY_TEST_MODE") or "").strip() in ("1", "true", "yes"),
+        "api_key": _clean_env("DODO_PAYMENTS_API_KEY", bearer=True),
+        "product_id": _clean_env("DODO_PRODUCT_ID"),
+        "secret": _clean_env("DODO_WEBHOOK_SECRET"),
+        "mode": mode,
+        "api_base": base,
         "base_url": (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/"),
     }
 
 @app.get("/api/payment/health")
 def payment_health():
     """To'lov sozlamalari tekshiruvi (kalitlarning o'zi ko'rsatilmaydi)."""
-    e = _ls_env()
+    e = _dodo_env()
     return {
+        "provider": "dodo",
         "api_key": bool(e["api_key"]),
-        "store_id": bool(e["store_id"]),
-        "variant_id": bool(e["variant_id"]),
+        "product_id": bool(e["product_id"]),
         "webhook_secret": bool(e["secret"]),
-        "test_mode": e["test_mode"],
+        "mode": e["mode"],
+        "api_base": e["api_base"],
         "public_base_url": e["base_url"] or None,
         "supabase": bool(supabase),
     }
 
-def _ls_post_checkout(api_key: str, body: dict) -> dict:
-    """Lemon Squeezy API (bloklovchi) — asyncio.to_thread orqali chaqiriladi."""
-    import urllib.error
-    req = urllib.request.Request(
-        "https://api.lemonsqueezy.com/v1/checkouts",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Accept": "application/vnd.api+json",
-            "Content-Type": "application/vnd.api+json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return {"status": resp.status, "json": json.loads(resp.read().decode("utf-8"))}
-    except urllib.error.HTTPError as he:
+async def _dodo_request(method: str, path: str, api_key: str, base: str, body: dict = None) -> dict:
+    """Dodo Payments REST API. {'status', 'json'} yoki {'status', 'error_body'} qaytaradi."""
+    url = base.rstrip("/") + path
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=20) as cli:
+        r = await cli.request(method, url, headers=headers, json=body)
+    if 200 <= r.status_code < 300:
         try:
-            raw = he.read().decode("utf-8", "ignore")
-        except Exception:
-            raw = ""
-        return {"status": he.code, "error_body": raw[:4000]}
+            return {"status": r.status_code, "json": r.json()}
+        except ValueError:
+            return {"status": r.status_code, "error_body": r.text[:4000]}
+    return {"status": r.status_code, "error_body": r.text[:4000]}
 
-@app.post("/api/payment/create-checkout")
-async def create_lemon_checkout(payload: Dict[str, Any] = None):
-    """Lemon Squeezy checkout URL (PAGES_PER_PACK varaq / CHECKOUT_PRICE_USD). Faqat tizimga kirgan foydalanuvchi uchun."""
-    payload = payload or {}
+
+async def _payment_user_from_token(payload: Dict[str, Any]):
+    """(user_id, email, error_response). Foydalanuvchi FAQAT Supabase token orqali aniqlanadi —
+    mijoz yuborgan user_id ga ishonilmaydi (boshqa akkauntga yozib yuborish xatosidan himoya)."""
     token = (payload.get("token") or "").strip()
     if not token or token == "dev-token" or not supabase:
-        return JSONResponse({"error": "To'lov uchun avval tizimga kiring."}, status_code=401)
+        return None, "", JSONResponse({"error": "To'lov uchun avval tizimga kiring."}, status_code=401)
     try:
         user_res = await asyncio.to_thread(supabase.auth.get_user, token)
     except Exception as e:
-        return JSONResponse({"error": f"Sessiya xato: {str(e)[:120]}"}, status_code=401)
+        return None, "", JSONResponse({"error": f"Sessiya xato: {str(e)[:120]}"}, status_code=401)
     if not user_res or not user_res.user:
-        return JSONResponse({"error": "Sessiya tugagan. Qayta kiring."}, status_code=401)
-    user_id = user_res.user.id
-    user_email = (user_res.user.email or payload.get("email") or "").strip()
+        return None, "", JSONResponse({"error": "Sessiya tugagan. Qayta kiring."}, status_code=401)
+    claimed = str(payload.get("user_id") or "").strip()
+    if claimed and claimed != str(user_res.user.id):
+        return None, "", JSONResponse({"error": "user_id sessiyaga mos emas."}, status_code=403)
+    return str(user_res.user.id), (user_res.user.email or payload.get("email") or "").strip(), None
+
+
+@app.post("/api/create-checkout")
+@app.post("/api/payment/create-checkout")
+async def create_checkout(payload: Dict[str, Any] = None):
+    """Dodo Payments checkout session. Body: {token, amount | net_amount | package, return_url?}.
+    amount — dollarda (kamida $1). Javob: {checkout_url, session_id, pages, price_usd, quote}."""
+    payload = payload or {}
+    user_id, user_email, err_resp = await _payment_user_from_token(payload)
+    if err_resp is not None:
+        return err_resp
+    if payload.get("amount") not in (None, "") and payload.get("net_amount") in (None, ""):
+        payload = {**payload, "net_amount": payload.get("amount")}
     quote, err = _topup_quote_from_payload(payload)
     if err:
         return JSONResponse({"error": err}, status_code=400)
@@ -1564,18 +1581,15 @@ async def create_lemon_checkout(payload: Dict[str, Any] = None):
         if client_gross_cents != quote["gross_cents"]:
             return JSONResponse({"error": "Narx yangilandi. Oynani yopib, qaytadan urinib ko'ring.",
                                  "quote": _topup_quote_public(quote)}, status_code=409)
-    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack",
-                                       quote=quote, embed=bool(payload.get("embed", True)))
+    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack", quote=quote)
     return data if code == 200 else JSONResponse(data, status_code=code)
 
 
 # ---------------------------------------------------------------------------------------------
-# Kredit to'ldirish: paketlar, Lemon Squeezy komissiyasi (6.5% + $0.50) va imzolangan custom_data
-# 1 cent net = 1 kredit (1 USD = 100 kredit). Lemon brutto (gross) summani oladi, biz netto (N) ni olamiz.
+# Kredit to'ldirish: paketlar va imzolangan metadata. 1 cent = 1 kredit (1 USD = 100 kredit).
+# Dodo Payments — Merchant of Record: mijoz aynan tanlagan summani to'laydi (komissiya bizdan ushlanadi).
 # ---------------------------------------------------------------------------------------------
-LS_FEE_PERMILLE = 65            # 6.5%
-LS_FEE_FIXED_CENTS = 50         # $0.50
-TOPUP_MIN_CENTS = 100           # $1.00
+TOPUP_MIN_CENTS = 100           # $1.00 (Dodo "Pay What You Want" minimal narxi bilan bir xil)
 TOPUP_MAX_CENTS = 100_000       # $1000.00 — xato kiritishdan himoya
 TOPUP_PACKAGES: Dict[str, Dict[str, Any]] = {
     "starter":  {"net_cents": 100,  "credits": 100,  "label": "Starter"},
@@ -1586,15 +1600,8 @@ TOPUP_PACKAGES: Dict[str, Dict[str, Any]] = {
 
 
 def topup_gross_cents(net_cents: int) -> int:
-    """gross = ceil((N + 0.50) / 0.935) — butun sonlarda (float xatosiz). Frontend bilan bir xil formula."""
-    num = (int(net_cents) + LS_FEE_FIXED_CENTS) * 1000
-    den = 1000 - LS_FEE_PERMILLE
-    return -(-num // den)
-
-
-def topup_net_from_gross_cents(gross_cents: int) -> int:
-    """Teskari hisob (imzosiz buyurtmalar uchun): N = gross * 0.935 - 0.50, pastga yaxlitlanadi."""
-    return max(0, (int(gross_cents) * (1000 - LS_FEE_PERMILLE)) // 1000 - LS_FEE_FIXED_CENTS)
+    """Mijoz to'laydigan summa. Dodo'da komissiya mijozga qo'shilmaydi -> gross = net."""
+    return int(net_cents)
 
 
 def _topup_quote(package: str, net_cents: int, credits: int) -> Dict[str, Any]:
@@ -1618,7 +1625,7 @@ def _topup_quote_from_payload(payload: Dict[str, Any]):
             return None, "Noma'lum paket."
         return _topup_quote(package, p["net_cents"], p["credits"]), None
     raw = payload.get("net_amount")
-    if raw in (None, "") and payload.get("amount_cents"):          # eski frontend bilan moslik
+    if raw in (None, "") and payload.get("amount_cents"):
         raw = _int_or(payload.get("amount_cents"), 0) / 100
     if raw in (None, ""):                                           # hech narsa tanlanmagan -> standart paket
         return _topup_quote("pack", pack_pages(), pack_pages()), None
@@ -1637,8 +1644,8 @@ def _topup_quote_from_payload(payload: Dict[str, Any]):
 
 
 def _topup_sign_key() -> bytes:
-    ls = _ls_env()
-    return (ls["secret"] or ls["api_key"] or "slidestudio-dev").encode()
+    d = _dodo_env()
+    return (d["secret"] or d["api_key"] or "slidestudio-dev").encode()
 
 
 def _topup_sig(user_id: str, package: str, net_cents: int, credits: int, gross_cents: int) -> str:
@@ -1647,131 +1654,102 @@ def _topup_sig(user_id: str, package: str, net_cents: int, credits: int, gross_c
     return hmac.new(_topup_sign_key(), msg, hashlib.sha256).hexdigest()
 
 
-def _topup_verified_credits(custom: Dict[str, Any], user_id: str, paid_cents: int):
-    """Imzo to'g'ri va to'langan summa (subtotal) kutilgan grossdan kam bo'lmasa -> kreditlar soni, aks holda None."""
+def _topup_verified_credits(meta: Dict[str, Any], user_id: str, paid_cents: int):
+    """Imzo to'g'ri va to'langan summa kutilganidan kam bo'lmasa -> kreditlar soni (paket bonusi bilan), aks holda None."""
     import hmac
-    sig = str(custom.get("sig") or "")
+    sig = str(meta.get("sig") or "")
     if not sig:
         return None
-    net_cents = _int_or(custom.get("net_cents"), -1)
-    credits = _int_or(custom.get("credits"), -1)
-    gross = _int_or(custom.get("gross_cents"), -1)
-    package = str(custom.get("package") or "")
+    net_cents = _int_or(meta.get("net_cents"), -1)
+    credits = _int_or(meta.get("credits"), -1)
+    gross = _int_or(meta.get("gross_cents"), -1)
+    package = str(meta.get("package") or "")
     if net_cents <= 0 or credits <= 0 or gross <= 0:
         return None
     expected = _topup_sig(user_id, package, net_cents, credits, gross)
     if not hmac.compare_digest(sig, expected):
-        print("[LEMON WEBHOOK] custom_data imzosi noto'g'ri — subtotal bo'yicha hisoblanadi.")
+        print("[DODO WEBHOOK] metadata imzosi noto'g'ri — to'langan summa bo'yicha hisoblanadi.")
         return None
-    if paid_cents + 1 < gross:          # 1 cent yaxlitlash farqi
-        print(f"[LEMON WEBHOOK] to'langan {paid_cents} < kutilgan {gross} — subtotal bo'yicha hisoblanadi.")
+    if paid_cents < gross:              # Dodo summani aniq sentlarda yuboradi
+        print(f"[DODO WEBHOOK] to'langan {paid_cents} < kutilgan {gross} — to'langan summa bo'yicha hisoblanadi.")
         return None
     return credits
 
 
+def _safe_return_url(base: str, hint: str) -> str:
+    url = base or str(hint or "").strip().rstrip("/")
+    return url if url.startswith(("http://", "https://")) else ""
+
+
 async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", product: str = "pack",
                           quote: Dict[str, Any] = None, embed: bool = False):
-    """v45: sayt VA Telegram bot uchun umumiy checkout yaratish. (http_status, dict) qaytaradi."""
-    ls = _ls_env()
-    variant = ls["variant_id"]
-    if not ls["api_key"] or not ls["store_id"] or not variant:
+    """Sayt VA Telegram bot uchun umumiy Dodo checkout session. (http_status, dict) qaytaradi."""
+    d = _dodo_env()
+    if not d["api_key"] or not d["product_id"]:
         return 503, {
-            "error": "Lemon Squeezy sozlanmagan",
-            "hint": ".env ga LEMON_SQUEEZY_API_KEY, LEMON_SQUEEZY_STORE_ID, LEMON_SQUEEZY_VARIANT_ID yozing",
+            "error": "Dodo Payments sozlanmagan",
+            "hint": "Render env'ga DODO_PAYMENTS_API_KEY va DODO_PRODUCT_ID yozing",
         }
-
-    return_url = ls["base_url"] or str(return_url_hint or "").strip().rstrip("/")
-    if return_url and not return_url.startswith(("http://", "https://")):
-        return_url = ""
     q = quote or _topup_quote("pack", pack_pages(), pack_pages())
-    custom: Dict[str, Any] = {
+    if q["gross_cents"] < TOPUP_MIN_CENTS:
+        return 400, {"error": "Eng kam miqdor — $1.00."}
+    # Dodo metadata: faqat satr qiymatlar (webhookda _int_or bilan o'qiladi)
+    metadata = {
         "user_id": str(user_id), "product": "pack", "package": q["package"],
-        # Lemon custom_data qiymatlarini satr ko'rinishida saqlaymiz (webhookda _int_or bilan o'qiladi)
-        "net_amount": f"{q['net_cents'] / 100:.2f}", "net_cents": str(q["net_cents"]),
-        "credits": str(q["credits"]), "gross_cents": str(q["gross_cents"]),
+        "net_cents": str(q["net_cents"]), "credits": str(q["credits"]), "gross_cents": str(q["gross_cents"]),
         "sig": _topup_sig(str(user_id), q["package"], q["net_cents"], q["credits"], q["gross_cents"]),
     }
-    # custom_data qiymatlari satr; custom_price esa checkout_data ICHIDA EMAS (u yerda 422 beradi)
-    checkout_data: Dict[str, Any] = {"custom": custom}
+    body: Dict[str, Any] = {
+        # "Pay What You Want" mahsuloti: amount — mijoz to'laydigan narx, SENTLARDA ($5 -> 500)
+        "product_cart": [{"product_id": d["product_id"], "quantity": 1, "amount": int(q["gross_cents"])}],
+        "metadata": metadata,
+    }
     if user_email:
-        checkout_data["email"] = user_email
-    product_options: Dict[str, Any] = {
-        "name": f"Slide Studio — {q['credits']:,} kredit".replace(",", " "),
-        # Lemon oynasidagi tavsif (dashboard'dagi "Unlimited ..." matni o'rniga): aniq nima sotib olinayotgani
-        "description": (f"{q['credits']:,} kredit = {q['credits']:,} ta AI slayd varag'i. Muddatsiz. "
-                        f"Narx: ${q['net_cents'] / 100:.2f} + Lemon Squeezy komissiyasi = ${q['gross_cents'] / 100:.2f}.").replace(",", " "),
-    }
-    try:
-        product_options["enabled_variants"] = [int(variant)]
-    except ValueError:
-        pass
+        body["customer"] = {"email": user_email, "name": user_email.split("@")[0][:60] or "Customer"}
+    return_url = _safe_return_url(d["base_url"], return_url_hint)
     if return_url:
-        product_options["redirect_url"] = return_url + "/?payment=success"
-        product_options["receipt_link_url"] = return_url + "/"
-        product_options["receipt_button_text"] = "Slide Studio ga qaytish"
-    attributes: Dict[str, Any] = {
-        # Lemon Squeezy JSON:API: custom_price — data.attributes darajasida, BUTUN son, sentlarda (589 = $5.89).
-        "custom_price": int(q["gross_cents"]),
-        "product_options": product_options,
-        "checkout_options": {"embed": bool(embed)},
-        "checkout_data": checkout_data,
-    }
-    if ls["test_mode"]:
-        attributes["test_mode"] = True
-    body = {"data": {
-        "type": "checkouts",
-        "attributes": attributes,
-        "relationships": {
-            "store": {"data": {"type": "stores", "id": str(ls["store_id"])}},
-            "variant": {"data": {"type": "variants", "id": str(variant)}},
-        },
-    }}
+        body["return_url"] = return_url + "/?payment=success"
     try:
-        res = await asyncio.to_thread(_ls_post_checkout, ls["api_key"], body)
+        res = await _dodo_request("POST", "/checkouts", d["api_key"], d["api_base"], body)
     except Exception as e:
-        return 502, {"error": f"Lemon Squeezy ga ulanib bo'lmadi: {str(e)[:200]}"}
+        return 502, {"error": f"Dodo Payments ga ulanib bo'lmadi: {type(e).__name__}: {str(e)[:200]}"}
     if "json" in res:
-        url = ((res["json"].get("data") or {}).get("attributes") or {}).get("url")
+        js = res["json"] or {}
+        url = js.get("checkout_url") or js.get("url")
         if url:
-            return 200, {"checkout_url": url, "pages": q["credits"], "price_usd": round(q["gross_cents"] / 100, 2),
-                         "product": "pack", "quote": _topup_quote_public(q)}
-        return 502, {"error": "Lemon Squeezy checkout URL qaytarmadi"}
+            return 200, {"checkout_url": url, "session_id": js.get("session_id"), "pages": q["credits"],
+                         "price_usd": round(q["gross_cents"] / 100, 2), "product": "pack",
+                         "quote": _topup_quote_public(q)}
+        return 502, {"error": "Dodo Payments checkout_url qaytarmadi"}
     code = res.get("status")
-    # To'liq javob matni (validatsiya tafsiloti). API kalit bu javobda bo'lmaydi.
-    print(f"[LEMON CHECKOUT] HTTP {code}: {res.get('error_body')}", flush=True)
-    if code == 404:
-        msg = "Lemon Squeezy: do'kon yoki variant topilmadi (STORE_ID / VARIANT_ID ni tekshiring; variant 'Published' bo'lishi va API kalit bilan bir rejimda — test/live — bo'lishi kerak)."
-    elif code in (401, 403):
-        msg = "Lemon Squeezy API kaliti noto'g'ri yoki ruxsati yo'q (LEMON_SQUEEZY_API_KEY)."
-    elif code == 422:
-        msg = "Lemon Squeezy so'rovni qabul qilmadi (422)."
+    print(f"[DODO CHECKOUT] HTTP {code}: {res.get('error_body')}", flush=True)
+    if code in (401, 403):
+        msg = f"Dodo Payments API kaliti noto'g'ri yoki rejim mos emas (DODO_PAYMENTS_API_KEY, rejim: {d['mode']})."
+    elif code == 404:
+        msg = f"Dodo Payments: mahsulot topilmadi (DODO_PRODUCT_ID; API kalit bilan bir rejimda bo'lishi kerak: {d['mode']})."
+    elif code in (400, 422):
+        msg = f"Dodo Payments so'rovni qabul qilmadi (HTTP {code})."
     else:
-        msg = f"Lemon Squeezy xatosi (HTTP {code})."
-    reason = _ls_error_reason(res.get("error_body", ""))
+        msg = f"Dodo Payments xatosi (HTTP {code})."
+    reason = _dodo_error_reason(res.get("error_body", ""))
     if reason:
         msg = f"{msg} Sabab: {reason}"
-    return 502, {"error": msg, "ls_status": code, "detail": res.get("error_body", "")[:300]}
+    return 502, {"error": msg, "dodo_status": code, "detail": (res.get("error_body") or "")[:300]}
 
 
-def _ls_error_reason(raw: str) -> str:
-    """Lemon Squeezy JSON:API xatosidan qisqa sabab: 'detail (source.pointer)'. Kalitlar bu yerda bo'lmaydi."""
+def _dodo_error_reason(raw: str) -> str:
+    """Dodo xato javobidan qisqa sabab ({'code','message'})."""
     try:
-        errs = (json.loads(raw or "{}") or {}).get("errors") or []
+        js = json.loads(raw or "{}") or {}
     except Exception:
         return ""
-    parts = []
-    for e in errs[:3]:
-        if not isinstance(e, dict):
-            continue
-        d = str(e.get("detail") or e.get("title") or "").strip()
-        ptr = str(((e.get("source") or {}).get("pointer")) or "").strip()
-        if d:
-            parts.append(f"{d} ({ptr})" if ptr else d)
-    return "; ".join(parts)[:300]
+    if not isinstance(js, dict):
+        return ""
+    return str(js.get("message") or js.get("error") or js.get("detail") or "").strip()[:300]
 
 
 async def _checkout_for_bot(user_id: str, email: str = "", return_url: str = "", product: str = "pack") -> dict:
-    """v45: Telegram bot «To'ldirish» tugmasi uchun. {'url','pages','price'} yoki {'error'}."""
+    """Telegram bot «To'ldirish» tugmasi uchun. {'url','pages','price'} yoki {'error'}."""
     code, data = await _build_checkout(user_id, (email or "").strip(), return_url, product)
     if code == 200:
         return {"url": data["checkout_url"], "pages": data.get("pages"), "days": data.get("days"), "price": data.get("price_usd"), "product": product}
@@ -1781,8 +1759,8 @@ _processed_orders: set = set()          # faqat DEV (Supabase yo'q) rejimi uchun
 
 def _apply_payment_sync(key: str, user_id: str, pages: int, sign: int, event_name: str) -> dict:
     """ATOMIK + IDEMPOTENT: SQL funksiyasi public.apply_payment (SUPABASE_SCHEMA.sql, 10-bo'lim) bitta tranzaksiyada
-    payment_events ga yozadi va balansni yangilaydi. Funksiya yo'q/xato bo'lsa — istisno ko'tariladi (webhook 500 qaytaradi,
-    Lemon qayta yuboradi). Xotiraga tushib qolmaydi: restartdan keyin ham ikki marta hisoblanmaydi."""
+    payment_events ga yozadi va balansni yangilaydi. Bir xil kalit (payment_id) qayta kelsa — {'duplicate': true}.
+    Funksiya yo'q/xato bo'lsa — istisno ko'tariladi (webhook 500 qaytaradi, Dodo qayta yuboradi)."""
     if not supabase:
         if os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() != "1":
             raise RuntimeError("supabase_unavailable")
@@ -1810,7 +1788,7 @@ def _find_user_by_email(email: str) -> str:
         if res.data and len(res.data) == 1:
             return str(res.data[0].get("user_id") or "")
     except Exception as e:
-        print(f"[LEMON WEBHOOK] email qidiruv xatosi: {e}")
+        print(f"[DODO WEBHOOK] email qidiruv xatosi: {e}")
     return ""
 
 def _int_or(v: Any, default: int = 0) -> int:
@@ -1819,35 +1797,41 @@ def _int_or(v: Any, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
 
-def _refunded_pages(order_id: str) -> int:
-    """Shu buyurtma bo'yicha avval olingan (refund) varaqlar yig'indisi."""
-    if not supabase or not order_id:
+def _refunded_pages(order_key: str) -> int:
+    """Shu to'lov bo'yicha avval olingan (refund) varaqlar yig'indisi."""
+    if not supabase or not order_key:
         return 0
     try:
-        rows = supabase.table("payment_events").select("pages").like("order_id", f"refund-{order_id}%").execute().data or []
+        rows = supabase.table("payment_events").select("pages").like("order_id", f"refund-{order_key}%").execute().data or []
         return sum(_int_or(r.get("pages"), 0) for r in rows)
     except Exception as e:
-        print(f"[LEMON WEBHOOK] refund tarixini o'qib bo'lmadi: {str(e)[:120]}")
+        print(f"[DODO WEBHOOK] refund tarixini o'qib bo'lmadi: {str(e)[:120]}")
         raise
+
+def _payment_event_row(order_key: str) -> dict:
+    """payment_events dagi asl to'lov yozuvi (refund uchun: kimga va qancha varaq berilgan)."""
+    if not supabase:
+        return {}
+    rows = supabase.table("payment_events").select("user_id,pages").eq("order_id", order_key).execute().data or []
+    return rows[0] if rows else {}
 
 _unmatched_notified: "OrderedDict[str, float]" = OrderedDict()
 
-async def _report_unmatched_payment(order_id: str, event_name: str, email: str, attrs: dict) -> None:
-    """Egasi topilmagan to'lov: log + admin_audit + adminlarga Telegram (bir buyurtma uchun bir marta)."""
-    print(f"[LEMON WEBHOOK] ⚠️ user_id topilmadi! order={order_id} email={email} — qo'lda kredit bering.")
+async def _report_unmatched_payment(order_id: str, event_name: str, email: str, details_extra: dict) -> None:
+    """Egasi topilmagan to'lov: log + admin_audit + adminlarga Telegram (bir to'lov uchun bir marta)."""
+    print(f"[DODO WEBHOOK] ⚠️ user_id topilmadi! payment={order_id} email={email} — qo'lda kredit bering.")
     if order_id in _unmatched_notified:
         return
     _unmatched_notified[order_id] = time.time()
     while len(_unmatched_notified) > 500:
         _unmatched_notified.popitem(last=False)
-    details = {"order": order_id, "event": event_name, "email": email,
-               "total": attrs.get("total"), "test_mode": attrs.get("test_mode")}
+    details = {"payment": order_id, "event": event_name, "email": email, **(details_extra or {})}
     try:
-        await asyncio.to_thread(admin_core.audit, "lemon-webhook", "payment_unmatched", order_id, details)
+        await asyncio.to_thread(admin_core.audit, "dodo-webhook", "payment_unmatched", order_id, details)
     except Exception:
         pass
     if tgbot is not None:
-        text = (f"⚠️ To'lov egasi topilmadi\nBuyurtma: {order_id}\nEmail: {email or '—'}\n"
+        text = (f"⚠️ To'lov egasi topilmadi\nTo'lov: {order_id}\nEmail: {email or '—'}\n"
                 f"Hodisa: {event_name}\nVaraqlarni qo'lda bering (admin panel).")
         for tid in list(admin_core.admin_tg_ids()):
             try:
@@ -1855,108 +1839,156 @@ async def _report_unmatched_payment(order_id: str, event_name: str, email: str, 
             except Exception:
                 pass
 
-@app.post("/api/payment/lemon-webhook")
-@app.post("/webhook/lemonsqueezy")          # muqobil manzil: dashboard'da shu yozilgan bo'lsa ham ishlaydi
-async def lemon_webhook(request: Request):
-    """Lemon Squeezy: order_created(paid) → paid_credits += 200; order_refunded → qaytarib olinadi."""
-    import hmac, hashlib
-    raw = await request.body()
-    ls = _ls_env()
-    dev = os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() == "1"
 
-    if not ls["secret"]:
+WEBHOOK_TOLERANCE_SEC = 5 * 60
+
+def _verify_standard_webhook(secret: str, msg_id: str, timestamp: str, signature: str, raw: bytes) -> bool:
+    """Standard Webhooks (Dodo): HMAC-SHA256( "{webhook-id}.{webhook-timestamp}.{body}" ), base64.
+    secret = "whsec_<base64>"; webhook-signature = "v1,<base64> [v1,<base64> ...]"."""
+    import hmac, hashlib, base64
+    if not (secret and msg_id and timestamp and signature):
+        return False
+    try:
+        ts = int(timestamp)
+    except (TypeError, ValueError):
+        return False
+    if abs(time.time() - ts) > WEBHOOK_TOLERANCE_SEC:          # eski so'rovni qayta yuborishdan himoya
+        return False
+    key_s = secret[6:] if secret.startswith("whsec_") else secret
+    try:
+        key = base64.b64decode(key_s, validate=True)
+    except Exception:
+        key = key_s.encode()
+    signed = f"{msg_id}.{ts}.".encode() + raw
+    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+    for part in signature.split():
+        ver, _, sig = part.partition(",")
+        if ver == "v1" and sig and hmac.compare_digest(sig, expected):
+            return True
+    return False
+
+
+def _paid_cents_usd(data: dict) -> int:
+    """Soliqsiz to'langan summa (USD sentlarda). Boshqa valyutada bo'lsa — settlement (USD) summasi."""
+    total = _int_or(data.get("total_amount"), 0)
+    tax = max(0, _int_or(data.get("tax"), 0))
+    if str(data.get("currency") or "USD").upper() == "USD":
+        return max(0, total - tax)
+    if str(data.get("settlement_currency") or "").upper() == "USD":
+        st = _int_or(data.get("settlement_amount"), 0)
+        stax = max(0, _int_or(data.get("settlement_tax"), 0))
+        return max(0, st - stax)
+    return max(0, total - tax)
+
+
+async def _credit_user(user_id: str, email: str, key: str, pages: int, sign: int, event_name: str, ref: str):
+    async with _user_lock(user_id):       # bot/sayt bilan BIR XIL lock
+        await asyncio.to_thread(get_or_create_user_usage, user_id, email)     # qator borligiga ishonch
+        res = await asyncio.to_thread(_apply_payment_sync, key, user_id, pages, sign, event_name)
+        if res.get("duplicate"):
+            return None
+        u = await asyncio.to_thread(get_or_create_user_usage, user_id, email)
+        await asyncio.to_thread(ledger_log, user_id, "refund" if sign < 0 else "purchase",
+                                sign * pages * UNIT, u, 0, {"order": ref})
+    try:   # Telegram foydalanuvchisiga darhol xabar (balans bazada allaqachon yangilangan)
+        if tgbot is not None:
+            asyncio.create_task(tgbot.notify_purchase(str(user_id), pages, sign < 0))
+    except Exception:
+        pass
+    return u
+
+
+@app.post("/webhooks")
+@app.post("/webhoks")                       # dashboard'da xato yozilgan manzil ham ishlasin
+@app.post("/api/payment/dodo-webhook")
+async def dodo_webhook(request: Request):
+    """Dodo Payments: payment.succeeded -> kredit qo'shiladi; refund.succeeded -> qaytarib olinadi.
+    Idempotent: bir xil payment_id / refund_id qayta kelsa ikki marta hisoblanmaydi."""
+    raw = await request.body()
+    d = _dodo_env()
+    dev = os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() == "1"
+    if not d["secret"]:
         if not dev:
-            print("[LEMON WEBHOOK] LEMON_SQUEEZY_WEBHOOK_SECRET yo'q — so'rov rad etildi.")
+            print("[DODO WEBHOOK] DODO_WEBHOOK_SECRET yo'q — so'rov rad etildi.")
             return JSONResponse({"error": "webhook secret sozlanmagan"}, status_code=503)
-    else:
-        sig = (request.headers.get("X-Signature") or "").strip()
-        digest = hmac.new(ls["secret"].encode(), raw, hashlib.sha256).hexdigest()
-        if not sig or not hmac.compare_digest(sig, digest):
-            print("[LEMON WEBHOOK] noto'g'ri imzo — rad etildi.")
-            return JSONResponse({"error": "invalid signature"}, status_code=401)
+    elif not _verify_standard_webhook(d["secret"], request.headers.get("webhook-id") or "",
+                                      request.headers.get("webhook-timestamp") or "",
+                                      request.headers.get("webhook-signature") or "", raw):
+        print("[DODO WEBHOOK] noto'g'ri imzo yoki eskirgan timestamp — rad etildi.")
+        return JSONResponse({"error": "invalid signature"}, status_code=401)
     try:
         event = json.loads(raw.decode("utf-8"))
     except Exception:
         return JSONResponse({"error": "invalid json"}, status_code=400)
+    if not isinstance(event, dict):
+        return JSONResponse({"error": "invalid json"}, status_code=400)
 
-    meta = event.get("meta") or {}
-    event_name = (request.headers.get("X-Event-Name") or meta.get("event_name") or "").strip()
+    etype = str(event.get("type") or "").strip()
     data = event.get("data") or {}
-    attrs = data.get("attributes") or {}
-    order_id = str(data.get("id") or "")
-    if event_name not in ("order_created", "order_refunded"):
-        return {"ok": True, "ignored": event_name}
+    if etype not in ("payment.succeeded", "refund.succeeded"):
+        return {"ok": True, "ignored": etype}
+    payment_id = str(data.get("payment_id") or "").strip()
+    if not payment_id:
+        print(f"[DODO WEBHOOK] ⚠️ payment_id yo'q ({etype}) — rad etildi.")
+        return JSONResponse({"error": "missing payment_id"}, status_code=400)
+    pay_key = f"dodo-{payment_id}"
 
-    item = attrs.get("first_order_item") or {}
-    vid = str(item.get("variant_id") or "")
-    cust_product = str(((meta.get("custom_data") or {}).get("product")) or "")
-    if ls["variant_id"] and vid not in (ls["variant_id"], "") and cust_product != "pack":
-        print(f"[LEMON WEBHOOK] boshqa mahsulot (variant {vid}) — e'tiborsiz qoldirildi. Sizniki bo'lsa LEMON_SQUEEZY_VARIANT_ID ni tekshiring.")
-        return {"ok": True, "ignored": "other_variant"}     # bizning checkout (custom_data.product=pack) har doim hisoblanadi
-    # Subtotal = soliqsiz (VAT'siz) to'langan summa. Unda Lemon komissiyasi (6.5% + $0.50) ham bor.
-    subtotal_cents = _int_or(attrs.get("subtotal"), 0)
-    if subtotal_cents <= 0:
-        subtotal_cents = _int_or(attrs.get("total"), 0)   # fallback if subtotal missing
+    try:
+        if etype == "payment.succeeded":
+            if str(data.get("status") or "succeeded").lower() != "succeeded":
+                return {"ok": True, "ignored": f"status={data.get('status')}"}
+            meta = data.get("metadata") or {}
+            customer = data.get("customer") or {}
+            email = str(customer.get("email") or "").strip()
+            if str(meta.get("product") or "pack") != "pack":
+                return {"ok": True, "ignored": "other_product"}
+            user_id = str(meta.get("user_id") or "").strip()
+            if not user_id or user_id == "unknown":
+                user_id = await asyncio.to_thread(_find_user_by_email, email)
+            if not user_id:
+                # 500 -> Dodo qayta yuboradi (shu orada foydalanuvchi ro'yxatdan o'tsa, email bo'yicha topiladi)
+                await _report_unmatched_payment(payment_id, etype, email,
+                                                {"total_amount": data.get("total_amount"), "currency": data.get("currency")})
+                return JSONResponse({"error": "user not found"}, status_code=500)
+            paid = _paid_cents_usd(data)
+            # Kreditlar: imzolangan metadata.credits (paket bonusi bilan); imzo yo'q/noto'g'ri yoki kam to'langan
+            # bo'lsa — to'langan summa bo'yicha (total_amount / 100 dollar -> 1 cent = 1 kredit).
+            pages = _topup_verified_credits(meta, user_id, paid)
+            if pages is None:
+                pages = paid
+            if pages <= 0:
+                print(f"[DODO WEBHOOK] {payment_id}: summa 0 — kredit berilmadi.")
+                return {"ok": True, "ignored": "zero_amount"}
+            u = await _credit_user(user_id, email, pay_key, pages, +1, etype, payment_id)
+            if u is None:
+                return {"ok": True, "duplicate": True}
+            print(f"[DODO WEBHOOK] {etype}: +{pages} -> {user_id} (payment={payment_id}, mode={d['mode']})")
+            return {"ok": True, "user_id": user_id, "paid_credits": u.get("paid_credits"), "pages": pages}
 
-    if not order_id:
-        # order_id siz idempotentlik (qayta yuborilganda 2 marta hisoblamaslik) kafolatlanmaydi
-        print(f"[LEMON WEBHOOK] ⚠️ order_id yo'q ({event_name}) — rad etildi.")
-        return JSONResponse({"error": "missing order id"}, status_code=400)
-
-    user_id = str(((meta.get("custom_data") or {}).get("user_id")) or "").strip()
-    if not user_id or user_id == "unknown":
-        user_id = await asyncio.to_thread(_find_user_by_email, str(attrs.get("user_email") or "").strip())
-    if not user_id:
-        # v53: 200 qaytarilsa Lemon qayta yubormaydi va to'lov JIMGINA yo'qolardi.
-        # Endi: admin_audit ga yoziladi, adminlarga Telegram xabari, 500 -> Lemon qayta yuboradi
-        # (shu orada foydalanuvchi ro'yxatdan o'tsa, email bo'yicha topiladi).
-        await _report_unmatched_payment(order_id, event_name, str(attrs.get("user_email") or ""), attrs)
-        return JSONResponse({"error": "user not found"}, status_code=500)
-
-    # Kreditlar NETTO summa (N) bo'yicha: imzolangan custom_data.credits (paket bonusi bilan),
-    # imzo yo'q/noto'g'ri bo'lsa — subtotal'dan komissiyani ayirib (1 cent netto = 1 kredit).
-    pages = _topup_verified_credits(meta.get("custom_data") or {}, user_id, subtotal_cents)
-    if pages is None:
-        pages = topup_net_from_gross_cents(subtotal_cents) if subtotal_cents > 0 else pack_pages()
-        pages = max(1, pages)
-
-    if event_name == "order_created" and attrs.get("status") not in ("paid", None):
-        return {"ok": True, "ignored": f"status={attrs.get('status')}"}
-
-    sign = -1 if event_name == "order_refunded" else 1
-    if sign > 0:
-        key = f"order-{order_id}"
-    else:
-        # v53: qisman refund — faqat qaytarilgan ulushga mos varaq olinadi (avval butun paket olinardi).
-        # Lemon har refundda JAMI qaytarilgan summani yuboradi -> kalit summaga bog'liq, avvalgi refundlar ayiriladi.
-        refunded = _int_or(attrs.get("refunded_amount"), 0)
-        total = _int_or(attrs.get("total"), 0)
-        target = pages if (refunded <= 0 or total <= 0 or refunded >= total) else (pages * refunded) // total
-        already = await asyncio.to_thread(_refunded_pages, order_id)
-        pages = max(0, target - already)
+        # refund.succeeded: asl to'lov yozuvidan kim va qancha olganini topamiz
+        refund_id = str(data.get("refund_id") or "").strip()
+        orig = await asyncio.to_thread(_payment_event_row, pay_key)
+        user_id = str(orig.get("user_id") or "").strip()
+        orig_pages = _int_or(orig.get("pages"), 0)
+        if not user_id or orig_pages <= 0:
+            print(f"[DODO WEBHOOK] refund: asl to'lov topilmadi (payment={payment_id}) — e'tiborsiz.")
+            return {"ok": True, "ignored": "unknown_payment"}
+        already = await asyncio.to_thread(_refunded_pages, pay_key)
+        remaining = max(0, orig_pages - already)
+        amount = _int_or(data.get("amount"), 0)
+        partial = bool(data.get("is_partial")) and amount > 0
+        pages = min(remaining, amount) if partial else remaining     # 1 cent = 1 kredit; to'liq refund -> qolgani
         if pages <= 0:
             return {"ok": True, "duplicate": True}
-        key = f"refund-{order_id}-{refunded}" if refunded > 0 else f"refund-{order_id}"
-    try:
-        async with _user_lock(user_id):       # bot/sayt bilan BIR XIL lock (qarang tgbot.configure(user_lock=...))
-            u = await asyncio.to_thread(get_or_create_user_usage, user_id, str(attrs.get("user_email") or ""))   # qator borligiga ishonch
-            res = await asyncio.to_thread(_apply_payment_sync, key, user_id, pages, sign, event_name)
-            if res.get("duplicate"):
-                return {"ok": True, "duplicate": True}
-            u = await asyncio.to_thread(get_or_create_user_usage, user_id, str(attrs.get("user_email") or ""))
-            await asyncio.to_thread(
-                ledger_log, user_id, "refund" if sign < 0 else "purchase",
-                sign * pages * UNIT, u, 0, {"order": order_id})
-        print(f"[LEMON WEBHOOK] {event_name}: {'-' if sign < 0 else '+'}{pages} -> {user_id} (test={attrs.get('test_mode')})")
-        try:   # Telegram foydalanuvchisiga darhol xabar (balans bazada allaqachon yangilangan)
-            if tgbot is not None:
-                asyncio.create_task(tgbot.notify_purchase(str(user_id), pages, sign < 0))
-        except Exception:
-            pass
+        key = f"refund-{pay_key}-{refund_id or amount}"
+        u = await _credit_user(user_id, "", key, pages, -1, etype, payment_id)
+        if u is None:
+            return {"ok": True, "duplicate": True}
+        print(f"[DODO WEBHOOK] {etype}: -{pages} -> {user_id} (payment={payment_id})")
         return {"ok": True, "user_id": user_id, "paid_credits": u.get("paid_credits"), "pages": pages}
     except Exception as e:
-        # 5xx -> Lemon Squeezy webhookni qayta yuboradi (idempotent, shuning uchun xavfsiz)
-        print(f"[LEMON WEBHOOK] xato: {type(e).__name__}: {str(e)[:200]}")
+        # 5xx -> Dodo webhookni qayta yuboradi (idempotent, shuning uchun xavfsiz)
+        print(f"[DODO WEBHOOK] xato: {type(e).__name__}: {str(e)[:200]}")
         return JSONResponse({"error": "temporary_error"}, status_code=500)
 
 # ---------------------------------------------------------------------------------------------

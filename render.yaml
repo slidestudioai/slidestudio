@@ -40,17 +40,17 @@ services:
       - key: PAGES_PER_PACK
         value: "100"
       - key: PACK_PRICE_USD
-        value: "1.61"
+        value: "1.00"
       - key: IMG_PROXY_CACHE_MB
         value: "32"
-      - key: LEMON_SQUEEZY_API_KEY
+      - key: DODO_PAYMENTS_API_KEY
         sync: false
-      - key: LEMON_SQUEEZY_STORE_ID
+      - key: DODO_PRODUCT_ID
         sync: false
-      - key: LEMON_SQUEEZY_VARIANT_ID
+      - key: DODO_WEBHOOK_SECRET
         sync: false
-      - key: LEMON_SQUEEZY_WEBHOOK_SECRET
-        sync: false
+      - key: DODO_PAYMENTS_ENV          # test | live
+        value: "test"
       - key: ADMIN_TG_IDS
         sync: false
       - key: ADMIN_EMAILS

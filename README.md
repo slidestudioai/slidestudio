@@ -52,7 +52,15 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 Admin bo'lish uchun botga `/id` yozing va `ADMIN_TG_IDS` + `ADMIN_EMAILS` ni to'ldiring (ikkalasi ham mos kelishi shart).
 
 ## 6. To'lov (ixtiyoriy)
-Lemon Squeezy kalitlarini `.env` ga kiriting. Lemon Squeezy → Settings → Webhooks da manzil: `https://<manzil>/api/payment/lemon-webhook`, *Signing secret* = `LEMON_SQUEEZY_WEBHOOK_SECRET`.
+To'lovlar **Dodo Payments** (Merchant of Record) orqali. `.env` / Render'ga yozing:
+
+- `DODO_PAYMENTS_API_KEY` — API kalit
+- `DODO_PRODUCT_ID` — "Pay What You Want" mahsuloti (minimal narx $1)
+- `DODO_WEBHOOK_SECRET` — webhook signing secret (`whsec_...`)
+- `DODO_PAYMENTS_ENV` — `test` (standart, `https://test.dodopayments.com`) yoki `live`
+
+Dodo dashboard → Webhooks: manzil `https://<manzil>/webhooks`, hodisalar: `payment.succeeded`, `refund.succeeded`.
+Checkout: `POST /api/create-checkout` `{token, amount}` → `{checkout_url}`. 1 USD = 100 kredit. Tekshiruv: `GET /api/payment/health`.
 
 ## Lokal ishga tushirish
 ```bash

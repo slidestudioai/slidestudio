@@ -294,10 +294,10 @@ alter table public.user_usage alter column slide_credits set default 200;
 
 
 -- ============================================================================
--- 10) v52: ATOMIK to'lov (Lemon Squeezy webhook) — idempotent + tranzaksiya
+-- 10) v52: ATOMIK to'lov (Dodo Payments webhook) — idempotent + tranzaksiya
 --     Bitta SQL tranzaksiyada: payment_events ga yozadi VA balansni oshiradi/kamaytiradi.
 --     Webhook 2 marta (yoki bir vaqtda 2 ta nusxada) kelsa ham balans FAQAT BIR MARTA o'zgaradi.
---     p_sign = +1 (order_created) | -1 (order_refunded). p_units = varaq * 20.
+--     p_sign = +1 (payment.succeeded) | -1 (refund.succeeded). p_units = varaq * 20. Kalit: dodo-<payment_id>.
 -- ============================================================================
 alter table public.payment_events add column if not exists event_name text;
 alter table public.payment_events add column if not exists units      int;
@@ -439,7 +439,7 @@ grant execute on function public.transfer_paid_credits(text, text) to service_ro
 --     barcha qoldiqlari ham avtomatik o'chadi — bir email = bitta akkaunt = bitta balans.
 --     O'chiriladi: balans (user_usage), sarf tarixi (usage_ledger), referal kodi,
 --     Telegram ulanishi, ulash kodlari, bot slaydlari.
---     Saqlanadi: payment_events (Lemon webhook qayta kelsa ikki marta hisoblanmasin), fikrlar, audit.
+--     Saqlanadi: payment_events (to'lov webhook qayta kelsa ikki marta hisoblanmasin), fikrlar, audit.
 --     Trigger xato bersa ham foydalanuvchini o'chirish TO'XTAMAYDI (faqat ogohlantirish).
 -- ============================================================================
 create or replace function public.cleanup_deleted_user()
