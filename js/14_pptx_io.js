@@ -1013,7 +1013,7 @@
 
   /* v67: Fabric gradienti → PowerPoint <a:gradFill> (PptxGenJS gradient bermaydi — XML keyin almashtiriladi).
      Rang to'xtash nuqtalari shakl qutisi bo'ylab qayta hisoblanadi — Fabric koordinatalari qutini to'liq qoplamasa ham aynan mos. */
-  var gradByName = {}, gradSeq = 1;
+  var gradByName = {}, avByName = {}, gradSeq = 1;
   function gradientXml(el, gw, gh) {
     var g = el.fill;
     if (!g || typeof g !== 'object' || !Array.isArray(g.colorStops) || g.colorStops.length < 2) return null;
@@ -1157,7 +1157,7 @@
 
   /* Guruh (group): ichidagi har bir shakl/matn ALOHIDA, tahrirlanadigan obyekt bo'lib chiqadi
      (oldin butun guruh bitta rasm bo'lardi). Joylashuv Fabric matritsalari bilan aniq hisoblanadi. */
-  var FLAT_OK = /^(textbox|i-text|text|rect|circle|ellipse|triangle|path|polygon|polyline|line|group)$/;
+  var FLAT_OK = /^(textbox|i-text|text|rect|circle|ellipse|triangle|path|polygon|polyline|line|group|prstShape)$/;
   function canFlatten(g, depth) {
     if (typeof fabric === 'undefined' || !fabric.util || !fabric.util.qrDecompose) return false;
     if (!g || g.type !== 'group' || g.ssKind || g.clipPath || depth > 4) return false;
@@ -1201,7 +1201,24 @@
     if (t === 'rect' || t === 'circle' || t === 'ellipse' || t === 'triangle') return addShapeEl(pptx, slide, el);
     if (t === 'path' || t === 'polygon' || t === 'polyline') return addPathEl(pptx, slide, el);
     if (t === 'line') return addLineEl(pptx, slide, el);
+    if (t === 'prstShape') return addPrstEl(pptx, slide, el);
     return false;
+  }
+  /** v68: PowerPoint'ning 187 ta tayyor shakli — o'sha nom bilan (prstGeom), sariq tutqich (adj) qiymatlari ham */
+  async function addPrstEl(pptx, slide, el) {
+    if (fillOptsOf(el) === undefined) return false;
+    var name = String(el.prst || 'rect');
+    if (!/^[A-Za-z0-9]+$/.test(name)) return false;
+    var b = placeGeom(el, num(el.width, 100), num(el.height, 100));
+    var o = shapeOpts(el, b);
+    var adj = el.adj && typeof el.adj === 'object' ? el.adj : null;
+    if (adj && Object.keys(adj).length) {
+      var av = Object.keys(adj).filter(function (k) { return /^[A-Za-z0-9]+$/.test(k) && isFinite(+adj[k]); })
+        .map(function (k) { return '<a:gd name="' + k + '" fmla="val ' + Math.round(+adj[k]) + '"/>'; }).join('');
+      if (av) { if (!o.objectName) o.objectName = 'SS_G' + (gradSeq++); avByName[o.objectName] = av; }
+    }
+    slide.addShape(name, o);
+    return true;
   }
   async function addFlatGroup(pptx, slide, el) {
     var flat = flattenGroup(el, [1, 0, 0, 1, 0, 0], 1, []);
@@ -1306,7 +1323,7 @@
 
   async function exportPPTX() {
     if (_pptxBusy) { toast('PPTX tayyorlanmoqda, biroz kuting…'); return; }
-    animBySlide = {}; animSeq = 1; gradByName = {}; gradSeq = 1;
+    animBySlide = {}; animSeq = 1; gradByName = {}; avByName = {}; gradSeq = 1;
     if (window.isAiApplyingCommands || window.isAiStreaming ||
         (typeof isAiApplyingCommands !== 'undefined' && isAiApplyingCommands) ||
         (typeof isAiStreaming !== 'undefined' && isAiStreaming)) {
@@ -1424,6 +1441,7 @@
                 var atag = 'SS_A' + (animSeq++);
                 var oldNm = soNow[soBefore].options.objectName;
                 if (oldNm && gradByName[oldNm]) gradByName[atag] = gradByName[oldNm];   // gradient nomi animatsiya nomiga o'tadi
+                if (oldNm && avByName[oldNm]) avByName[atag] = avByName[oldNm];
                 soNow[soBefore].options.objectName = atag;
                 animInfo.tag = atag;
                 animBySlide[i].push(animInfo);
@@ -1468,10 +1486,12 @@
             } catch (e) { console.warn('PPTX o\'tish:', e); }
           }
           // v67: gradientlar — PptxGenJS yozgan bir rangli to'ldirish haqiqiy <a:gradFill> ga almashtiriladi
-          if (Object.keys(gradByName).length) for (var gn = 0; gn < slideNames.length; gn++) {
+          if (Object.keys(gradByName).length || Object.keys(avByName).length) for (var gn = 0; gn < slideNames.length; gn++) {
             var gxml = await zip.file(slideNames[gn]).async('string'), gxml2 = gxml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, function (blk) {
               var m = /<p:cNvPr id="\d+" name="([^"]+)"/.exec(blk);
-              if (!m || !gradByName[m[1]]) return blk;
+              if (!m || !(gradByName[m[1]] || avByName[m[1]])) return blk;
+              if (avByName[m[1]]) blk = blk.replace(/<a:avLst><\/a:avLst>/, '<a:avLst>' + avByName[m[1]] + '</a:avLst>');
+              if (!gradByName[m[1]]) return blk;
               return blk.replace(/(<\/a:prstGeom>|<\/a:custGeom>)<a:solidFill>[\s\S]*?<\/a:solidFill>/, function (_, g1) { return g1 + gradByName[m[1]]; });
             });
             if (gxml2 !== gxml) zip.file(slideNames[gn], gxml2);
@@ -2367,6 +2387,16 @@
             var prst = geom ? geom.getAttribute('prst') : 'rect';
             var fill = (spPr && kid(spPr, NS_A, 'grpFill')) ? gFill : fillOf(spPr, theme);
             var lnS = spPr && kid(spPr, NS_A, 'ln');
+            // v68: PowerPoint'da chizilgan shakl rangini ko'pincha <p:style> (mavzu ranglari) dan oladi
+            var pStyle = kid(n, NS_P, 'style');
+            var styleLine = null;
+            if (pStyle) {
+              var hasF = spPr && ['solidFill', 'gradFill', 'noFill', 'grpFill', 'blipFill', 'pattFill'].some(function (k) { return kid(spPr, NS_A, k); });
+              var fr = kid(pStyle, NS_A, 'fillRef');
+              if (!hasF && fr && num(fr.getAttribute('idx'), 0) > 0) { var fc = readColorNode(fr.firstElementChild, theme); if (fc) fill = fc; }
+              var lr = kid(pStyle, NS_A, 'lnRef');
+              if (lr && num(lr.getAttribute('idx'), 0) > 0) styleLine = { color: readColorNode(lr.firstElementChild, theme), w: [0, 6350, 12700, 19050][Math.min(3, num(lr.getAttribute('idx'), 1))] };
+            }
             // v67: joy egallovchi o'z rangini/chegarasini bermasa — layout/master'dagi shu placeholder'dan meros oladi
             if (ph && !curDecor && (!fill || !lnS)) {
               var hasFillEl = spPr && ['solidFill', 'gradFill', 'noFill', 'grpFill', 'blipFill', 'pattFill'].some(function (k) { return kid(spPr, NS_A, k); });
@@ -2380,6 +2410,9 @@
             }
             var stroke = lnS && !kid(lnS, NS_A, 'noFill') ? readColorNode(kid(lnS, NS_A, 'solidFill'), theme) : null;
             var strokeW = stroke ? Math.max(0.5, num(lnS.getAttribute('w'), 12700) * scale) : 0;
+            if (!stroke && styleLine && styleLine.color && !(lnS && kid(lnS, NS_A, 'noFill'))) {
+              stroke = styleLine.color; strokeW = Math.max(0.5, num(lnS && lnS.getAttribute('w'), styleLine.w) * scale);
+            }
             var txBody = kid(n, NS_P, 'txBody');
             var isPlaceholder = !!ph;
             var hasVisual = (fill && !fill.none) || stroke;
@@ -2395,6 +2428,17 @@
               var cgObj = cg ? custGeomToPath(cg, xf, base, scale, offX, offY) : null;
               if (cgObj) {
                 out.objects.push(cgObj);
+              } else if (!cg && !/^(rect|roundRect|ellipse|triangle)$/.test(prst) && /^[A-Za-z0-9]+$/.test(prst)) {
+                // v68: boshqa 183 ta PowerPoint shakli — o'z nomi va sariq tutqich qiymatlari bilan (tahrirlanadi, qayta eksportda ham o'sha shakl)
+                var adjO = null;
+                if (geom) kids(kid(geom, NS_A, 'avLst') || geom, NS_A, 'gd').forEach(function (g) {
+                  var mv = /^val\s+(-?\d+(?:\.\d+)?)$/.exec(g.getAttribute('fmla') || '');
+                  if (mv) (adjO = adjO || {})[g.getAttribute('name')] = +mv[1];
+                });
+                var po = Object.assign({ type: 'prstShape', prst: prst, width: W, height: H, strokeUniform: true, flipX: !!xf.flipH, flipY: !!xf.flipV }, base);
+                if (adjO) po.adj = adjO;
+                po.originX = 'center'; po.originY = 'center'; po.left = CX; po.top = CY;   // markaz — chegara qalinligidan qat'i nazar aniq
+                out.objects.push(po);
               } else if (prst === 'ellipse') {
                 out.objects.push(Object.assign({ type: 'ellipse', width: W, height: H, rx: W / 2, ry: H / 2 }, base));
               } else if (prst === 'triangle') {

@@ -214,3 +214,45 @@ test('aylana: sayt → PPTX → (faqat PowerPoint XML) → sayt: animatsiya va s
   expect(r.gradXml).toBe(true);                            // PowerPoint'da haqiqiy gradient
   expect(r.grad).toEqual(['#ff00ff', '#ffd966']);          // va qaytib saytga ham gradient bo'lib keladi
 });
+
+test('187 ta PowerPoint shakli: menyu, AI, PPTX eksport (o\'z nomi + sariq tutqich) va qayta import', async ({ page }) => {
+  await openEditor(page);
+  await page.waitForFunction(() => window.SS_PRST && SS_PRST.ready, null, { timeout: 20_000 });
+  const menuCount = await page.evaluate(() => document.querySelectorAll('#shapesMenu [data-prst]').length);
+  expect(menuCount).toBe(187);
+  await page.evaluate(async () => {
+    canvas.clear();
+    const a = await window.parseElementToFabric({ type: 'shape', shape: 'flowChartDecision', left: 60, top: 60, width: 200, height: 120, fill: '#ff0000' });
+    const b = await window.parseElementToFabric({ type: 'cloudCallout', left: 320, top: 60, width: 200, height: 140, fill: '#00aa00' });
+    const c = SS_PRST_UI.make('roundRect', { left: 600, top: 60, width: 200, height: 120, adj: { adj: 40000 } });
+    const d = SS_PRST_UI.make('rightArrow', { left: 60, top: 300, width: 220, height: 100, stroke: '#111111', strokeWidth: 4 });
+    canvas.add(a, b, c, d);
+    saveCurrentSlideState();
+  });
+  const types = await page.evaluate(() => canvas.getObjects().map((o) => o.type + ':' + o.prst));
+  expect(types).toEqual(['prstShape:flowChartDecision', 'prstShape:cloudCallout', 'prstShape:roundRect', 'prstShape:rightArrow']);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60_000 }), page.evaluate(() => window.exportPPTX())]);
+  const b64 = fs.readFileSync(await dl.path()).toString('base64');
+  const r = await page.evaluate(async (b) => {
+    const zip = await JSZip.loadAsync(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
+    const xml = await zip.file('ppt/slides/slide1.xml').async('string');
+    zip.remove('slide-studio/project.json');
+    await window.importPptxClient(new File([await zip.generateAsync({ type: 'blob' })], 's.pptx'));
+    await new Promise((res) => setTimeout(res, 800));
+    const objs = JSON.parse(slides[0].json).objects.filter((o) => o.type === 'prstShape');
+    return {
+      prsts: (xml.match(/prst="(\w+)"/g) || []).map((x) => x.slice(6, -1)),
+      adj: /prst="roundRect"><a:avLst><a:gd name="adj" fmla="val 40000"\/>/.test(xml),
+      pic: xml.includes('<p:pic>'),
+      back: objs.map((o) => o.prst),
+      backRx: (JSON.parse(slides[0].json).objects.find((o) => o.type === 'rect' && o.rx > 0) || {}).rx,
+      arrowBox: (() => { const o = objs.find((x) => x.prst === 'rightArrow'); return o && [Math.round(o.left), Math.round(o.top), Math.round(o.width), Math.round(o.height)]; })(),
+    };
+  }, b64);
+  expect(r.pic).toBe(false);                                       // rasm emas — PowerPoint'ning o'z shakli
+  expect(r.prsts).toEqual(expect.arrayContaining(['flowChartDecision', 'cloudCallout', 'roundRect', 'rightArrow']));
+  expect(r.adj).toBe(true);                                        // sariq tutqich qiymati saqlandi
+  expect(r.back).toEqual(['flowChartDecision', 'cloudCallout', 'rightArrow']);
+  expect(Math.round(r.backRx)).toBe(48);                          // roundRect → saytning yumaloq rect'i (adj 40000 × 120)
+  expect(r.arrowBox).toEqual([60 + 2 + 110, 300 + 2 + 50, 220, 100]);   // markaz bo'yicha aniq joyida (chegara 4)
+});
