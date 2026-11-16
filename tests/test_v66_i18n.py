@@ -160,3 +160,12 @@ def test_browser_translation_allowed_but_icons_protected(client):
     assert 'translate="no"' not in html.split("<head>")[0]          # sahifa tarjimonga ochiq
     js = open(os.path.join(ROOT, "js", "i18n.js"), encoding="utf-8").read()
     assert "protectIcons" in js and "setAttribute('translate', 'no')" in js
+
+
+def test_welcome_is_not_an_ai_answer():
+    html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
+    assert 'class="ai-msg bot ss-welcome"' in html
+    st = open(os.path.join(ROOT, "js", "01_state.js"), encoding="utf-8").read()
+    assert "addWelcomeMessage(chatBody);" in st and "appendAiChatMessage('bot', 'Salom! Yangi suhbat" not in st
+    ex = open(os.path.join(ROOT, "js", "10_export_present.js"), encoding="utf-8").read()
+    assert "msgDiv.classList.contains('ss-welcome')" in ex

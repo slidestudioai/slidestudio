@@ -1,7 +1,7 @@
 /* js/slide_plus.js (v66) — slayd ustidagi «+» tugmasi: qurilmadan rasm qo'shish (eski skrepka o'rnida)
  *  Rasmlar «Rasmlar:» qatoriga raqamlanib tushadi (triggerSidebarImageUpload) — AI ularni slaydlarga joylaydi.
- *  Joyi: slaydning chap-yuqori burchagidan TASHQARIDA (biroz chapda va tepada), slaydga yopishmaydi.
- *  Chapda joy yetmasa — slayd burchagining ustida; umuman joy bo'lmasa (telefon) — slayd ichida, burchakdan 12 px nariroqda.
+ *  Joyi (hamma qurilmada bir xil): slaydning chap-yuqori burchagi USTIDA, chap chetiga tekis.
+ *  Tepada joy bo'lmasa — burchak ichida. Joyi aniqlanmaguncha ko'rinmaydi (sakrab ko'chmaydi).
  */
 (function () {
   'use strict';
@@ -41,31 +41,45 @@
     });
     wrap.appendChild(b);
 
-    var raf = 0;
-    function place() {
-      raf = 0;
-      var wr = wrap.getBoundingClientRect(), cr = card.getBoundingClientRect();
-      if (!cr.width || !wr.width) { b.style.display = 'none'; return; }
-      b.style.display = '';
-      var S = 34, GAP = 20;
-      var x = cr.left - wr.left + wrap.scrollLeft - S - GAP;      // slayd chap chetidan tashqarida
-      var y = cr.top - wr.top + wrap.scrollTop - S - 4;           // yuqori chetidan biroz tepada
-      if (x < 4 && y >= 4) {                                      // chapda joy yo'q — slayd burchagining USTIDA
-        x = cr.left - wr.left + wrap.scrollLeft;
-      } else if (x < 4 || y < 4) {                                // umuman joy yo'q (telefon) — slayd ichida, burchakdan nariroq
-        x = cr.left - wr.left + wrap.scrollLeft + 12;
-        y = cr.top - wr.top + wrap.scrollTop + 12;
-      }
-      b.style.left = Math.round(x) + 'px';
-      b.style.top = Math.round(y) + 'px';
+    // v66: BITTA qoida, hamma qurilmada: slaydning chap-yuqori burchagi USTIDA (chap chetiga tekis).
+    // Joyi aniq bo'lmaguncha ko'rinmaydi — keyin to'g'ridan-to'g'ri o'z joyida paydo bo'ladi (sakramaydi).
+    b.style.visibility = 'hidden';
+    var S = 34, GAP = 8, shown = false, last = '', stable = 0, raf = 0, idle = 0;
+    // ilova to'liq tayyor (yuklanish oynasi yopilgan) — undan oldin slayd vaqtincha boshqa joyda turadi
+    function appReady() {
+      var ov = document.getElementById('loadingOverlay');
+      if (ov) { var cs = getComputedStyle(ov); if (cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') return false; }
+      return document.readyState === 'complete';
     }
-    function schedule() { if (!raf) raf = requestAnimationFrame(place); }
+    function place() {
+      var wr = wrap.getBoundingClientRect(), cr = card.getBoundingClientRect();
+      if (!cr.width || !cr.height || !wr.width) { b.style.visibility = 'hidden'; shown = false; return false; }
+      var x = cr.left - wr.left + wrap.scrollLeft;                 // slayd chap chetiga tekis
+      var y = cr.top - wr.top + wrap.scrollTop - S - GAP;          // slayd ustida
+      if (y < 2) y = cr.top - wr.top + wrap.scrollTop + GAP;       // tepada joy yo'q — burchak ichida
+      x = Math.round(Math.max(2, x)); y = Math.round(y);
+      b.style.left = x + 'px';
+      b.style.top = y + 'px';
+      var key = x + ',' + y;
+      stable = key === last ? stable + 1 : 0;
+      last = key;
+      if (!shown && stable >= 8 && appReady()) { shown = true; b.style.visibility = ''; }
+      return true;
+    }
+    // slayd o'lchami/joyi o'zgarayotgan paytda (fit animatsiyasi) har kadrda ergashadi, to'xtagach tinchiydi
+    function loop() {
+      raf = 0;
+      place();
+      if (stable < 12 || !shown) raf = requestAnimationFrame(loop);
+    }
+    function schedule() { stable = 0; if (!raf) raf = requestAnimationFrame(loop); }
     window.addEventListener('resize', schedule);
     wrap.addEventListener('scroll', schedule, { passive: true });
     if (scroller !== wrap) scroller.addEventListener('scroll', schedule, { passive: true });
-    try { new ResizeObserver(schedule).observe(wrap); } catch (e) {}
+    try { new ResizeObserver(schedule).observe(wrap); new ResizeObserver(schedule).observe(card); } catch (e) {}
     try { new MutationObserver(schedule).observe(card, { attributes: true, attributeFilter: ['style', 'class'] }); } catch (e) {}
-    setInterval(schedule, 1500);                        // zaxira: boshqa modullar o'lchamni o'zgartirsa ham
+    card.addEventListener('transitionend', schedule);
+    setInterval(function () { if (!raf) { place(); if (!shown) schedule(); } }, 1000);   // zaxira
     schedule();
   }
 
