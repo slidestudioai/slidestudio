@@ -1214,6 +1214,15 @@
     { id: 'loop', title: 'Doimiy harakat', list: [
       ['float', 'Suzib turish'], ['spin', 'Aylanib turish'], ['pulseLoop', 'Nafas olish']] }
   ];
+  // v68: yagona jadval (js/00d_anim_fx.js) — yangi effektlar va PowerPoint'dagi nomlar shu yerga qo'shiladi
+  if (window.SS_FX) {
+    SS_FX.list.forEach(function (e) {
+      let g = EFFECT_GROUPS.filter(function (x) { return x.id === e[1]; })[0];
+      if (!g) { g = { id: e[1], title: SS_FX.groups[e[1]] || e[1], list: [] }; EFFECT_GROUPS.push(g); }
+      const ex = g.list.filter(function (x) { return x[0] === e[0]; })[0];
+      if (ex) ex[1] = e[2]; else g.list.push([e[0], e[2]]);
+    });
+  }
   const EFFECTS = {};
   EFFECT_GROUPS.forEach(function (g) { g.list.forEach(function (e) { EFFECTS[e[0]] = { label: e[1], group: g.id }; }); });
   window.ANIMATION_NAMES = Object.keys(EFFECTS);
@@ -1251,7 +1260,7 @@
       '@keyframes ssa-spin{to{transform:rotate(360deg)}}',
       '@keyframes ssa-pulseLoop{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}',
       '@media (prefers-reduced-motion: reduce){.ssa-anim{animation:none!important}}'
-    ].join('\n');
+    ].join('\n') + (window.SS_FX ? '\n' + SS_FX.css : '');   // v68: keyingi qoidalar eskilarini almashtiradi (PowerPoint bilan bir xil)
     const st = document.createElement('style');
     st.id = 'ssAnimStyle';
     st.textContent = css;
@@ -1281,6 +1290,7 @@
     s.animationFillMode = 'both';
     s.animationTimingFunction = (spec.name === 'float' || spec.name === 'spin' || spec.name === 'pulseLoop') ? 'ease-in-out' : 'cubic-bezier(.25,.8,.25,1)';
     if (spec.name === 'spin') s.animationTimingFunction = 'linear';
+    if (window.SS_FX) { s.animationTimingFunction = SS_FX.timing(spec.name); SS_FX.applyVars(dom); SS_FX.prepare(dom, spec.name); }
     s.animationIterationCount = spec.loop ? (preview ? '2' : 'infinite') : '1';
   }
   window.applyAnimStyle = applyAnimStyle;

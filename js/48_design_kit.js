@@ -55,13 +55,91 @@
       border: '#1B2A41', borderW: 1.5, radius: 0, pad: 24, shadow: null, stickerShadow: null,
       dots: null, dotStroke: null, barInk: '#FFFFFF',
       fontTitle: 'Georgia', fontBody: 'Georgia', stickerStroke: false
+    },
+    /* v68: yana 7 ta uslub — hammasi PowerPoint'da bor shriftlar bilan (sayt va .pptx bir xil) */
+    dark_neon: {
+      label: 'Neon (qorong\'i)', hint: 'Qora fon, yorqin neon chegaralar va nur',
+      bg: '#0B1020', bgs: ['#0B1020', '#111827', '#1E1B4B', '#0F172A', '#000000'],
+      card: '#141B34', ink: '#F8FAFC', muted: '#CBD5E1', onAccent: '#0B1020',
+      accent: '#22D3EE', accent2: '#A855F7', accent3: '#F472B6',
+      bar: '#1E293B', barInk: '#F8FAFC', highlight: '#1E1B4B', tag: '#1E293B',
+      border: '#22D3EE', borderW: 2, radius: 14, pad: 22, shadow: { color: 'rgba(34,211,238,0.45)', blur: 18, offsetX: 0, offsetY: 0 }, stickerShadow: { color: 'rgba(168,85,247,0.55)', blur: 14, offsetX: 0, offsetY: 0 },
+      dots: ['#F472B6', '#FACC15', '#22D3EE'], dotStroke: null,
+      fontTitle: 'Trebuchet MS', fontBody: 'Verdana', stickerStroke: false
+    },
+    pastel_soft: {
+      label: 'Pastel', hint: 'Yumshoq pastel ranglar, katta radius',
+      bg: '#FDF6F0', bgs: ['#FDF6F0', '#FFFFFF', '#F3EEFB', '#EAF6F2', '#FFF4E6'],
+      card: '#FFFFFF', ink: '#3F3D56', muted: '#6B6880', onAccent: '#FFFFFF',
+      accent: '#F28CAB', accent2: '#A0D8C8', accent3: '#C3B1E1',
+      bar: '#F9E1E8', highlight: '#FFF1C9', tag: '#E8F6F1',
+      border: '#E9DDE3', borderW: 1.5, radius: 24, pad: 24, shadow: { color: 'rgba(63,61,86,0.10)', blur: 20, offsetX: 0, offsetY: 6 }, stickerShadow: null,
+      dots: ['#F28CAB', '#FFD59E', '#A0D8C8'], dotStroke: null,
+      fontTitle: 'Trebuchet MS', fontBody: 'Trebuchet MS', stickerStroke: false
+    },
+    corporate_blue: {
+      label: 'Korporativ', hint: 'Biznes hisobot: ko\'k, toza, aniq',
+      bg: '#FFFFFF', bgs: ['#FFFFFF', '#F3F6FB', '#EAF1FF', '#0B2545'],
+      card: '#F3F6FB', ink: '#0B2545', muted: '#4A5D7A', onAccent: '#FFFFFF',
+      accent: '#1D4ED8', accent2: '#0EA5E9', accent3: '#F59E0B',
+      bar: '#0B2545', barInk: '#FFFFFF', highlight: '#E0ECFF', tag: '#E0ECFF',
+      border: '#C9D6EA', borderW: 1, radius: 8, pad: 24, shadow: { color: 'rgba(11,37,69,0.12)', blur: 12, offsetX: 0, offsetY: 4 }, stickerShadow: null,
+      dots: null, dotStroke: null,
+      fontTitle: 'Arial', fontBody: 'Arial', stickerStroke: false
+    },
+    minimal_mono: {
+      label: 'Minimal', hint: 'Oq-qora, ko\'p bo\'sh joy, ingichka chiziq',
+      bg: '#FFFFFF', bgs: ['#FFFFFF', '#F5F5F5', '#111111'],
+      card: '#FFFFFF', ink: '#111111', muted: '#555555', onAccent: '#FFFFFF',
+      accent: '#111111', accent2: '#E5E5E5', accent3: '#999999',
+      bar: '#F2F2F2', highlight: '#F2F2F2', tag: '#F2F2F2',
+      border: '#111111', borderW: 1, radius: 0, pad: 24, shadow: null, stickerShadow: null,
+      dots: null, dotStroke: null,
+      fontTitle: 'Arial', fontBody: 'Arial', stickerStroke: false
+    },
+    playful_kids: {
+      label: 'Bolalar uchun', hint: 'Quvnoq ranglar, qalin chegara, yumaloq',
+      bg: '#FFF9E6', bgs: ['#FFF9E6', '#E8FAF7', '#FFEDED', '#FFFFFF'],
+      card: '#FFFFFF', ink: '#2D2A32', muted: '#4B4453', onAccent: '#FFFFFF',
+      accent: '#FF6B6B', accent2: '#4ECDC4', accent3: '#FFD93D',
+      bar: '#FFD93D', highlight: '#FFE8A3', tag: '#4ECDC4',
+      border: '#2D2A32', borderW: 3, radius: 20, pad: 22, shadow: HARD(5, 5, '#2D2A32'), stickerShadow: HARD(3, 3, '#2D2A32'),
+      dots: ['#FF6B6B', '#FFD93D', '#4ECDC4'], dotStroke: '#2D2A32',
+      fontTitle: 'Comic Sans MS', fontBody: 'Trebuchet MS', stickerStroke: true
+    },
+    eco_green: {
+      label: 'Tabiat (yashil)', hint: 'Ekologiya, sog\'liq: yashil va tabiiy',
+      bg: '#F3F8F2', bgs: ['#F3F8F2', '#FFFFFF', '#E8F5E9', '#1B3A2B'],
+      card: '#FFFFFF', ink: '#1B3A2B', muted: '#44624F', onAccent: '#FFFFFF',
+      accent: '#2E7D32', accent2: '#A5D6A7', accent3: '#F9A825',
+      bar: '#DCEFD9', highlight: '#E8F5E9', tag: '#E8F5E9',
+      border: '#CFE3CC', borderW: 1, radius: 16, pad: 24, shadow: { color: 'rgba(27,58,43,0.12)', blur: 16, offsetX: 0, offsetY: 6 }, stickerShadow: null,
+      dots: ['#2E7D32', '#F9A825', '#A5D6A7'], dotStroke: null,
+      fontTitle: 'Georgia', fontBody: 'Verdana', stickerStroke: false
+    },
+    elegant_gold: {
+      label: 'Oltin (elegant)', hint: 'To\'q fon, oltin rang, nafis serif',
+      bg: '#14110F', bgs: ['#14110F', '#1F1A16', '#000000', '#F5EFE6'],
+      card: '#1F1A16', ink: '#F5EFE6', muted: '#CDBFA8', onAccent: '#14110F',
+      accent: '#C9A227', accent2: '#8C6D1F', accent3: '#E8D5A2',
+      bar: '#2A231D', barInk: '#F5EFE6', highlight: '#2A231D', tag: '#2A231D',
+      border: '#C9A227', borderW: 1.5, radius: 4, pad: 26, shadow: { color: 'rgba(0,0,0,0.5)', blur: 18, offsetX: 0, offsetY: 8 }, stickerShadow: null,
+      dots: null, dotStroke: null,
+      fontTitle: 'Georgia', fontBody: 'Georgia', stickerStroke: false
     }
   };
   var STYLE_ALIAS = {
     neo: 'neo_brutalism', brutal: 'neo_brutalism', brutalism: 'neo_brutalism', neobrutalism: 'neo_brutalism', 'neo-brutalism': 'neo_brutalism',
     retro: 'neo_brutalism', retro_window: 'neo_brutalism', window: 'neo_brutalism',
     modern: 'modern_cards', cards: 'modern_cards', card: 'modern_cards', modern_card: 'modern_cards', zamonaviy: 'modern_cards',
-    academic: 'academic', akademik: 'academic', classic: 'academic', scientific: 'academic', ilmiy: 'academic'
+    academic: 'academic', akademik: 'academic', classic: 'academic', scientific: 'academic', ilmiy: 'academic',
+    neon: 'dark_neon', dark: 'dark_neon', cyber: 'dark_neon', tech: 'dark_neon', qorongi: 'dark_neon',
+    pastel: 'pastel_soft', soft: 'pastel_soft', yumshoq: 'pastel_soft',
+    corporate: 'corporate_blue', business: 'corporate_blue', biznes: 'corporate_blue', korporativ: 'corporate_blue', report: 'corporate_blue',
+    minimal: 'minimal_mono', mono: 'minimal_mono', monochrome: 'minimal_mono',
+    kids: 'playful_kids', playful: 'playful_kids', bolalar: 'playful_kids', fun: 'playful_kids',
+    eco: 'eco_green', green: 'eco_green', nature: 'eco_green', tabiat: 'eco_green', yashil: 'eco_green',
+    gold: 'elegant_gold', elegant: 'elegant_gold', luxury: 'elegant_gold', oltin: 'elegant_gold'
   };
   function styleKey(s) {
     s = String(s || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
