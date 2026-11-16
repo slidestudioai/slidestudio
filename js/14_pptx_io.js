@@ -349,6 +349,43 @@
     } catch (e) { return null; }
   }
 
+  /* v67: belgi darajasidagi uslublar (Fabric «styles»: o'lcham, qalin, kursiv, rang, shrift) — PowerPoint'da alohida bo'laklar (run).
+     Har bir (Fabric bo'lgan) qator — alohida paragraf; qator qadami shu qatordagi ENG KATTA shriftdan. */
+  function hasCharStyles(el) {
+    var st = el.styles;
+    if (!st || typeof st !== 'object') return false;
+    if (Array.isArray(st)) return st.length > 0;
+    return Object.keys(st).some(function (l) { return st[l] && Object.keys(st[l]).length; });
+  }
+  function richLines(el, text) {
+    if (typeof fabric === 'undefined') return null;
+    try {
+      var tb = new fabric.Textbox(text, {
+        width: num(el.width, 400), fontSize: num(el.fontSize, 24), fontFamily: el.fontFamily || 'Arial',
+        fontWeight: el.fontWeight || 'normal', fontStyle: el.fontStyle || 'normal', charSpacing: num(el.charSpacing, 0),
+        splitByGrapheme: !!el.splitByGrapheme, lineHeight: num(el.lineHeight, 1.16), styles: el.styles || {}
+      });
+      var out = [];
+      for (var i = 0; i < tb._textLines.length; i++) {
+        var map = tb._styleMap ? tb._styleMap[i] : { line: i, offset: 0 };
+        var chars = tb._textLines[i], line = [], maxFs = 0;
+        for (var j = 0; j < chars.length; j++) {
+          var sd = (el.styles && el.styles[map.line] && el.styles[map.line][map.offset + j]) || {};
+          var st = {
+            fontSize: num(sd.fontSize, num(el.fontSize, 24)), fontWeight: sd.fontWeight || el.fontWeight || 'normal',
+            fontStyle: sd.fontStyle || el.fontStyle || 'normal', fill: sd.fill || el.fill, fontFamily: sd.fontFamily || el.fontFamily,
+            underline: sd.underline != null ? sd.underline : !!el.underline
+          };
+          maxFs = Math.max(maxFs, st.fontSize);
+          line.push({ ch: chars[j], st: st });
+        }
+        while (line.length && /\s/.test(line[line.length - 1].ch)) line.pop();
+        out.push({ chars: line, maxFs: maxFs || num(el.fontSize, 24) });
+      }
+      return out;
+    } catch (e) { return null; }
+  }
+
   function addTextEl(slide, el) {
     var text = String(el.text == null ? '' : el.text).replace(/\r\n?/g, '\n').replace(/[​-‍﻿­]/g, '');
     var bg = parseColor(el.backgroundColor);
@@ -403,6 +440,42 @@
     if (ts && num(el.strokeWidth, 0) > 0) opts.outline = { color: ts.hex, size: Math.max(0.1, Math.round(num(el.strokeWidth, 1) * scaleAvgOf(el) * 0.75 * 100) / 100) };
     var sh = shadowOf(el);
     if (sh && !bg) opts.shadow = sh;          // to'ldirilmagan matn qutisida soya harflarga tushadi (Fabric kabi)
+    var rich = hasCharStyles(el) ? richLines(el, text) : null;
+    if (rich && rich.length) {
+      var sAvg = scaleAvgOf(el), runs = [], totalPt = 0;
+      rich.forEach(function (ln, li) {
+        var lnPt = Math.round(ln.maxFs * sAvg * 0.75 * lh * FABRIC_FS_MULT * 100) / 100;
+        totalPt += lnPt;
+        var cur = null;
+        var flush = function () { if (cur) { runs.push(cur); cur = null; } };
+        ln.chars.forEach(function (c) {
+          var st = c.st, cc = parseColor(st.fill) || col;
+          var ro = {
+            fontSize: Math.max(1, Math.round(st.fontSize * sAvg * 0.75 * 100) / 100), fontFace: cleanFont(st.fontFamily),
+            bold: st.fontWeight === 'bold' || st.fontWeight === 'bolder' || num(st.fontWeight, 400) >= 600,
+            italic: st.fontStyle === 'italic' || st.fontStyle === 'oblique', color: cc.hex, lineSpacing: lnPt
+          };
+          if (st.underline) ro.underline = { style: 'sng' };
+          var k = JSON.stringify(ro);
+          if (cur && cur._k === k) cur.text += c.ch;
+          else { flush(); cur = { text: c.ch, options: ro, _k: k }; }
+        });
+        if (!cur) cur = { text: '', options: { fontSize: Math.round(ln.maxFs * sAvg * 0.75 * 100) / 100, lineSpacing: lnPt }, _k: '' };
+        if (li < rich.length - 1) cur.options = Object.assign({}, cur.options, { breakLine: true });
+        flush();
+      });
+      runs.forEach(function (r) { delete r._k; });
+      // birinchi qator tayanch chizig'i — shu qatordagi eng katta shrift bo'yicha
+      if (!b.rotate) {
+        var f0 = rich[0].maxFs * sAvg;
+        var sh0 = f0 * (lh * FABRIC_FS_MULT - desc - FABRIC_FS_MULT * (1 - FABRIC_FS_FRACTION));
+        opts.y = r6(b.y - sh0 * SY);
+        opts.h = r4(Math.max(b.h, totalPt / 72) + Math.max(0, sh0) * SY);
+      }
+      delete opts.lineSpacing;
+      slide.addText(runs, opts);
+      return true;
+    }
     slide.addText(outText, opts);
     return true;
   }
@@ -938,10 +1011,40 @@
     return true;
   }
 
+  /* v67: Fabric gradienti → PowerPoint <a:gradFill> (PptxGenJS gradient bermaydi — XML keyin almashtiriladi).
+     Rang to'xtash nuqtalari shakl qutisi bo'ylab qayta hisoblanadi — Fabric koordinatalari qutini to'liq qoplamasa ham aynan mos. */
+  var gradByName = {}, gradSeq = 1;
+  function gradientXml(el, gw, gh) {
+    var g = el.fill;
+    if (!g || typeof g !== 'object' || !Array.isArray(g.colorStops) || g.colorStops.length < 2) return null;
+    var c = g.coords || {}, op = el.opacity == null ? 1 : num(el.opacity, 1);
+    var W0 = num(el.width, gw) || gw, H0 = num(el.height, gh) || gh;
+    var px = function (v, full) { return g.gradientUnits === 'percentage' ? num(v, 0) * full : num(v, 0); };
+    var stops = g.colorStops.slice().sort(function (a, b) { return num(a.offset, 0) - num(b.offset, 0); });
+    var gs = function (pos, s0) {
+      var pc = parseColor(s0.color) || { hex: '000000', alpha: 1 };
+      var a = pc.alpha * (s0.opacity == null ? 1 : num(s0.opacity, 1)) * op;
+      return '<a:gs pos="' + Math.round(Math.max(0, Math.min(1, pos)) * 100000) + '"><a:srgbClr val="' + pc.hex + '">' + (a < 0.999 ? '<a:alpha val="' + Math.round(a * 100000) + '"/>' : '') + '</a:srgbClr></a:gs>';
+    };
+    if (g.type === 'radial') {
+      return '<a:gradFill rotWithShape="1"><a:gsLst>' + stops.map(function (s0) { return gs(num(s0.offset, 0), s0); }).join('') +
+        '</a:gsLst><a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path></a:gradFill>';
+    }
+    var x1 = px(c.x1, W0), y1 = px(c.y1, H0), x2 = px(c.x2, W0), y2 = px(c.y2, H0);
+    var dx = x2 - x1, dy = y2 - y1, len = Math.sqrt(dx * dx + dy * dy) || 1, ux = dx / len, uy = dy / len;
+    // qutining burchaklari gradient yo'nalishiga proyeksiya: PowerPoint gradienti butun qutini qoplaydi
+    var proj = [[0, 0], [W0, 0], [0, H0], [W0, H0]].map(function (p) { return (p[0] - x1) * ux + (p[1] - y1) * uy; });
+    var tmin = Math.min.apply(null, proj), tmax = Math.max.apply(null, proj), span = (tmax - tmin) || 1;
+    var ang = Math.round(((Math.atan2(dy, dx) * 180 / Math.PI) % 360 + 360) % 360 * 60000);
+    return '<a:gradFill rotWithShape="1"><a:gsLst>' + stops.map(function (s0) { return gs((num(s0.offset, 0) * len - tmin) / span, s0); }).join('') +
+      '</a:gsLst><a:lin ang="' + ang + '" scaled="0"/></a:gradFill>';
+  }
   function shapeOpts(el, box) {
     var o = { x: box.x, y: box.y, w: box.w, h: box.h };
     var f = fillOptsOf(el);
     if (f) o.fill = f;                                    // yo'q bo'lsa — <a:noFill/> (soya faqat chegaradan tushadi, Fabric kabi)
+    var gx = f && gradientXml(el, box.gw, box.gh);
+    if (gx) { o.objectName = 'SS_G' + (gradSeq++); gradByName[o.objectName] = gx; }
     o.line = lineOf(el) || { color: 'FFFFFF', transparency: 100 };
     if (box.rotate) o.rotate = box.rotate;
     if (el.flipX) o.flipH = true;
@@ -1203,7 +1306,7 @@
 
   async function exportPPTX() {
     if (_pptxBusy) { toast('PPTX tayyorlanmoqda, biroz kuting…'); return; }
-    animBySlide = {}; animSeq = 1;
+    animBySlide = {}; animSeq = 1; gradByName = {}; gradSeq = 1;
     if (window.isAiApplyingCommands || window.isAiStreaming ||
         (typeof isAiApplyingCommands !== 'undefined' && isAiApplyingCommands) ||
         (typeof isAiStreaming !== 'undefined' && isAiStreaming)) {
@@ -1319,6 +1422,8 @@
               var soNow = slide._slideObjects || [];
               if (soNow.length > soBefore && soNow[soBefore] && soNow[soBefore].options) {
                 var atag = 'SS_A' + (animSeq++);
+                var oldNm = soNow[soBefore].options.objectName;
+                if (oldNm && gradByName[oldNm]) gradByName[atag] = gradByName[oldNm];   // gradient nomi animatsiya nomiga o'tadi
                 soNow[soBefore].options.objectName = atag;
                 animInfo.tag = atag;
                 animBySlide[i].push(animInfo);
@@ -1361,6 +1466,15 @@
               var uxml = injectTransition(txml, slides[tix] && slides[tix].transition, slides[tix] && slides[tix].transDur, slides[tix] && slides[tix].transAuto);
               if (uxml !== txml) zip.file(slideNames[tn], uxml);
             } catch (e) { console.warn('PPTX o\'tish:', e); }
+          }
+          // v67: gradientlar — PptxGenJS yozgan bir rangli to'ldirish haqiqiy <a:gradFill> ga almashtiriladi
+          if (Object.keys(gradByName).length) for (var gn = 0; gn < slideNames.length; gn++) {
+            var gxml = await zip.file(slideNames[gn]).async('string'), gxml2 = gxml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, function (blk) {
+              var m = /<p:cNvPr id="\d+" name="([^"]+)"/.exec(blk);
+              if (!m || !gradByName[m[1]]) return blk;
+              return blk.replace(/(<\/a:prstGeom>|<\/a:custGeom>)<a:solidFill>[\s\S]*?<\/a:solidFill>/, function (_, g1) { return g1 + gradByName[m[1]]; });
+            });
+            if (gxml2 !== gxml) zip.file(slideNames[gn], gxml2);
           }
           for (var sn = 0; sn < slideNames.length; sn++) {
             var sxml = await zip.file(slideNames[sn]).async('string');
@@ -1853,10 +1967,121 @@
     });
     if (d.length < 4) return null;
     var o = Object.assign({}, base, { type: 'path', path: d.join(' '), angle: 0, flipX: false, flipY: false, strokeLineJoin: 'round' });
-    delete o.left; delete o.top; delete o.width; delete o.height;   // Fabric o'zi yo'l chegarasidan hisoblaydi
+    delete o.left; delete o.top; delete o.width; delete o.height;
     if (!anyFill) o.fill = '';
     if (!anyStroke) { o.stroke = null; o.strokeWidth = 0; }
+    // joylashuvni HOZIROQ hisoblaymiz (Fabric bilan) — slayd ochilmasdan eksport qilinsa ham shakl o'z joyida bo'ladi
+    try {
+      if (typeof fabric !== 'undefined') {
+        var tmp = new fabric.Path(o.path, { strokeWidth: o.strokeWidth || 0 });
+        o.left = tmp.left; o.top = tmp.top; o.width = tmp.width; o.height = tmp.height;
+        o.path = tmp.path;
+      }
+    } catch (e) {}
     return o;
+  }
+
+  /* ==================================================================
+   * v67: PowerPoint → sayt: animatsiyalar (<p:timing>) va slayd o'tishi (<p:transition>)
+   * Eksportdagi PPT_FX / SS_TR jadvallarining teskarisi — aylana (sayt → PPTX → sayt) yo'qotishsiz.
+   * ================================================================== */
+  var FX_BY_KEY = {}, FX_BY_ID = {};
+  Object.keys(PPT_FX).forEach(function (name) {
+    var f = PPT_FX[name], k1 = f[0] + '|' + f[1] + '|' + f[2], k2 = f[0] + '|' + f[1];
+    if (!FX_BY_KEY[k1]) FX_BY_KEY[k1] = name;
+    if (!FX_BY_ID[k2]) FX_BY_ID[k2] = name;
+  });
+  var FX_DEFAULT = { entr: 'fadeIn', emph: 'pulse', exit: 'fadeOut' };
+  function pptFxName(cls, pid, sub) {
+    var n = FX_BY_KEY[cls + '|' + pid + '|' + sub] || FX_BY_ID[cls + '|' + pid];
+    if (n) return n;
+    if (cls === 'entr') {                                     // keng tarqalgan PowerPoint effektlari → eng yaqin sayt effekti
+      if (pid === 2 || pid === 47 || pid === 42) return ({ 1: 'fadeInDown', 2: 'fadeInRight', 8: 'fadeInLeft' })[sub] || 'fadeInUp';
+      if (pid === 23 || pid === 53 || pid === 21) return 'zoomIn';
+      if (pid === 26) return 'bounceIn';
+      if (pid === 22 || pid === 12 || pid === 18) return 'flipInX';
+      if (pid === 31 || pid === 45) return 'rotateIn';
+    }
+    if (cls === 'emph') { if (pid === 8) return 'spin'; if (pid === 32 || pid === 34) return 'swing'; if (pid === 35) return 'flash'; }
+    if (cls === 'exit') { if (pid === 2 || pid === 47) return 'slideOutDown'; if (pid === 23 || pid === 53) return 'zoomOut'; }
+    return FX_DEFAULT[cls] || null;
+  }
+  function cTnDelay(ctn) {
+    var st = kid(ctn, NS_P, 'stCondLst'), cond = st && kid(st, NS_P, 'cond');
+    var d = cond ? cond.getAttribute('delay') : '0';
+    return d === 'indefinite' ? 0 : Math.max(0, num(d, 0));
+  }
+  function maxBehaviorDur(ctn) {
+    var m = 0;
+    Array.prototype.forEach.call(ctn.getElementsByTagNameNS(NS_P, 'cTn'), function (c) {
+      var d = c.getAttribute('dur'); if (!d || d === 'indefinite') return;
+      var k = c.getAttribute('autoRev') === '1' ? 2 : 1;                 // oldinga + orqaga
+      var rc = c.getAttribute('repeatCount'); if (rc && rc !== 'indefinite') k *= Math.max(1, num(rc, 1000) / 1000);
+      m = Math.max(m, cTnDelay(c) + num(d, 0) * k);
+    });
+    return m;
+  }
+  function importTiming(sdoc, spidMap) {
+    var timing = sdoc.getElementsByTagNameNS(NS_P, 'timing')[0];
+    if (!timing) return;
+    var seq = null;
+    Array.prototype.some.call(timing.getElementsByTagNameNS(NS_P, 'cTn'), function (c) { if (c.getAttribute('nodeType') === 'mainSeq') { seq = c; return true; } return false; });
+    var groups = seq ? kids(kid(seq, NS_P, 'childTnLst') || seq, NS_P, 'par') : [];
+    var t = 0;                                                // sekin-ketin vaqt (ms): bosishlar ketma-ket ijro deb olinadi
+    groups.forEach(function (gpar) {
+      var gctn = kid(gpar, NS_P, 'cTn'); if (!gctn) return;
+      var gEnd = t;
+      kids(kid(gctn, NS_P, 'childTnLst') || gctn, NS_P, 'par').forEach(function (ipar) {
+        var ictn = kid(ipar, NS_P, 'cTn'); if (!ictn) return;
+        var iStart = t + cTnDelay(ictn);
+        kids(kid(ictn, NS_P, 'childTnLst') || ictn, NS_P, 'par').forEach(function (epar) {
+          var ectn = kid(epar, NS_P, 'cTn'); if (!ectn || !ectn.getAttribute('presetClass')) return;
+          var cls = ectn.getAttribute('presetClass'), pid = num(ectn.getAttribute('presetID'), 0), sub = num(ectn.getAttribute('presetSubtype'), 0);
+          var tg = ectn.getElementsByTagNameNS(NS_P, 'spTgt')[0], spid = tg && tg.getAttribute('spid');
+          var start = iStart + cTnDelay(ectn), dur = maxBehaviorDur(ectn) || 500;
+          gEnd = Math.max(gEnd, start + dur);
+          var name = pptFxName(cls, pid, sub);
+          if (!name || !spid || !spidMap[spid]) return;
+          var loop = ectn.getAttribute('repeatCount') === 'indefinite' || Array.prototype.some.call(ectn.getElementsByTagNameNS(NS_P, 'cTn'), function (c) { return c.getAttribute('repeatCount') === 'indefinite'; });
+          if (loop && cls === 'emph') name = name === 'spin' ? 'spin' : (name === 'swing' ? 'float' : 'pulseLoop');
+          spidMap[spid].forEach(function (o) {
+            if (o.animName) return;                           // bitta obyektga bitta effekt (birinchisi)
+            o.animName = name;
+            o.animDur = Math.max(0.2, Math.min(6, Math.round(dur / 100) / 10));
+            o.animDelay = Math.max(0, Math.min(10, Math.round(start / 100) / 10));
+            if (loop) o.animLoop = true;
+          });
+        });
+      });
+      t = gEnd;
+    });
+  }
+  var TR_FROM_PPT = { fade: 'fade', dissolve: 'blur', zoom: 'zoom', flip: 'flip', split: 'split', circle: 'circle',
+    push: { u: 'up', d: 'down', l: 'left', r: 'right' }, wipe: { r: 'wipeR', l: 'wipeL', d: 'wipeD', u: 'wipeU' }, cover: { l: 'coverL', r: 'coverR', u: 'up', d: 'down' },
+    pull: { l: 'coverR', r: 'coverL' }, randomBar: 'blur', cut: 'none', newsflash: 'zoom', wheel: 'circle', wedge: 'circle', diamond: 'circle', plus: 'circle',
+    blinds: 'wipeD', checker: 'blur', comb: 'split', strips: 'wipeD', random: 'fade', vortex: 'zoom', ripple: 'circle', shred: 'blur', switch: 'flip',
+    gallery: 'left', cube: 'left', doors: 'split', box: 'zoom', reveal: 'fade', honeycomb: 'blur', glitter: 'blur', flash: 'fade', prism: 'flip',
+    ferris: 'left', flythrough: 'zoom', warp: 'zoom', conveyor: 'left', pan: 'left', vortex2: 'zoom', morph: 'fade', curtains: 'split', wind: 'left',
+    airplane: 'left', origami: 'flip', fracture: 'blur', crush: 'zoom', peelOff: 'left', pageCurlDouble: 'left', pageCurlSingle: 'left', fallOver: 'down', drape: 'down' };
+  function importTransition(sdoc) {
+    var trs = sdoc.getElementsByTagNameNS(NS_P, 'transition');
+    if (!trs.length) return null;
+    var tr = trs[0];                                         // mc:Choice (p14) birinchi keladi — aniqroq
+    var dur = 0;
+    var p14d = tr.getAttribute('p14:dur') || tr.getAttributeNS('http://schemas.microsoft.com/office/powerpoint/2010/main', 'dur');
+    if (p14d) dur = num(p14d, 0) / 1000;
+    else dur = ({ fast: 0.5, med: 0.75, slow: 1 })[tr.getAttribute('spd') || 'med'] || 0.75;
+    var auto = tr.getAttribute('advTm') ? num(tr.getAttribute('advTm'), 0) / 1000 : 0;
+    var eff = tr.firstElementChild, key = 'none';
+    if (eff) {
+      var m = TR_FROM_PPT[eff.localName];
+      var dir = eff.getAttribute('dir') || '';
+      if (typeof m === 'string') key = m;
+      else if (m) key = m[dir[0]] || m[Object.keys(m)[0]];
+      else key = 'fade';
+    }
+    if (key === 'none' && !auto) return { transition: 'none', transDur: 0, transAuto: 0 };
+    return { transition: key, transDur: Math.max(0.2, Math.min(5, Math.round(dur * 10) / 10)), transAuto: auto };
   }
 
   async function importNativePptx(zip, file) {
@@ -2042,10 +2267,12 @@
       };
 
       var curRels = srels, curDecor = false;     // v67: layout/master bezaklari ham o'qiladi (o'z rels'i bilan)
+      var spidMap = {};
       var walk = async function (container, groups, gFill) {
         var nodes = kids(container);
         for (var ni = 0; ni < nodes.length; ni++) {
           var n = nodes[ni];
+          var objBefore = out.objects.length;
           try {
             if (n.namespaceURI !== NS_P) continue;
             var ln = n.localName;
@@ -2247,6 +2474,13 @@
           } catch (e) {
             skipped.other++;
             console.warn('PPTX import element:', e);
+          } finally {
+            // v67: animatsiya nishoni (spid) → shu shakldan hosil bo'lgan obyektlar
+            if (!curDecor && out.objects.length > objBefore) {
+              var cnv = n.getElementsByTagNameNS && n.getElementsByTagNameNS(NS_P, 'cNvPr')[0];
+              var cid = cnv && cnv.getAttribute('id');
+              if (cid) spidMap[cid] = (spidMap[cid] || []).concat(out.objects.slice(objBefore));
+            }
           }
         }
       };
@@ -2265,7 +2499,11 @@
       }
       curRels = srels; curDecor = false;
       if (tree) await walk(tree, [], null);
-      result.push({ json: JSON.stringify(out), thumb: '', imageNumbers: [] });
+      // v67: PowerPoint animatsiyalari va slayd o'tishi ham o'qiladi
+      try { importTiming(sdoc, spidMap); } catch (e) { console.warn('PPTX animatsiya:', e); }
+      var trn = null;
+      try { trn = importTransition(sdoc); } catch (e) { console.warn('PPTX o\'tish:', e); }
+      result.push(Object.assign({ json: JSON.stringify(out), thumb: '', imageNumbers: [] }, trn || {}));
     }
     return { slides: result, title: title, skipped: skipped };
   }

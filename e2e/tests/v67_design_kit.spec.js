@@ -179,3 +179,38 @@ test('PPTX import: layout bezaklari, erkin shakl, burilgan guruh, gradient, shaf
   expect(r.small).toBe(13.3);                      // 20pt × 50% = 10pt — o'z o'lchami saqlanadi
   expect(r.smallW).toBe('normal');
 });
+
+test('aylana: sayt → PPTX → (faqat PowerPoint XML) → sayt: animatsiya va slayd o\'tishi saqlanadi', async ({ page }) => {
+  await openEditor(page);
+  await page.evaluate(() => {
+    canvas.clear();
+    const a = new fabric.Rect({ left: 100, top: 100, width: 200, height: 120, fill: '#ff0000' }); a.animName = 'fadeInUp'; a.animDur = 1.2; a.animDelay = 0;
+    const b = new fabric.Textbox('Salom', { left: 400, top: 100, width: 300, fontSize: 32 }); b.animName = 'zoomIn'; b.animDur = 0.8; b.animDelay = 1.5;
+    const c = window.buildShape('star5', { left: 600, top: 300, width: 100, fill: '#00aa00' }); c.animName = 'pulse'; c.animDur = 1; c.animDelay = 3;
+    const g = new fabric.Rect({ left: 100, top: 350, width: 300, height: 100 });
+    g.set('fill', new fabric.Gradient({ type: 'linear', gradientUnits: 'pixels', coords: { x1: 0, y1: 0, x2: 300, y2: 0 }, colorStops: [{ offset: 0, color: '#ff00ff' }, { offset: 1, color: '#ffd966' }] }));
+    canvas.add(a, b, c, g);
+    saveCurrentSlideState();
+    slides[activeIndex].transition = 'wipeR'; slides[activeIndex].transDur = 1.3; slides[activeIndex].transAuto = 4;
+  });
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60_000 }), page.evaluate(() => window.exportPPTX())]);
+  const b64 = fs.readFileSync(await dl.path()).toString('base64');
+  const r = await page.evaluate(async (b) => {
+    const zip = await JSZip.loadAsync(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
+    zip.remove('slide-studio/project.json');               // saytning ichki nusxasisiz — xuddi PowerPoint'da saqlangandek
+    const blob = await zip.generateAsync({ type: 'blob' });
+    await window.importPptxClient(new File([blob], 'rt.pptx'));
+    await new Promise((res) => setTimeout(res, 800));
+    const s = slides[0], objs = JSON.parse(s.json).objects.filter((o) => o.animName);
+    const gr = JSON.parse(s.json).objects.find((o) => o.fill && typeof o.fill === 'object' && o.fill.colorStops);
+    const xml = await zip.file('ppt/slides/slide1.xml').async('string');
+    return { tr: [s.transition, s.transDur, s.transAuto], anims: objs.map((o) => [o.type, o.animName, o.animDur, o.animDelay]),
+      grad: gr && gr.fill.colorStops.map((c) => c.color), gradXml: /<a:gradFill[^>]*><a:gsLst><a:gs pos="0"><a:srgbClr val="FF00FF"[\s\S]*?<a:gs pos="100000"><a:srgbClr val="FFD966"[\s\S]*?<a:lin ang="0"/.test(xml) };
+  }, b64);
+  expect(r.tr).toEqual(['wipeR', 1.3, 4]);
+  expect(r.anims.map((x) => x[1])).toEqual(['fadeInUp', 'zoomIn', 'pulse']);
+  expect(r.anims.map((x) => x[2])).toEqual([1.2, 0.8, 1]);
+  expect(r.anims.map((x) => x[3])).toEqual([0, 1.5, 3]);
+  expect(r.gradXml).toBe(true);                            // PowerPoint'da haqiqiy gradient
+  expect(r.grad).toEqual(['#ff00ff', '#ffd966']);          // va qaytib saytga ham gradient bo'lib keladi
+});
