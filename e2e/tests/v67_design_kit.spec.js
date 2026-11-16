@@ -47,6 +47,7 @@ test('«Dizayn» menyusi: uslub tanlanadi, retro oyna kartochkasi slaydga qo\'sh
   await expect(menu).toBeVisible();
   await expect(page.locator('#ssKitBtn')).toHaveAttribute('aria-expanded', 'true');
   await expect(menu.locator('[data-tab]')).toHaveCount(4);
+  await expect(menu.locator('[data-act="upload"]')).toHaveCount(0);   // rasm yuklash menyuda yo'q — u «+» tugmasida
   await menu.locator('[data-style="neo_brutalism"]').click();
   await menu.locator('[data-item="window_card"]').click();
   await expect(menu).toBeHidden();
