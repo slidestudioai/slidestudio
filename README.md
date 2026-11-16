@@ -58,9 +58,10 @@ To'lovlar **Dodo Payments** (Merchant of Record) orqali. `.env` / Render'ga yozi
 - `DODO_PRODUCT_ID` — "Pay What You Want" mahsuloti (minimal narx $1)
 - `DODO_WEBHOOK_SECRET` — webhook signing secret (`whsec_...`)
 - `DODO_PAYMENTS_ENV` — `test` (standart, `https://test.dodopayments.com`) yoki `live`
+- `DODO_FEE_PERCENT` / `DODO_FEE_FIXED_CENTS` — mijoz narxiga qo'shiladigan komissiya (standart 5.5% + 40 sent). Formula: `gross = ceil((N + 0.40) / (1 - 0.055))`, masalan $1 → $1.49. Kredit netto (N) bo'yicha beriladi.
 
 Dodo dashboard → Webhooks: manzil `https://<manzil>/webhooks`, hodisalar: `payment.succeeded`, `refund.succeeded`.
-Checkout: `POST /api/create-checkout` `{token, amount}` → `{checkout_url}`. 1 USD = 100 kredit. Tekshiruv: `GET /api/payment/health`.
+Checkout: `POST /api/create-checkout` `{token, amount}` → `{checkout_url}`. 1 USD netto = 100 kredit. Tekshiruv: `GET /api/payment/health`.
 
 ## Lokal ishga tushirish
 ```bash

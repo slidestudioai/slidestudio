@@ -1,15 +1,19 @@
 /* js/46_topup.js — "Balansni to'ldirish" modal (Dodo Payments checkout)
  *
- * Narx: foydalanuvchi summa N ni tanlaydi (paket yoki o'z miqdori, kamida $1). Mijoz aynan N ni to'laydi
- * (Dodo — Merchant of Record, komissiya mijozga qo'shilmaydi). 1 USD = 100 kredit (+ paket bonusi).
- * Server (/api/create-checkout) kreditlarni o'zi hisoblaydi va metadata ga imzo bilan yozadi.
+ * Narx: foydalanuvchi NETTO summa N ni tanlaydi (paket yoki o'z miqdori, kamida $1).
+ * Dodo komissiyasi (standart 5.5% + $0.40) ustiga qo'shiladi:
+ *     gross = ceil((N + 0.40) / 0.945)   (cent aniqligida; $1 -> $1.49)
+ * Komissiya qiymatlari serverdan (/api/billing/plans -> fee) olinadi, server xuddi shu formulani qayta hisoblaydi.
+ * 1 USD netto = 100 kredit (+ paket bonusi). Kreditlar metadata ga imzo bilan yoziladi.
  * To'lovdan keyin Dodo /?payment=success ga qaytaradi; kreditni webhook (payment.succeeded) qo'shadi.
  */
 (function () {
   'use strict';
 
   var CREDITS_PER_USD = 100;
-  var MIN_CENTS = 100;            // $1.00
+  var FEE_PERMILLE = 55;          // 5.5%  (serverdan yangilanadi)
+  var FEE_FIXED_CENTS = 40;       // $0.40 (serverdan yangilanadi)
+  var MIN_CENTS = 100;            // $1.00 netto
   var MAX_CENTS = 100000;         // $1000.00
 
   var PACKAGES = [
@@ -28,8 +32,19 @@
 
   /* ---------------- hisob-kitob ---------------- */
   function grossCents(netCents) {
-    // Dodo Payments: komissiya mijozga qo'shilmaydi — serverdagi topup_gross_cents() bilan bir xil.
-    return netCents | 0;
+    // Butun sonlarda: float xatosiz va serverdagi topup_gross_cents() bilan bir xil natija.
+    return Math.ceil(((netCents + FEE_FIXED_CENTS) * 1000) / (1000 - FEE_PERMILLE));
+  }
+  var feeLoaded = false;
+  function loadFee() {
+    if (feeLoaded) return;
+    fetch('/api/billing/plans').then(function (r) { return r.json(); }).then(function (d) {
+      var f = d && d.fee;
+      if (f && typeof f.permille === 'number' && typeof f.fixed_cents === 'number') {
+        FEE_PERMILLE = f.permille; FEE_FIXED_CENTS = f.fixed_cents; feeLoaded = true;
+        if (els.modal && !els.modal.hidden) { if (sel && sel.package === 'custom') onCustomInput(); else render(); }
+      }
+    }).catch(function () {});
   }
   function usd(cents) { return '$' + (cents / 100).toFixed(2); }
   function num(n) { return Number(n || 0).toLocaleString('en-US'); }
@@ -115,6 +130,8 @@
 
     var net = sel ? sel.netCents : 0;
     var gross = sel ? grossCents(net) : 0;
+    setText(els.net, usd(net));
+    setText(els.fee, '+' + usd(gross - net));
     setText(els.gross, usd(gross));
     setText(els.credits, num(sel ? sel.credits : 0));
     els.payAmount.textContent = sel ? usd(gross) : '';
@@ -152,7 +169,7 @@
       sel = null;
     } else {
       els.custom.classList.remove('tu-invalid');
-      els.hint.textContent = usd(r.cents) + ' = ' + num(shownCredits) + ' kredit';
+      els.hint.textContent = usd(r.cents) + ' = ' + num(shownCredits) + ' kredit · komissiya bilan ' + usd(grossCents(r.cents));
       sel = { package: 'custom', netCents: r.cents, credits: shownCredits };
     }
     render();
@@ -181,6 +198,7 @@
     else render();
     renderBalance(false);
     refreshBalance();
+    loadFee();
     els.modal.hidden = false;
     requestAnimationFrame(function () { els.modal.classList.add('tu-open'); });
     setTimeout(function () {
@@ -373,6 +391,8 @@
       pay: document.getElementById('tuPayBtn'),
       payText: m.querySelector('.tu-cta-text'),
       payAmount: document.getElementById('tuPayAmount'),
+      net: document.getElementById('tuNet'),
+      fee: document.getElementById('tuFee'),
       balance: document.getElementById('tuBalance'),
       toast: document.getElementById('tuToast')
     };
@@ -391,6 +411,7 @@
     els.pay.addEventListener('click', checkout);
     document.addEventListener('ss:usage', function () { if (!m.hidden) renderBalance(false); });
     handleReturn();
+    loadFee();
   }
 
   // Shu oynada to'lovdan qaytilganda (/?payment=success&payment_id=...&status=...): xabar + balansni kuzatish.

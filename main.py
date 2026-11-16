@@ -64,7 +64,6 @@ try:
         can_afford,
         mode_for_model,
         PAGES_PER_PACK,
-        CHECKOUT_PRICE_USD,
         plan_active, is_unlimited, is_ad_free,
         pack_pages, pack_units, free_daily_units, rt, daily_units_for,
     )
@@ -1249,7 +1248,7 @@ def public_config():
         "supabase_publishable_key": config.get("supabase_publishable_key"),
         "free_daily": rt("free_daily_pages"),
         "pack_pages": pack_pages(),
-        "pack_price_usd": CHECKOUT_PRICE_USD,
+        "pack_price_usd": round(topup_gross_cents(pack_pages()) / 100, 2),
         "announcement": appsettings.get("announcement", ""),
         "unit": UNIT,
         "modes": {k: {"page_units": v["page"], "chat_units": v["chat"], "search_units": v["search"],
@@ -1471,12 +1470,13 @@ def user_usage(token: str = ""):
 def billing_plans():
     return {
         "plans": plans_public(),
-        "checkout_price_usd": CHECKOUT_PRICE_USD,
+        "checkout_price_usd": round(topup_gross_cents(pack_pages()) / 100, 2),
         "pages_per_pack": pack_pages(),
         "deep_pages_per_pack": pack_units() // MODES["deep"]["page"],
         "free_daily": rt("free_daily_pages"),
         "deep_free_daily": free_daily_units() // MODES["deep"]["page"],
-        "note": "Dodo Payments (Merchant of Record): mijoz tanlagan summani to'laydi, 1 USD = 100 kredit",
+        "note": f"Dodo Payments komissiyasi ({DODO_FEE_PERMILLE / 10:g}% + ${DODO_FEE_FIXED_CENTS / 100:.2f}) to'lovga qo'shiladi; 1 USD netto = 100 kredit",
+        "fee": topup_fee_public(),
         "topup_packages": {k: _topup_quote_public(_topup_quote(k, v["net_cents"], v["credits"])) for k, v in TOPUP_PACKAGES.items()},
     }
 
@@ -1586,10 +1586,25 @@ async def create_checkout(payload: Dict[str, Any] = None):
 
 
 # ---------------------------------------------------------------------------------------------
-# Kredit to'ldirish: paketlar va imzolangan metadata. 1 cent = 1 kredit (1 USD = 100 kredit).
-# Dodo Payments — Merchant of Record: mijoz aynan tanlagan summani to'laydi (komissiya bizdan ushlanadi).
+# Kredit to'ldirish: paketlar va imzolangan metadata. 1 cent netto = 1 kredit (1 USD = 100 kredit).
+# Dodo Payments komissiyasi mijoz narxiga qo'shiladi, shunda bizga tanlangan summa (N) to'liq tushadi:
+#     gross = ceil((N + FIXED) / (1 - PERCENT))
+# Standart: 5.5% + $0.40 (4% bazaviy + 1.5% xalqaro karta). Env: DODO_FEE_PERCENT, DODO_FEE_FIXED_CENTS.
+# Masalan: $1 -> $1.49, $5 -> $5.71, $10 -> $11.01, $20 -> $21.59.
 # ---------------------------------------------------------------------------------------------
-TOPUP_MIN_CENTS = 100           # $1.00 (Dodo "Pay What You Want" minimal narxi bilan bir xil)
+def _env_fee_permille() -> int:
+    try:
+        pct = float(os.environ.get("DODO_FEE_PERCENT") or 5.5)
+    except ValueError:
+        pct = 5.5
+    return max(0, min(500, int(round(pct * 10))))            # 0% .. 50%
+
+def _env_fee_fixed_cents() -> int:
+    return max(0, min(500, _env_int("DODO_FEE_FIXED_CENTS", 40)))
+
+DODO_FEE_PERMILLE = _env_fee_permille()       # 55 = 5.5%
+DODO_FEE_FIXED_CENTS = _env_fee_fixed_cents() # 40 = $0.40
+TOPUP_MIN_CENTS = 100           # $1.00 netto (mijoz komissiya bilan ko'proq to'laydi; Dodo minimal $1 dan katta)
 TOPUP_MAX_CENTS = 100_000       # $1000.00 — xato kiritishdan himoya
 TOPUP_PACKAGES: Dict[str, Dict[str, Any]] = {
     "starter":  {"net_cents": 100,  "credits": 100,  "label": "Starter"},
@@ -1600,8 +1615,20 @@ TOPUP_PACKAGES: Dict[str, Dict[str, Any]] = {
 
 
 def topup_gross_cents(net_cents: int) -> int:
-    """Mijoz to'laydigan summa. Dodo'da komissiya mijozga qo'shilmaydi -> gross = net."""
-    return int(net_cents)
+    """Mijoz to'laydigan summa (sentlarda): gross = ceil((N + FIXED) * 1000 / (1000 - PERMILLE)).
+    Butun sonlarda (float xatosiz) — frontend (js/46_topup.js) bilan bir xil natija."""
+    num = (int(net_cents) + DODO_FEE_FIXED_CENTS) * 1000
+    return -(-num // (1000 - DODO_FEE_PERMILLE))
+
+
+def topup_net_from_gross_cents(gross_cents: int) -> int:
+    """Teskari hisob (imzosiz yoki kam to'langan to'lovlar uchun): N = gross * (1 - PERCENT) - FIXED, pastga."""
+    return max(0, (int(gross_cents) * (1000 - DODO_FEE_PERMILLE)) // 1000 - DODO_FEE_FIXED_CENTS)
+
+
+def topup_fee_public() -> Dict[str, Any]:
+    return {"percent": DODO_FEE_PERMILLE / 10, "fixed_usd": DODO_FEE_FIXED_CENTS / 100,
+            "permille": DODO_FEE_PERMILLE, "fixed_cents": DODO_FEE_FIXED_CENTS}
 
 
 def _topup_quote(package: str, net_cents: int, credits: int) -> Dict[str, Any]:
@@ -1952,10 +1979,10 @@ async def dodo_webhook(request: Request):
                 return JSONResponse({"error": "user not found"}, status_code=500)
             paid = _paid_cents_usd(data)
             # Kreditlar: imzolangan metadata.credits (paket bonusi bilan); imzo yo'q/noto'g'ri yoki kam to'langan
-            # bo'lsa — to'langan summa bo'yicha (total_amount / 100 dollar -> 1 cent = 1 kredit).
+            # bo'lsa — to'langan summadan komissiyani ayirib (1 cent netto = 1 kredit).
             pages = _topup_verified_credits(meta, user_id, paid)
             if pages is None:
-                pages = paid
+                pages = topup_net_from_gross_cents(paid)
             if pages <= 0:
                 print(f"[DODO WEBHOOK] {payment_id}: summa 0 — kredit berilmadi.")
                 return {"ok": True, "ignored": "zero_amount"}
@@ -1977,7 +2004,8 @@ async def dodo_webhook(request: Request):
         remaining = max(0, orig_pages - already)
         amount = _int_or(data.get("amount"), 0)
         partial = bool(data.get("is_partial")) and amount > 0
-        pages = min(remaining, amount) if partial else remaining     # 1 cent = 1 kredit; to'liq refund -> qolgani
+        # qisman refund: qaytarilgan summadan foiz komissiya ulushi ayriladi (1 cent netto = 1 kredit); to'liq -> qolgani
+        pages = min(remaining, amount * (1000 - DODO_FEE_PERMILLE) // 1000) if partial else remaining
         if pages <= 0:
             return {"ok": True, "duplicate": True}
         key = f"refund-{pay_key}-{refund_id or amount}"
@@ -3052,7 +3080,7 @@ async def ws_chat(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "error",
                         "code": "LIMIT_EXCEEDED",
-                        "message": f"Limit tugadi.{_alt} 24 soat kuting, ${CHECKOUT_PRICE_USD:.2f} ga {pack_pages()} Tez-varaq ({pack_units() // MODES['deep']['page']} Chuqur-varaq) sotib oling.",
+                        "message": f"Limit tugadi.{_alt} 24 soat kuting, ${topup_gross_cents(pack_pages()) / 100:.2f} ga {pack_pages()} Tez-varaq ({pack_units() // MODES['deep']['page']} Chuqur-varaq) sotib oling.",
                         **payload,
                     })
                     continue
@@ -3062,7 +3090,7 @@ async def ws_chat(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "error",
                         "code": "LIMIT_EXCEEDED",
-                        "message": f"Limit tugadi: yangi slayd uchun kamida 1 varaq kerak. 24 soat kuting yoki ${CHECKOUT_PRICE_USD:.2f} ga {pack_pages()} Tez-varaq sotib oling.",
+                        "message": f"Limit tugadi: yangi slayd uchun kamida 1 varaq kerak. 24 soat kuting yoki ${topup_gross_cents(pack_pages()) / 100:.2f} ga {pack_pages()} Tez-varaq sotib oling.",
                         **usage_payload(usage),
                     })
                     continue

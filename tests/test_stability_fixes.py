@@ -250,7 +250,7 @@ def _post(client, body, path="/webhooks", headers=None):
 
 def _paid(client, payment_id="pay_1", user_id="u1", email="a@x.com", meta=None, total=None, path="/webhooks", **extra):
     if meta is None:
-        meta, gross = _signed_meta(user_id) if user_id else ({}, main.pack_pages())
+        meta, gross = _signed_meta(user_id) if user_id else ({}, main.topup_gross_cents(main.pack_pages()))
     else:
         gross = total
     data = {"payload_type": "Payment", "payment_id": payment_id, "status": "succeeded",
@@ -308,9 +308,10 @@ def test_webhook_other_events_ignored(sb, client, dodo):
 def test_webhook_partial_and_full_refund(sb, client, dodo):
     pages = main.pack_pages()
     _paid(client, payment_id="pay_4004")
-    assert _refund(client, "pay_4004", "ref_a", amount=pages // 2, partial=True).status_code == 200
-    assert sb.usage("u1")["paid_credits"] == (pages - pages // 2) * main.UNIT
-    assert _refund(client, "pay_4004", "ref_a", amount=pages // 2, partial=True).json().get("duplicate") is True
+    assert _refund(client, "pay_4004", "ref_a", amount=50, partial=True).status_code == 200
+    taken = 50 * (1000 - main.DODO_FEE_PERMILLE) // 1000                # 50 sent -> 47 kredit
+    assert sb.usage("u1")["paid_credits"] == (pages - taken) * main.UNIT
+    assert _refund(client, "pay_4004", "ref_a", amount=50, partial=True).json().get("duplicate") is True
     assert _refund(client, "pay_4004", "ref_b", amount=pages, partial=False).status_code == 200
     assert sb.usage("u1")["paid_credits"] == 0
     assert _refund(client, "pay_4004", "ref_c", amount=pages).json().get("duplicate") is True
@@ -322,18 +323,24 @@ def test_refund_unknown_payment_ignored(sb, client, dodo):
 
 
 # ---------------------------------------------------------------------------------------------
-# 8) Kredit to'ldirish: 1 cent = 1 kredit, paket bonusi imzolangan metadata orqali
+# 8) Kredit to'ldirish: Dodo komissiyasi (5.5% + $0.40) mijozga qo'shiladi, kredit netto bo'yicha
 # ---------------------------------------------------------------------------------------------
-def test_topup_gross_equals_net():
-    for c in (100, 500, 750, 2000):
-        assert main.topup_gross_cents(c) == c
+@pytest.mark.parametrize("net_cents,gross", [(100, 149), (500, 572), (1000, 1101), (2000, 2159), (750, 836)])
+def test_topup_gross_formula(net_cents, gross):
+    import math
+    assert (main.DODO_FEE_PERMILLE, main.DODO_FEE_FIXED_CENTS) == (55, 40)
+    assert main.topup_gross_cents(net_cents) == gross
+    assert math.ceil((net_cents + 40) / 0.945) == gross                 # frontend formulasi bilan bir xil
+    assert main.topup_net_from_gross_cents(gross) == net_cents          # teskari hisob nettoni beradi
+    # Dodo komissiyasi (5.5% + 40c) ayrilgandan keyin bizga kamida netto tushadi
+    assert gross - math.ceil(gross * 0.055) - 40 >= net_cents
 
 
 def test_topup_quote_presets_and_custom():
     q, err = main._topup_quote_from_payload({"package": "popular"})
-    assert not err and q["credits"] == 550 and q["net_cents"] == 500 and q["gross_cents"] == 500
+    assert not err and q["credits"] == 550 and q["net_cents"] == 500 and q["gross_cents"] == 572
     q, err = main._topup_quote_from_payload({"package": "custom", "net_amount": 7.5, "credits": 999999})
-    assert not err and q["credits"] == 750 and q["gross_cents"] == 750  # mijoz yuborgan credits e'tiborsiz
+    assert not err and q["credits"] == 750 and q["gross_cents"] == 836  # mijoz yuborgan credits e'tiborsiz
     assert main._topup_quote_from_payload({"net_amount": 0.99})[1]
     assert main._topup_quote_from_payload({"net_amount": "abc"})[1]
     assert main._topup_quote_from_payload({"net_amount": "nan"})[1]
@@ -350,19 +357,19 @@ def test_webhook_tampered_metadata_falls_back_to_amount(sb, client, dodo):
     meta, gross = _signed_meta("u1", "custom", 100, 100)
     meta["credits"] = "100000"                                          # soxtalashtirilgan
     assert _paid(client, payment_id="pay_7007", meta=meta, total=gross).status_code == 200
-    assert sb.usage("u1")["paid_credits"] == 100 * main.UNIT
+    assert sb.usage("u1")["paid_credits"] == 100 * main.UNIT              # 149 sent -> netto 100 kredit
 
 
-@pytest.mark.parametrize("paid_cents", [100, 500, 1999])
-def test_webhook_underpaid_signed_order_uses_amount(sb, client, dodo, paid_cents):
-    meta, _ = _signed_meta("u1", "business", 2000, 2600)
+@pytest.mark.parametrize("paid_cents,credits", [(149, 100), (572, 500), (2158, 1999)])
+def test_webhook_underpaid_signed_order_uses_net(sb, client, dodo, paid_cents, credits):
+    meta, gross = _signed_meta("u1", "business", 2000, 2600)            # $21.59 kutilgan
     assert _paid(client, payment_id=f"pay_8{paid_cents}", meta=meta, total=paid_cents).status_code == 200
-    assert sb.usage("u1")["paid_credits"] == paid_cents * main.UNIT      # bonus berilmaydi
+    assert sb.usage("u1")["paid_credits"] == credits * main.UNIT         # bonus berilmaydi
 
 
 def test_webhook_tax_is_not_credited(sb, client, dodo):
-    meta, _ = _signed_meta("u1", "custom", 500, 500)
-    assert _paid(client, payment_id="pay_tax", meta=meta, total=600, tax=100).status_code == 200
+    meta, gross = _signed_meta("u1", "custom", 500, 500)
+    assert _paid(client, payment_id="pay_tax", meta=meta, total=gross + 100, tax=100).status_code == 200
     assert sb.usage("u1")["paid_credits"] == 500 * main.UNIT
 
 
@@ -383,13 +390,13 @@ def test_webhook_rejects_bad_or_missing_signature(sb, client, dodo):
 
 
 def test_webhook_multiple_signatures_header(sb, client, dodo):
-    body = {"type": "payment.succeeded", "data": {"payment_id": "pay_ms", "status": "succeeded", "total_amount": 300,
+    body = {"type": "payment.succeeded", "data": {"payment_id": "pay_ms", "status": "succeeded", "total_amount": 360,
                                                   "currency": "USD", "metadata": {"user_id": "u1"}}}
     raw = json.dumps(body).encode()
     h = _std_sign(raw)
     h["webhook-signature"] = "v1,AAAA " + h["webhook-signature"]
     assert client.post("/webhooks", content=raw, headers=h).status_code == 200
-    assert sb.usage("u1")["paid_credits"] == 300 * main.UNIT
+    assert sb.usage("u1")["paid_credits"] == main.topup_net_from_gross_cents(360) * main.UNIT
 
 
 def test_webhook_without_secret_is_refused(sb, client, monkeypatch):
@@ -418,18 +425,25 @@ def test_create_checkout_body(monkeypatch):
     code, data = asyncio.run(main._build_checkout("u1", "a@x.com", "https://app.test", "pack",
                                                   quote=main._topup_quote("popular", 500, 550)))
     assert code == 200 and data["checkout_url"].endswith("cks_1") and data["session_id"] == "cks_1"
-    assert data["quote"] == {"package": "popular", "credits": 550, "net_usd": 5.0, "fee_usd": 0.0, "gross_usd": 5.0}
+    assert data["quote"] == {"package": "popular", "credits": 550, "net_usd": 5.0, "fee_usd": 0.72, "gross_usd": 5.72}
     assert captured["method"] == "POST" and captured["path"] == "/checkouts"
     assert captured["base"] == "https://test.dodopayments.com" and captured["key"] == "k"
     b = captured["body"]
-    assert b["product_cart"] == [{"product_id": "pdt_test", "quantity": 1, "amount": 500}]
+    assert b["product_cart"] == [{"product_id": "pdt_test", "quantity": 1, "amount": 572}]   # komissiya bilan, sentda
     assert b["return_url"] == "https://app.test/?payment=success"
     assert b["customer"]["email"] == "a@x.com"
     md = b["metadata"]
     assert all(isinstance(v, str) for v in md.values())
     assert md["user_id"] == "u1" and md["credits"] == "550"
-    assert main._topup_verified_credits(md, "u1", 500) == 550
-    assert main._topup_verified_credits(md, "someone-else", 500) is None
+    assert main._topup_verified_credits(md, "u1", 572) == 550
+    assert main._topup_verified_credits(md, "u1", 571) is None
+    assert main._topup_verified_credits(md, "someone-else", 572) is None
+
+
+def test_billing_plans_exposes_fee(client):
+    d = client.get("/api/billing/plans").json()
+    assert d["fee"] == {"percent": 5.5, "fixed_usd": 0.4, "permille": 55, "fixed_cents": 40}
+    assert d["topup_packages"]["starter"]["gross_usd"] == 1.49
 
 
 def test_live_mode_base_url(monkeypatch):
