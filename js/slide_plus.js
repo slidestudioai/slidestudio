@@ -1,7 +1,7 @@
 /* js/slide_plus.js (v66) — slayd ustidagi «+» tugmasi: qurilmadan rasm qo'shish (eski skrepka o'rnida)
  *  Rasmlar «Rasmlar:» qatoriga raqamlanib tushadi (triggerSidebarImageUpload) — AI ularni slaydlarga joylaydi.
- *  Joyi: DOIM slayddan tashqarida, chap-yuqori burchakda. Kompyuterda — burchakdan chap-tepada (diagonal),
- *  telefonda (chapda joy yo'q) — slayd ustida, chap chetiga tekis. Joyi aniqlanmaguncha ko'rinmaydi (sakramaydi).
+ *  Joyi: DOIM ish maydonining chap-yuqori burchagida (toolbar ostida, chap panel o'ngida), tepadan va chapdan
+ *  bir xil 14 px. Kompyuterda ham, telefonda ham. Joyi aniqlanmaguncha ko'rinmaydi (sakramaydi).
  */
 (function () {
   'use strict';
@@ -41,12 +41,11 @@
     });
     document.body.appendChild(b);        // v66: fixed — hech qanday blok (overflow:hidden) tugmani kesmaydi
 
-    // v66: tugma DOIM slayddan TASHQARIDA, chap-yuqori burchakda (ekranga nisbatan, position:fixed):
-    //   • chapda joy bo'lsa (kompyuter/planshet) — burchakdan chapga va tepaga (diagonal);
-    //   • chapda joy bo'lmasa (telefon) — slayd USTIDA, chap chetiga tekis.
-    //   • toolbar/header ustiga chiqmaydi. Joyi aniqlanmaguncha ko'rinmaydi (sakramaydi).
+    // v66: tugma DOIM ish maydonining (toolbar ostidagi, chap panel o'ngidagi joyning) CHAP-YUQORI burchagida,
+    // tepadan va chapdan bir xil kichik masofa bilan. Chap panel ochilib-yopilsa, toolbar yashirinsa — burchak bilan birga
+    // siljiydi (position:fixed). Ish maydoni tepasida «Rasmlar:» / previews qatori ochiq bo'lsa — uning ostida turadi.
     b.style.visibility = 'hidden';
-    var S = 34, GAP = 10, shown = false, last = '', stable = 0, raf = 0;
+    var M = 14, shown = false, last = '', stable = 0, raf = 0;
     function appReady() {
       var ov = document.getElementById('loadingOverlay');
       if (ov) { var cs = getComputedStyle(ov); if (cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') return false; }
@@ -55,22 +54,16 @@
     function visibleBottom(el) {
       if (!el) return 0;
       var r = el.getBoundingClientRect(), cs = getComputedStyle(el);
-      return (cs.display === 'none' || cs.visibility === 'hidden' || !r.height) ? 0 : r.bottom;
+      return (cs.display === 'none' || cs.visibility === 'hidden' || r.height < 2) ? 0 : r.bottom;
     }
     function place() {
-      var cr = card.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
-      if (!cr.width || !cr.height || cr.bottom < 0 || cr.top > innerHeight) { b.style.visibility = 'hidden'; shown = false; return false; }
-      var hdr = document.querySelector('.header-actions');
-      var topLimit = Math.max(visibleBottom(document.getElementById('ribbonToolbar')), visibleBottom(hdr && hdr.parentElement), 0) + 4;
-      var leftLimit = Math.max(wr.left, 0) + 4;
-      var x, y = cr.top - S - 6;                                     // slayd ustida
-      if (cr.left - S - GAP >= leftLimit) x = cr.left - S - GAP;     // chapda joy bor — diagonal (burchakdan chap-tepa)
-      else x = Math.max(leftLimit, cr.left);                         // telefon — slayd ustida, chap chetiga tekis
-      if (y < topLimit) y = topLimit;                                // toolbar ustiga chiqmasin
-      if (y + S > cr.top && x + S > cr.left) {                       // baribir slayd ustiga tushsa — chap tomonga suramiz
-        x = Math.max(2, cr.left - S - 4);
-      }
-      x = Math.round(x); y = Math.round(y);
+      var wr = wrap.getBoundingClientRect();
+      if (!wr.width || !wr.height || card.getBoundingClientRect().width === 0) { b.style.visibility = 'hidden'; shown = false; return false; }
+      var top = Math.max(wr.top,
+        visibleBottom(document.getElementById('pendingImagesBar')),
+        visibleBottom(document.getElementById('workspacePreviewsBar')));
+      var x = Math.round(Math.max(0, wr.left) + M);
+      var y = Math.round(Math.max(0, top) + M);
       b.style.left = x + 'px';
       b.style.top = y + 'px';
       var key = x + ',' + y;
@@ -91,6 +84,13 @@
     wrap.addEventListener('scroll', schedule, { passive: true });
     if (scroller !== wrap) scroller.addEventListener('scroll', schedule, { passive: true });
     try { new ResizeObserver(schedule).observe(wrap); new ResizeObserver(schedule).observe(card); } catch (e) {}
+    ['sidebar', 'ribbonToolbar', 'pendingImagesBar', 'workspacePreviewsBar'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      try { new ResizeObserver(schedule).observe(el); } catch (e) {}
+      try { new MutationObserver(schedule).observe(el, { attributes: true, attributeFilter: ['style', 'class'] }); } catch (e) {}
+      el.addEventListener('transitionend', schedule);
+    });
     try { new MutationObserver(schedule).observe(card, { attributes: true, attributeFilter: ['style', 'class'] }); } catch (e) {}
     card.addEventListener('transitionend', schedule);
     setInterval(function () { if (!raf) { place(); if (!shown) schedule(); } }, 1000);   // zaxira
