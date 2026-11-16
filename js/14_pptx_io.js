@@ -1562,7 +1562,24 @@
     if (!spPr) return null;
     if (kid(spPr, NS_A, 'noFill')) return { none: true };
     var sf = kid(spPr, NS_A, 'solidFill');
-    return sf ? readColorNode(sf, theme) : null;
+    if (sf) return readColorNode(sf, theme);
+    // v67: chiziqli gradient (a:gradFill) — Fabric gradientiga aylantiriladi; hex = birinchi rang (zaxira)
+    var gf = kid(spPr, NS_A, 'gradFill'), gl = gf && kid(gf, NS_A, 'gsLst');
+    if (!gl) return null;
+    var stops = kids(gl, NS_A, 'gs').map(function (g) {
+      var c = readColorNode(g.firstElementChild, theme);
+      return c ? { offset: Math.max(0, Math.min(1, num(g.getAttribute('pos'), 0) / 100000)), color: c.hex, opacity: c.alpha == null ? 1 : c.alpha } : null;
+    }).filter(Boolean).sort(function (a, b) { return a.offset - b.offset; });
+    if (!stops.length) return null;
+    var lin = kid(gf, NS_A, 'lin');
+    return { hex: stops[0].color, alpha: 1, grad: { stops: stops, ang: lin ? num(lin.getAttribute('ang'), 0) / 60000 : 90, radial: !lin && !!kid(gf, NS_A, 'path') } };
+  }
+  /** Fabric gradient (obyekt chap-yuqori burchagiga nisbatan, px) */
+  function fabricGradient(fill, W, H) {
+    var g = fill.grad, a = g.ang * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+    if (g.radial) return { type: 'radial', gradientUnits: 'pixels', coords: { x1: W / 2, y1: H / 2, r1: 0, x2: W / 2, y2: H / 2, r2: Math.max(W, H) / 2 }, colorStops: g.stops, offsetX: 0, offsetY: 0 };
+    var L = (Math.abs(W * c) + Math.abs(H * sn)) / 2;
+    return { type: 'linear', gradientUnits: 'pixels', coords: { x1: W / 2 - c * L, y1: H / 2 - sn * L, x2: W / 2 + c * L, y2: H / 2 + sn * L }, colorStops: g.stops, offsetX: 0, offsetY: 0 };
   }
   function isDark(hex) {
     var v = parseInt(hex.replace('#', ''), 16);
@@ -1591,6 +1608,21 @@
       out.x = g.offX + (out.x - g.chOffX) * kx;
       out.y = g.offY + (out.y - g.chOffY) * ky;
       out.cx *= kx; out.cy *= ky;
+      // v67: guruhning o'z burilishi va akslantirishi bolalarga ham qo'llanadi (oldin tashlab ketilardi)
+      if (g.rot || g.flipH || g.flipV) {
+        var gcx = g.offX + g.extX / 2, gcy = g.offY + g.extY / 2;
+        var ccx = out.x + out.cx / 2, ccy = out.y + out.cy / 2;
+        if (g.flipH) { ccx = 2 * gcx - ccx; out.flipH = !out.flipH; out.rot = -out.rot; }
+        if (g.flipV) { ccy = 2 * gcy - ccy; out.flipV = !out.flipV; out.rot = -out.rot; }
+        if (g.rot) {
+          var a = g.rot * Math.PI / 180, dx = ccx - gcx, dy = ccy - gcy;
+          ccx = gcx + dx * Math.cos(a) - dy * Math.sin(a);
+          ccy = gcy + dx * Math.sin(a) + dy * Math.cos(a);
+          out.rot += g.rot;
+        }
+        out.rot = ((out.rot % 360) + 360) % 360;
+        out.x = ccx - out.cx / 2; out.y = ccy - out.cy / 2;
+      }
     }
     return out;
   }
@@ -1624,50 +1656,135 @@
     return null;
   }
 
-  function readTextBody(txBody, theme, defaultPt, phType) {
+  /* v67: joy egallovchi (placeholder) matn uslubi merosi: master txStyles → master placeholder → layout placeholder.
+     Har daraja (lvl1..9) uchun: o'lcham, qalinlik, tekislash, marker (•), qator oralig'i. */
+  function readLvlStyles(lst, theme, into) {
+    if (!lst) return into;
+    for (var lv = 1; lv <= 9; lv++) {
+      var pp = kid(lst, NS_A, 'lvl' + lv + 'pPr');
+      if (!pp) continue;
+      var o = into[lv] = Object.assign({}, into[lv] || {});
+      if (pp.getAttribute('algn')) o.algn = pp.getAttribute('algn');
+      if (kid(pp, NS_A, 'buNone')) o.bu = 'none';
+      var bc = kid(pp, NS_A, 'buChar'); if (bc) o.bu = bc.getAttribute('char') || '\u2022';
+      var ls = kid(pp, NS_A, 'lnSpc'), lp = ls && kid(ls, NS_A, 'spcPct'); if (lp) o.ln = num(lp.getAttribute('val'), 100000) / 100000;
+      var dr = kid(pp, NS_A, 'defRPr');
+      if (dr) {
+        if (dr.getAttribute('sz')) o.sz = num(dr.getAttribute('sz'), 0) / 100;
+        if (dr.getAttribute('b') != null) o.b = dr.getAttribute('b') === '1';
+        if (dr.getAttribute('i') != null) o.i = dr.getAttribute('i') === '1';
+        var c = readColorNode(kid(dr, NS_A, 'solidFill'), theme); if (c) o.color = c;
+        var lat = kid(dr, NS_A, 'latin'); if (lat && lat.getAttribute('typeface')) { var tf = lat.getAttribute('typeface'); o.font = tf === '+mj-lt' ? theme.fonts.major : (tf === '+mn-lt' ? theme.fonts.minor : tf); }
+      }
+    }
+    return into;
+  }
+  function findPhSp(doc, ph) {
+    if (!doc || !ph) return null;
+    var type = ph.getAttribute('type') || 'body', idx = ph.getAttribute('idx');
+    var tree = doc.getElementsByTagNameNS(NS_P, 'spTree')[0];
+    if (!tree) return null;
+    var sps = kids(tree, NS_P, 'sp'), byType = null;
+    for (var j = 0; j < sps.length; j++) {
+      var nv = kid(sps[j], NS_P, 'nvSpPr'), nvPr = nv && kid(nv, NS_P, 'nvPr'), p2 = nvPr && kid(nvPr, NS_P, 'ph');
+      if (!p2) continue;
+      var t2 = p2.getAttribute('type') || 'body';
+      if (idx != null && p2.getAttribute('idx') === idx) return sps[j];
+      if (!byType && (t2 === type || (type === 'ctrTitle' && t2 === 'title') || (type === 'obj' && t2 === 'body'))) byType = sps[j];
+    }
+    return byType;
+  }
+  function phInherit(ph, phType, layoutDoc, masterDoc, theme) {
+    if (!ph) return null;
+    var inh = {};
+    var isTitle = /title/i.test(phType || ''), isBody = !isTitle && !/^(dt|ftr|sldNum)$/.test(phType || '');
+    var tx = masterDoc && masterDoc.getElementsByTagNameNS(NS_P, 'txStyles')[0];
+    if (tx) readLvlStyles(kid(tx, NS_P, isTitle ? 'titleStyle' : (isBody ? 'bodyStyle' : 'otherStyle')), theme, inh);
+    [masterDoc, layoutDoc].forEach(function (d) {
+      var sp = findPhSp(d, ph), tb = sp && kid(sp, NS_P, 'txBody');
+      if (tb) readLvlStyles(kid(tb, NS_A, 'lstStyle'), theme, inh);
+    });
+    return inh;
+  }
+
+  /* v67: matn bo'laklari (run) O'Z uslubi bilan o'qiladi — o'lcham, qalinlik, kursiv, rang, shrift har bo'lakda alohida
+     (oldin butun quti eng uzun bo'lak uslubini olardi: sarlavha + oddiy matn bir xil katta va qalin bo'lib qolardi).
+     Natija: Fabric Textbox «styles» (qator / belgi indeksi bo'yicha). PowerPoint'ning normAutofit fontScale ham qo'llanadi. */
+  function readTextBody(txBody, theme, defaultPt, phType, inh) {
+    inh = readLvlStyles(kid(txBody, NS_A, 'lstStyle'), theme, Object.assign({}, inh || {}));
+    var bp = kid(txBody, NS_A, 'bodyPr');
+    var af = bp && kid(bp, NS_A, 'normAutofit');
+    var fontScale = af && af.getAttribute('fontScale') ? num(af.getAttribute('fontScale'), 100000) / 100000 : 1;
+    var lnRed = af && af.getAttribute('lnSpcReduction') ? num(af.getAttribute('lnSpcReduction'), 0) / 100000 : 0;
+    var isTitle = /title/i.test(phType || '');
+    var inhAny = Object.keys(inh).length > 0;
     var paras = kids(txBody, NS_A, 'p');
-    var lines = [], best = null, align = null;
-    paras.forEach(function (p) {
+    var lines = [''], runs = [], align = null, lnPct = null;
+    function push(t, rec) {
+      for (var k = 0; k < t.length; k++) {
+        if (t[k] === '\n') { lines.push(''); continue; }
+        if (rec) runs.push({ line: lines.length - 1, ch: lines[lines.length - 1].length, rec: rec });
+        lines[lines.length - 1] += t[k];
+      }
+    }
+    paras.forEach(function (p, pi) {
+      if (pi > 0) lines.push('');
       var pPr = kid(p, NS_A, 'pPr');
-      if (pPr && pPr.getAttribute('algn') && !align) align = pPr.getAttribute('algn');
-      var line = '';
-      var bu = pPr && kid(pPr, NS_A, 'buChar');
-      if (bu) line += (bu.getAttribute('char') || '•') + ' ';
+      var lvS = inh[(pPr ? num(pPr.getAttribute('lvl'), 0) : 0) + 1] || {};
+      var pAl = (pPr && pPr.getAttribute('algn')) || lvS.algn;
+      if (pAl && !align) align = pAl;
+      var ls = pPr && kid(pPr, NS_A, 'lnSpc'), lsp = ls && kid(ls, NS_A, 'spcPct');
+      if (lnPct == null) lnPct = lsp ? num(lsp.getAttribute('val'), 100000) / 100000 : (lvS.ln != null ? lvS.ln : null);
+      var endR = kid(p, NS_A, 'endParaRPr');
+      var buEl = pPr && kid(pPr, NS_A, 'buChar');
+      var buCh = buEl ? (buEl.getAttribute('char') || '\u2022') : ((pPr && kid(pPr, NS_A, 'buNone')) ? null : (lvS.bu && lvS.bu !== 'none' ? lvS.bu : null));
+      var bu = buCh ? { getAttribute: function () { return buCh; } } : null;
+      var hasText = kids(p, NS_A).some(function (n) { return (n.localName === 'r' || n.localName === 'fld') && kid(n, NS_A, 't') && kid(n, NS_A, 't').textContent; });
       kids(p, NS_A).forEach(function (n) {
-        if (n.localName === 'br') { line += '\n'; return; }
+        if (n.localName === 'br') { push('\n'); return; }
         if (n.localName !== 'r' && n.localName !== 'fld') return;
         var tEl = kid(n, NS_A, 't');
-        var t = tEl ? tEl.textContent : '';
-        line += t;
+        var t = tEl ? tEl.textContent.replace(/\r?\n/g, ' ') : '';
         var rPr = kid(n, NS_A, 'rPr');
-        var rec = { len: t.length, sz: null, b: false, i: false, u: false, color: null, font: null };
+        var rec = { sz: lvS.sz || null, b: lvS.b != null ? lvS.b : null, i: !!lvS.i, u: false, color: lvS.color || null, font: lvS.font || null };
         if (rPr) {
           if (rPr.getAttribute('sz')) rec.sz = num(rPr.getAttribute('sz'), 0) / 100;
-          rec.b = rPr.getAttribute('b') === '1' || rPr.getAttribute('b') === 'true';
-          rec.i = rPr.getAttribute('i') === '1' || rPr.getAttribute('i') === 'true';
+          if (rPr.getAttribute('b') != null) rec.b = rPr.getAttribute('b') === '1' || rPr.getAttribute('b') === 'true';
+          if (rPr.getAttribute('i') != null) rec.i = rPr.getAttribute('i') === '1' || rPr.getAttribute('i') === 'true';
           var u = rPr.getAttribute('u'); rec.u = !!u && u !== 'none';
-          rec.color = readColorNode(kid(rPr, NS_A, 'solidFill'), theme);
+          rec.color = readColorNode(kid(rPr, NS_A, 'solidFill'), theme) || rec.color;
           var lat = kid(rPr, NS_A, 'latin');
           if (lat && lat.getAttribute('typeface')) {
             var tf = lat.getAttribute('typeface');
             rec.font = tf === '+mj-lt' ? theme.fonts.major : (tf === '+mn-lt' ? theme.fonts.minor : tf);
           }
         }
-        if (!best || rec.len > best.len) best = rec;
+        if (bu && hasText && lines[lines.length - 1] === '') push((bu.getAttribute('char') || '•') + ' ', rec);
+        push(t, rec);
       });
-      lines.push(line);
+      if (!hasText && endR && endR.getAttribute('sz')) runs.push({ line: lines.length - 1, ch: -1, rec: { sz: num(endR.getAttribute('sz'), 0) / 100 } });
     });
     var text = lines.join('\n').replace(/\s+$/, '');
     if (!text.trim()) return null;
+    // asosiy (eng ko'p belgiga ega) uslub — qutining o'zi; farq qiladiganlari «styles» ga
+    var cnt = {}, best = null, bestN = -1;
+    runs.forEach(function (r) { if (r.ch < 0) return; var k = JSON.stringify(r.rec); cnt[k] = (cnt[k] || 0) + 1; if (cnt[k] > bestN) { bestN = cnt[k]; best = r.rec; } });
     best = best || {};
+    function eff(rec) {
+      return {
+        pt: (rec.sz || defaultPt) * fontScale,
+        bold: rec.b == null ? (inhAny ? false : isTitle) : rec.b,
+        italic: !!rec.i, underline: !!rec.u,
+        color: rec.color, font: rec.font || (isTitle ? theme.fonts.major : theme.fonts.minor)
+      };
+    }
+    var base = eff(best);
+    var styled = runs.filter(function (r) { return r.ch >= 0; }).map(function (r) { return { line: r.line, ch: r.ch, e: eff(r.rec) }; });
     return {
-      text: text,
-      pt: best.sz || defaultPt,
-      bold: !!best.b || phType === 'title' || phType === 'ctrTitle',
-      italic: !!best.i, underline: !!best.u,
-      color: best.color, font: best.font || (/title/i.test(phType || '') ? theme.fonts.major : theme.fonts.minor),
-      align: ({ l: 'left', ctr: 'center', r: 'right', just: 'justify' })[align] || 'left',
-      paraCount: lines.length
+      text: text, pt: base.pt, bold: base.bold, italic: base.italic, underline: base.underline, color: base.color, font: base.font,
+      align: ({ l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'justify' })[align] || 'left',
+      paraCount: lines.length, runs: styled,
+      lineScale: Math.max(0.6, (lnPct == null ? 1 : lnPct) * (1 - lnRed))
     };
   }
 
@@ -1680,6 +1797,66 @@
       var tg = rid && srels[rid] && srels[rid].target;
       return (tg && /^https?:\/\//i.test(tg)) ? String(tg).slice(0, 500) : '';
     } catch (e) { return ''; }
+  }
+
+  /* v67: PowerPoint erkin shakli (custGeom) → Fabric yo'li (path). Nuqtalar shakl qutisiga masshtablanadi,
+     aylantirish va akslantirish (flipH/V) nuqtalarga qo'llanadi — yo'l slaydda aynan o'z joyida chiziladi. */
+  function custGeomToPath(cg, xf, base, sc, X0, Y0) {
+    var pl = kid(cg, NS_A, 'pathLst');
+    if (!pl) return null;
+    var W = xf.cx * sc, H = xf.cy * sc, L = X0 + xf.x * sc, T = Y0 + xf.y * sc, cx = L + W / 2, cy = T + H / 2;
+    var ang = (xf.rot || 0) * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
+    var flips = (xf.flipH ? 1 : 0) + (xf.flipV ? 1 : 0);
+    var d = [], anyFill = false, anyStroke = false;
+    function P(px, py, pw, ph) {
+      var x = L + (pw ? px / pw : 0) * W, y = T + (ph ? py / ph : 0) * H;
+      if (xf.flipH) x = 2 * cx - x;
+      if (xf.flipV) y = 2 * cy - y;
+      var dx = x - cx, dy = y - cy;
+      return [cx + dx * ca - dy * sa, cy + dx * sa + dy * ca];
+    }
+    function f(v) { return Math.round(v * 100) / 100; }
+    kids(pl, NS_A, 'path').forEach(function (path) {
+      var pw = num(path.getAttribute('w'), xf.cx) || xf.cx, ph = num(path.getAttribute('h'), xf.cy) || xf.cy;
+      if (path.getAttribute('fill') !== 'none') anyFill = true;
+      if (path.getAttribute('stroke') !== '0' && path.getAttribute('stroke') !== 'false') anyStroke = true;
+      var cur = [0, 0], start = [0, 0];
+      kids(path, NS_A).forEach(function (c) {
+        var pts = kids(c, NS_A, 'pt').map(function (p) { return [num(p.getAttribute('x'), 0), num(p.getAttribute('y'), 0)]; });
+        var q;
+        switch (c.localName) {
+          case 'moveTo': if (pts[0]) { cur = pts[0]; start = cur; q = P(cur[0], cur[1], pw, ph); d.push('M', f(q[0]), f(q[1])); } break;
+          case 'lnTo': if (pts[0]) { cur = pts[0]; q = P(cur[0], cur[1], pw, ph); d.push('L', f(q[0]), f(q[1])); } break;
+          case 'cubicBezTo':
+            if (pts.length === 3) { var a1 = P(pts[0][0], pts[0][1], pw, ph), a2 = P(pts[1][0], pts[1][1], pw, ph), a3 = P(pts[2][0], pts[2][1], pw, ph); d.push('C', f(a1[0]), f(a1[1]), f(a2[0]), f(a2[1]), f(a3[0]), f(a3[1])); cur = pts[2]; }
+            break;
+          case 'quadBezTo':
+            if (pts.length === 2) { var b1 = P(pts[0][0], pts[0][1], pw, ph), b2 = P(pts[1][0], pts[1][1], pw, ph); d.push('Q', f(b1[0]), f(b1[1]), f(b2[0]), f(b2[1])); cur = pts[1]; }
+            break;
+          case 'arcTo': {
+            var wR = num(c.getAttribute('wR'), 0), hR = num(c.getAttribute('hR'), 0);
+            var st = num(c.getAttribute('stAng'), 0) / 60000 * Math.PI / 180, sw = num(c.getAttribute('swAng'), 0) / 60000 * Math.PI / 180;
+            var ccx = cur[0] - wR * Math.cos(st), ccy = cur[1] - hR * Math.sin(st);
+            var ex = ccx + wR * Math.cos(st + sw), ey = ccy + hR * Math.sin(st + sw);
+            var e2 = P(ex, ey, pw, ph);
+            var rx = Math.abs(wR / pw * W), ry = Math.abs(hR / ph * H);
+            var sweep = sw > 0 ? 1 : 0; if (flips % 2) sweep = 1 - sweep;
+            if (rx > 0 && ry > 0) d.push('A', f(rx), f(ry), f(xf.rot || 0), Math.abs(sw) > Math.PI ? 1 : 0, sweep, f(e2[0]), f(e2[1]));
+            else d.push('L', f(e2[0]), f(e2[1]));
+            cur = [ex, ey];
+            break;
+          }
+          case 'close': d.push('Z'); cur = start; break;
+          default: break;
+        }
+      });
+    });
+    if (d.length < 4) return null;
+    var o = Object.assign({}, base, { type: 'path', path: d.join(' '), angle: 0, flipX: false, flipY: false, strokeLineJoin: 'round' });
+    delete o.left; delete o.top; delete o.width; delete o.height;   // Fabric o'zi yo'l chegarasidan hisoblaydi
+    if (!anyFill) o.fill = '';
+    if (!anyStroke) { o.stroke = null; o.strokeWidth = 0; }
+    return o;
   }
 
   async function importNativePptx(zip, file) {
@@ -1745,21 +1922,22 @@
       if (!sf) continue;
       var sdoc = parseXml(await sf.async('string'));
       var srels = await readRels(zip, sp);
-      var layoutDoc = null, masterDoc = null;
+      var layoutDoc = null, masterDoc = null, layoutRels = null, masterRels = null;
       try {
         var lrel = Object.keys(srels).map(function (k) { return srels[k]; }).filter(function (r) { return /slideLayout$/.test(r.type); })[0];
         if (lrel && zip.file(lrel.target)) {
           layoutDoc = parseXml(await zip.file(lrel.target).async('string'));
           var lrels = await readRels(zip, lrel.target);
+          layoutRels = lrels;
           var mrel = Object.keys(lrels).map(function (k) { return lrels[k]; }).filter(function (r) { return /slideMaster$/.test(r.type); })[0];
-          if (mrel && zip.file(mrel.target)) masterDoc = parseXml(await zip.file(mrel.target).async('string'));
+          if (mrel && zip.file(mrel.target)) { masterDoc = parseXml(await zip.file(mrel.target).async('string')); masterRels = await readRels(zip, mrel.target); }
         }
       } catch (e) {  }
 
       var out = { version: FAB_VER, objects: [], background: '#ffffff' };
 
       var bgDone = false;
-      var bgDocs = [[sdoc, srels], [layoutDoc, null], [masterDoc, null]];
+      var bgDocs = [[sdoc, srels], [layoutDoc, layoutRels], [masterDoc, masterRels]];
       for (var bi = 0; bi < bgDocs.length && !bgDone; bi++) {
         var bd = bgDocs[bi][0];
         if (!bd) continue;
@@ -1767,7 +1945,12 @@
         var bgPr = bg && kid(bg, NS_P, 'bgPr');
         if (!bgPr) continue;
         var bgc = kid(bgPr, NS_A, 'solidFill') ? readColorNode(kid(bgPr, NS_A, 'solidFill'), theme) : null;
-        if (bgc) { out.background = bgc.hex; bgDone = true; break; }
+        if (bgc) {
+          var ba = bgc.alpha == null ? 1 : bgc.alpha;           // v67: shaffof fon rangi oq ustida aralashtiriladi
+          if (ba < 0.999) { var bv = parseInt(bgc.hex.slice(1), 16), mix = function (c) { return Math.round(c * ba + 255 * (1 - ba)); };
+            bgc = { hex: '#' + [mix((bv >> 16) & 255), mix((bv >> 8) & 255), mix(bv & 255)].map(function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('') }; }
+          out.background = bgc.hex; bgDone = true; break;
+        }
         var blip = kid(bgPr, NS_A, 'blipFill');
         var blipEl = blip && kid(blip, NS_A, 'blip');
         var rid2 = blipEl && blipEl.getAttributeNS(NS_R, 'embed');
@@ -1858,7 +2041,8 @@
         return null;
       };
 
-      var walk = async function (container, groups) {
+      var curRels = srels, curDecor = false;     // v67: layout/master bezaklari ham o'qiladi (o'z rels'i bilan)
+      var walk = async function (container, groups, gFill) {
         var nodes = kids(container);
         for (var ni = 0; ni < nodes.length; ni++) {
           var n = nodes[ni];
@@ -1867,26 +2051,28 @@
             var ln = n.localName;
             if (ln === 'grpSp') {
               var gp = kid(n, NS_P, 'grpSpPr'), gx = gp && kid(gp, NS_A, 'xfrm');
+              var gf2 = (gp && kid(gp, NS_A, 'grpFill')) ? gFill : ((gp && fillOf(gp, theme)) || gFill);
               if (gx) {
                 var o1 = kid(gx, NS_A, 'off'), e1 = kid(gx, NS_A, 'ext'), co = kid(gx, NS_A, 'chOff'), ce = kid(gx, NS_A, 'chExt');
                 if (o1 && e1 && co && ce) {
                   await walk(n, groups.concat([{
+                    rot: num(gx.getAttribute('rot'), 0) / 60000, flipH: gx.getAttribute('flipH') === '1', flipV: gx.getAttribute('flipV') === '1',
                     offX: num(o1.getAttribute('x'), 0), offY: num(o1.getAttribute('y'), 0),
                     extX: num(e1.getAttribute('cx'), 1), extY: num(e1.getAttribute('cy'), 1),
                     chOffX: num(co.getAttribute('x'), 0), chOffY: num(co.getAttribute('y'), 0),
                     chExtX: num(ce.getAttribute('cx'), 1), chExtY: num(ce.getAttribute('cy'), 1)
-                  }]));
+                  }]), gf2);
                   continue;
                 }
               }
-              await walk(n, groups);
+              await walk(n, groups, gf2);
               continue;
             }
             if (ln === 'graphicFrame') {
               var gd = n.getElementsByTagNameNS(NS_A, 'graphicData')[0];
               var uri = gd ? (gd.getAttribute('uri') || '') : '';
               var okObj = null;
-              try { okObj = await importGraphicFrame(n, gd, uri, groups, srels); } catch (e) { console.warn('PPTX jadval/diagramma:', e); }
+              try { okObj = await importGraphicFrame(n, gd, uri, groups, curRels); } catch (e) { console.warn('PPTX jadval/diagramma:', e); }
               if (okObj) { out.objects.push(okObj); continue; }
               if (/table/i.test(uri)) skipped.table++; else if (/chart/i.test(uri)) skipped.chart++; else skipped.other++;
               continue;
@@ -1897,6 +2083,7 @@
             var nv = kid(n, NS_P, ln === 'sp' ? 'nvSpPr' : (ln === 'pic' ? 'nvPicPr' : 'nvCxnSpPr'));
             var nvPr = nv && kid(nv, NS_P, 'nvPr');
             var ph = nvPr && kid(nvPr, NS_P, 'ph');
+            if (curDecor && ph) continue;                 // layout/master'dagi joy egallovchilar (placeholder) — slaydning o'zida bor
             var xf = readXfrm(spPr) || findPlaceholderXfrm(phDocs, ph);
             if (!xf) continue;
             xf = applyGroups(xf, groups);
@@ -1907,8 +2094,8 @@
             if (ln === 'pic') {
               var blipF = kid(n, NS_P, 'blipFill'), blipN = blipF && kid(blipF, NS_A, 'blip');
               var rid = blipN && blipN.getAttributeNS(NS_R, 'embed');
-              if (!rid || !srels[rid]) continue;
-              var md2 = await mediaData(srels[rid].target);
+              if (!rid || !curRels || !curRels[rid]) continue;
+              var md2 = await mediaData(curRels[rid].target);
               if (!md2) continue;
               var src = blipF && kid(blipF, NS_A, 'srcRect');
               var l = src ? num(src.getAttribute('l'), 0) / 100000 : 0, t = src ? num(src.getAttribute('t'), 0) / 100000 : 0;
@@ -1927,7 +2114,7 @@
                 picObj.width = md2.w; picObj.height = md2.h; picObj.scaleX = W / md2.w; picObj.scaleY = H / md2.h;
                 picObj.cropX = 0; picObj.cropY = 0;
               }
-              var picLink = ssShapeLink(nv, srels);
+              var picLink = curDecor ? null : ssShapeLink(nv, curRels);
               if (picLink) picObj.linkUrl = picLink;
               out.objects.push(picObj);
               continue;
@@ -1951,8 +2138,19 @@
 
             var geom = spPr && kid(spPr, NS_A, 'prstGeom');
             var prst = geom ? geom.getAttribute('prst') : 'rect';
-            var fill = fillOf(spPr, theme);
+            var fill = (spPr && kid(spPr, NS_A, 'grpFill')) ? gFill : fillOf(spPr, theme);
             var lnS = spPr && kid(spPr, NS_A, 'ln');
+            // v67: joy egallovchi o'z rangini/chegarasini bermasa — layout/master'dagi shu placeholder'dan meros oladi
+            if (ph && !curDecor && (!fill || !lnS)) {
+              var hasFillEl = spPr && ['solidFill', 'gradFill', 'noFill', 'grpFill', 'blipFill', 'pattFill'].some(function (k) { return kid(spPr, NS_A, k); });
+              [layoutDoc, masterDoc].some(function (d) {
+                var psp = findPhSp(d, ph), pPr2 = psp && kid(psp, NS_P, 'spPr');
+                if (!pPr2) return false;
+                if (!hasFillEl && !fill) { var f2 = fillOf(pPr2, theme); if (f2) fill = f2; }
+                if (!lnS && kid(pPr2, NS_A, 'ln')) lnS = kid(pPr2, NS_A, 'ln');
+                return !!(fill && lnS);
+              });
+            }
             var stroke = lnS && !kid(lnS, NS_A, 'noFill') ? readColorNode(kid(lnS, NS_A, 'solidFill'), theme) : null;
             var strokeW = stroke ? Math.max(0.5, num(lnS.getAttribute('w'), 12700) * scale) : 0;
             var txBody = kid(n, NS_P, 'txBody');
@@ -1962,11 +2160,15 @@
               var base = {
                 version: FAB_VER, originX: 'left', originY: 'top', left: pos.left, top: pos.top,
                 angle: xf.rot, scaleX: 1, scaleY: 1,
-                fill: fill && !fill.none ? fill.hex : 'rgba(0,0,0,0)',
-                opacity: fill && !fill.none ? fill.alpha : 1,
+                fill: fill && !fill.none ? (fill.grad ? fabricGradient(fill, W, H) : fill.hex) : 'rgba(0,0,0,0)',
+                opacity: fill && !fill.none && !fill.grad ? fill.alpha : 1,
                 stroke: stroke ? stroke.hex : null, strokeWidth: strokeW
               };
-              if (prst === 'ellipse') {
+              var cg = spPr && kid(spPr, NS_A, 'custGeom');
+              var cgObj = cg ? custGeomToPath(cg, xf, base, scale, offX, offY) : null;
+              if (cgObj) {
+                out.objects.push(cgObj);
+              } else if (prst === 'ellipse') {
                 out.objects.push(Object.assign({ type: 'ellipse', width: W, height: H, rx: W / 2, ry: H / 2 }, base));
               } else if (prst === 'triangle') {
                 out.objects.push(Object.assign({ type: 'triangle', width: W, height: H }, base));
@@ -1984,36 +2186,61 @@
             if (txBody) {
               var phType = ph ? (ph.getAttribute('type') || 'body') : '';
               var defPt = /title/i.test(phType) ? 40 : (phType === 'subTitle' ? 24 : 18);
-              var tb = readTextBody(txBody, theme, defPt, phType);
+              var tb = readTextBody(txBody, theme, defPt, phType, ph ? phInherit(ph, phType, layoutDoc, masterDoc, theme) : null);
               if (tb) {
                 var bp = kid(txBody, NS_A, 'bodyPr');
                 var lIns = bp && bp.getAttribute('lIns') != null ? num(bp.getAttribute('lIns'), 91440) : 91440;
                 var rIns = bp && bp.getAttribute('rIns') != null ? num(bp.getAttribute('rIns'), 91440) : 91440;
                 var tIns = bp && bp.getAttribute('tIns') != null ? num(bp.getAttribute('tIns'), 45720) : 45720;
                 var bIns = bp && bp.getAttribute('bIns') != null ? num(bp.getAttribute('bIns'), 45720) : 45720;
-                var anchor = bp ? bp.getAttribute('anchor') : null;
                 var fontPx = tb.pt * 12700 * scale;
                 var tw = Math.max(10, W - (lIns + rIns) * scale);
                 var th = Math.max(10, H - (tIns + bIns) * scale);
-                var est = tb.paraCount * fontPx * 1.3;
-                var dy = 0;
-                if (anchor === 'ctr') dy = Math.max(0, (th - est) / 2);
-                else if (anchor === 'b') dy = Math.max(0, th - est);
-                var tpos = fabricPos(CX, CY, W, H, xf.rot);
-                var ang = xf.rot * Math.PI / 180;
-                var lx = lIns * scale, ly = tIns * scale + dy;
                 var tcol = tb.color ? tb.color.hex : ((fill && !fill.none && isDark(fill.hex)) ? '#ffffff' : '#1f1f1f');
-                out.objects.push({
+                var tObj = {
                   type: 'textbox', version: FAB_VER, originX: 'left', originY: 'top',
-                  left: tpos.left + lx * Math.cos(ang) - ly * Math.sin(ang),
-                  top: tpos.top + lx * Math.sin(ang) + ly * Math.cos(ang),
-                  width: tw, height: th, angle: xf.rot, scaleX: 1, scaleY: 1,
+                  width: tw, angle: xf.rot, scaleX: 1, scaleY: 1,
                   text: tb.text, fontSize: Math.max(4, Math.round(fontPx * 10) / 10),
                   fontFamily: tb.font || 'Arial', fill: tcol,
                   fontWeight: tb.bold ? 'bold' : 'normal', fontStyle: tb.italic ? 'italic' : 'normal',
-                  underline: !!tb.underline, textAlign: tb.align, lineHeight: 1.16, splitByGrapheme: true
+                  underline: !!tb.underline, textAlign: tb.align, lineHeight: Math.round(1.2 / 1.13 * tb.lineScale * 100) / 100, splitByGrapheme: false
+                };
+                // har bo'lakning o'z uslubi (asosiy uslubdan farq qilsa)
+                var styles = {};
+                (tb.runs || []).forEach(function (r) {
+                  var st = {}, e = r.e;
+                  var fpx = Math.max(4, Math.round(e.pt * 12700 * scale * 10) / 10);
+                  if (Math.abs(fpx - tObj.fontSize) > 0.05) st.fontSize = fpx;
+                  if (e.bold !== tb.bold) st.fontWeight = e.bold ? 'bold' : 'normal';
+                  if (e.italic !== tb.italic) st.fontStyle = e.italic ? 'italic' : 'normal';
+                  if (e.underline !== !!tb.underline) st.underline = e.underline;
+                  if (e.color && e.color.hex !== tcol) st.fill = e.color.hex;
+                  if (e.font && e.font !== tObj.fontFamily) st.fontFamily = e.font;
+                  if (!Object.keys(st).length) return;
+                  (styles[r.line] = styles[r.line] || {})[r.ch] = st;
                 });
-                var spLink = ssShapeLink(nv, srels);         // v55: botdagi tugma/havola muharrirda ham bosiladi
+                if (Object.keys(styles).length) tObj.styles = styles;
+                // vertikal joylashuv (anchor) — haqiqiy matn balandligi Fabric bilan o'lchanadi
+                var anchor = bp ? bp.getAttribute('anchor') : null;
+                var realH = tb.paraCount * fontPx * 1.3;
+                try {
+                  if (typeof fabric !== 'undefined') {
+                    var mt = new fabric.Textbox(tObj.text, Object.assign({}, tObj, { styles: tObj.styles || {} }));
+                    if (mt.height > 0) realH = mt.height;
+                  }
+                } catch (e) {}
+                var dy = 0;
+                if (anchor === 'ctr') dy = (th - realH) / 2;
+                else if (anchor === 'b') dy = th - realH;
+                if (dy < 0 && anchor === 'ctr') dy = Math.max(dy, -tIns * scale);   // sig'masa ham qutidan tepaga ko'p chiqmasin
+                var tpos = fabricPos(CX, CY, W, H, xf.rot);
+                var ang = xf.rot * Math.PI / 180;
+                var lx = lIns * scale, ly = tIns * scale + dy;
+                tObj.left = tpos.left + lx * Math.cos(ang) - ly * Math.sin(ang);
+                tObj.top = tpos.top + lx * Math.sin(ang) + ly * Math.cos(ang);
+                tObj.height = Math.max(th, realH);
+                out.objects.push(tObj);
+                var spLink = curDecor ? null : ssShapeLink(nv, curRels);         // v55: botdagi tugma/havola muharrirda ham bosiladi
                 if (spLink) out.objects[out.objects.length - 1].linkUrl = spLink;
               }
             }
@@ -2023,7 +2250,21 @@
           }
         }
       };
-      if (tree) await walk(tree, []);
+      // v67: bezaklar tartibi: master → layout → slayd (showMasterSp="0" bo'lsa master/layout shakllari chizilmaydi)
+      var showSp = function (d) { var r = d && d.documentElement; return !(r && r.getAttribute('showMasterSp') === '0'); };
+      var decorDocs = [];
+      if (showSp(sdoc)) {
+        if (masterDoc && showSp(layoutDoc)) decorDocs.push([masterDoc, masterRels]);
+        if (layoutDoc) decorDocs.push([layoutDoc, layoutRels]);
+      }
+      for (var di = 0; di < decorDocs.length; di++) {
+        var dtree = decorDocs[di][0].getElementsByTagNameNS(NS_P, 'spTree')[0];
+        if (!dtree) continue;
+        curRels = decorDocs[di][1] || {}; curDecor = true;
+        try { await walk(dtree, [], null); } catch (e) { console.warn('PPTX layout bezaklari:', e); }
+      }
+      curRels = srels; curDecor = false;
+      if (tree) await walk(tree, [], null);
       result.push({ json: JSON.stringify(out), thumb: '', imageNumbers: [] });
     }
     return { slides: result, title: title, skipped: skipped };
