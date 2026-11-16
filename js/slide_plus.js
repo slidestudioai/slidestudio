@@ -1,7 +1,7 @@
 /* js/slide_plus.js (v66) — slayd ustidagi «+» tugmasi: qurilmadan rasm qo'shish (eski skrepka o'rnida)
  *  Rasmlar «Rasmlar:» qatoriga raqamlanib tushadi (triggerSidebarImageUpload) — AI ularni slaydlarga joylaydi.
- *  Joyi (hamma qurilmada bir xil): slaydning chap-yuqori burchagi USTIDA, chap chetiga tekis.
- *  Tepada joy bo'lmasa — burchak ichida. Joyi aniqlanmaguncha ko'rinmaydi (sakrab ko'chmaydi).
+ *  Joyi: DOIM slayddan tashqarida, chap-yuqori burchakda. Kompyuterda — burchakdan chap-tepada (diagonal),
+ *  telefonda (chapda joy yo'q) — slayd ustida, chap chetiga tekis. Joyi aniqlanmaguncha ko'rinmaydi (sakramaydi).
  */
 (function () {
   'use strict';
@@ -10,7 +10,7 @@
   function toast(m, k) { try { if (typeof showToast === 'function') showToast(m, k || 'success'); } catch (e) {} }
   var css = document.createElement('style');
   css.textContent = [
-    '#ssSlidePlus{position:absolute;z-index:30;width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;',
+    '#ssSlidePlus{position:fixed;z-index:50;width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;',
     ' display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#7c3aed,#2563eb);',
     ' box-shadow:0 4px 14px rgba(37,99,235,.35);transition:transform .15s ease,box-shadow .2s ease;padding:0}',
     '#ssSlidePlus:hover{transform:scale(1.08);box-shadow:0 6px 18px rgba(37,99,235,.45)}',
@@ -39,25 +39,38 @@
       else if (typeof window.triggerDirectImageUpload === 'function') window.triggerDirectImageUpload();
       else toast("Rasm yuklash hozircha tayyor emas.", 'error');
     });
-    wrap.appendChild(b);
+    document.body.appendChild(b);        // v66: fixed — hech qanday blok (overflow:hidden) tugmani kesmaydi
 
-    // v66: BITTA qoida, hamma qurilmada: slaydning chap-yuqori burchagi USTIDA (chap chetiga tekis).
-    // Joyi aniq bo'lmaguncha ko'rinmaydi — keyin to'g'ridan-to'g'ri o'z joyida paydo bo'ladi (sakramaydi).
+    // v66: tugma DOIM slayddan TASHQARIDA, chap-yuqori burchakda (ekranga nisbatan, position:fixed):
+    //   • chapda joy bo'lsa (kompyuter/planshet) — burchakdan chapga va tepaga (diagonal);
+    //   • chapda joy bo'lmasa (telefon) — slayd USTIDA, chap chetiga tekis.
+    //   • toolbar/header ustiga chiqmaydi. Joyi aniqlanmaguncha ko'rinmaydi (sakramaydi).
     b.style.visibility = 'hidden';
-    var S = 34, GAP = 8, shown = false, last = '', stable = 0, raf = 0, idle = 0;
-    // ilova to'liq tayyor (yuklanish oynasi yopilgan) — undan oldin slayd vaqtincha boshqa joyda turadi
+    var S = 34, GAP = 10, shown = false, last = '', stable = 0, raf = 0;
     function appReady() {
       var ov = document.getElementById('loadingOverlay');
       if (ov) { var cs = getComputedStyle(ov); if (cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') return false; }
       return document.readyState === 'complete';
     }
+    function visibleBottom(el) {
+      if (!el) return 0;
+      var r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      return (cs.display === 'none' || cs.visibility === 'hidden' || !r.height) ? 0 : r.bottom;
+    }
     function place() {
-      var wr = wrap.getBoundingClientRect(), cr = card.getBoundingClientRect();
-      if (!cr.width || !cr.height || !wr.width) { b.style.visibility = 'hidden'; shown = false; return false; }
-      var x = cr.left - wr.left + wrap.scrollLeft;                 // slayd chap chetiga tekis
-      var y = cr.top - wr.top + wrap.scrollTop - S - GAP;          // slayd ustida
-      if (y < 2) y = cr.top - wr.top + wrap.scrollTop + GAP;       // tepada joy yo'q — burchak ichida
-      x = Math.round(Math.max(2, x)); y = Math.round(y);
+      var cr = card.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+      if (!cr.width || !cr.height || cr.bottom < 0 || cr.top > innerHeight) { b.style.visibility = 'hidden'; shown = false; return false; }
+      var hdr = document.querySelector('.header-actions');
+      var topLimit = Math.max(visibleBottom(document.getElementById('ribbonToolbar')), visibleBottom(hdr && hdr.parentElement), 0) + 4;
+      var leftLimit = Math.max(wr.left, 0) + 4;
+      var x, y = cr.top - S - 6;                                     // slayd ustida
+      if (cr.left - S - GAP >= leftLimit) x = cr.left - S - GAP;     // chapda joy bor — diagonal (burchakdan chap-tepa)
+      else x = Math.max(leftLimit, cr.left);                         // telefon — slayd ustida, chap chetiga tekis
+      if (y < topLimit) y = topLimit;                                // toolbar ustiga chiqmasin
+      if (y + S > cr.top && x + S > cr.left) {                       // baribir slayd ustiga tushsa — chap tomonga suramiz
+        x = Math.max(2, cr.left - S - 4);
+      }
+      x = Math.round(x); y = Math.round(y);
       b.style.left = x + 'px';
       b.style.top = y + 'px';
       var key = x + ',' + y;
@@ -74,6 +87,7 @@
     }
     function schedule() { stable = 0; if (!raf) raf = requestAnimationFrame(loop); }
     window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, { passive: true, capture: true });
     wrap.addEventListener('scroll', schedule, { passive: true });
     if (scroller !== wrap) scroller.addEventListener('scroll', schedule, { passive: true });
     try { new ResizeObserver(schedule).observe(wrap); new ResizeObserver(schedule).observe(card); } catch (e) {}
