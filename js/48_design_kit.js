@@ -479,9 +479,7 @@
     ' border:1px solid #dadce0;border-radius:16px;box-shadow:0 14px 44px rgba(0,0,0,.22);font:13px/1.35 inherit;font-family:inherit;overflow:hidden}',
     '#ssKitMenu.open{display:flex}',
     '#ssKitMenu .kh{padding:12px 12px 8px;border-bottom:1px solid #eef0f3}',
-    '#ssKitMenu .kup{width:100%;display:flex;align-items:center;gap:8px;justify-content:center;padding:9px 10px;border-radius:10px;border:1px dashed #94a3b8;background:#f8fafc;cursor:pointer;font-weight:600;color:#1f2937;font-family:inherit}',
-    '#ssKitMenu .kup:hover{background:#eef2ff;border-color:#6366f1}',
-    '#ssKitMenu .kst{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}',
+    '#ssKitMenu .kst{display:flex;gap:6px;flex-wrap:wrap}',
     '#ssKitMenu .kst button,#ssKitMenu .ktb button{border:1px solid #d1d5db;background:#fff;border-radius:999px;padding:5px 10px;cursor:pointer;font:12px inherit;font-family:inherit;color:#374151}',
     '#ssKitMenu .kst button.on{background:#111827;color:#fff;border-color:#111827}',
     '#ssKitMenu .ktb{display:flex;gap:4px;padding:8px 12px 0;flex-wrap:wrap}',
@@ -549,8 +547,8 @@
   }
   function render() {
     var m = buildMenu();
-    var h = '<div class="kh"><button type="button" class="kup" data-act="upload"><span class="material-symbols-outlined" style="font-size:18px">add_photo_alternate</span>Rasm yuklash (AI joylaydi)</button>';
-    h += '<div class="kst">' + Object.keys(STYLES).map(function (k) { return '<button type="button" data-style="' + k + '" class="' + (k === current ? 'on' : '') + '" title="' + STYLES[k].hint + '">' + STYLES[k].label + '</button>'; }).join('') + '</div></div>';
+    // rasm yuklash bu yerda yo'q — u uchun slayd burchagidagi «+» tugmasi bor
+    var h = '<div class="kh"><div class="kst">' + Object.keys(STYLES).map(function (k) { return '<button type="button" data-style="' + k + '" class="' + (k === current ? 'on' : '') + '" title="' + STYLES[k].hint + '">' + STYLES[k].label + '</button>'; }).join('') + '</div></div>';
     h += '<div class="ktb">' + TABS.map(function (t) { return '<button type="button" data-tab="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div>';
     if (tab === 'backgrounds') {
       h += '<div class="kcap">Fon rangi</div><div class="ksw" style="padding-top:6px">' + STYLES[current].bgs.map(function (c) { return '<button type="button" data-bg="' + c + '" title="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>';
@@ -562,13 +560,6 @@
       e.stopPropagation();
       var b = e.target.closest ? e.target.closest('button') : null;
       if (!b) return;
-      if (b.dataset.act === 'upload') {
-        close();
-        if (typeof window.triggerSidebarImageUpload === 'function') window.triggerSidebarImageUpload();
-        else if (typeof window.triggerDirectImageUpload === 'function') window.triggerDirectImageUpload();
-        else toast('Rasm yuklash hozircha tayyor emas.', 'error');
-        return;
-      }
       if (b.dataset.style) { setStyle(b.dataset.style); render(); return; }
       if (b.dataset.tab) { tab = b.dataset.tab; render(); return; }
       if (b.dataset.bg) { applyBackground('bg_plain', b.dataset.bg); return; }
