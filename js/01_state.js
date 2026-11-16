@@ -105,9 +105,22 @@
         inMemoryChatHistory = [];
       }
       window.clearLocalChatHistory = clearLocalChatHistory;
+      // v66: AI panelidagi salomlashuv — AI JAVOBI EMAS: tugmalarsiz, tanlangan tilda (i18n tarjima qiladi)
+      const SS_WELCOME = "Salom! Men Slide Studio AI assistentiman. Istalgan tilda yozing — shu tilda javob beraman. Menga istalgan mavzuda slayd yaratishni yoki tahrirlashni buyurishingiz mumkin.";
+      const SS_OLD_GREETINGS = [SS_WELCOME, "Salom! Yangi suhbat boshlandi. Menga istalgan mavzuda slayd yaratishni yoki tahrirlashni buyurishingiz mumkin.",
+        "Salom! Men AI intellektual assistentiman. Menga istalgan mavzuda slayd yaratishni yoki tahrirlashni buyurishingiz mumkin."];
+      function addWelcomeMessage(chatBody) {
+        if (!chatBody) return;
+        const d = document.createElement('div');
+        d.className = 'ai-msg bot ss-welcome';
+        d.textContent = SS_WELCOME;
+        chatBody.appendChild(d);
+      }
+      window.addWelcomeMessage = addWelcomeMessage;
+      function _t(x) { try { return window.SSI18n ? SSI18n.t(x) : x; } catch (e) { return x; } }
       function startNewChat() {
         if (isAiStreaming) { showToast("AI hali javob bermoqda. Avval to'xtating.", 'error'); return; }
-        const ok = window.confirm("Suhbat tarixi o'chiriladi. Davom etilsinmi?");
+        const ok = window.confirm(_t("Suhbat tarixi o'chiriladi. Davom etilsinmi?"));
         if (!ok) return;
         clearLocalChatHistory();
         const chatBody = document.getElementById('aiChatBody');
@@ -115,7 +128,7 @@
         currentChatId = "new";
 
         try { if (typeof purgeInterruptedForCurrentProject === 'function') purgeInterruptedForCurrentProject(); } catch (e) {  }
-        appendAiChatMessage('bot', 'Salom! Yangi suhbat boshlandi. Menga istalgan mavzuda slayd yaratishni yoki tahrirlashni buyurishingiz mumkin.');
+        addWelcomeMessage(chatBody);
         showToast("Yangi suhbat boshlandi");
       }
       window.startNewChat = startNewChat;
@@ -135,8 +148,10 @@
             const history = getLocalChatHistory();
             if (!history || history.length === 0) return;
             chatBody.innerHTML = '';
+            addWelcomeMessage(chatBody);
             history.forEach((h) => {
               try {
+                if (h.role === 'model' && SS_OLD_GREETINGS.indexOf(String(h.text || '').trim()) >= 0) return;   // eski salomlashuv — AI javobi emas
                 appendAiChatMessage(h.role === 'model' ? 'bot' : 'user', h.text || '');
               } catch (e) { console.warn('Tarixni tiklashda xatolik:', e); }
             });

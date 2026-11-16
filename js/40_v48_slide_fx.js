@@ -421,10 +421,23 @@
     return String(text || '').split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean)
       .map(function (l) { return l.split(/\t|;|,/).map(function (c) { return c.trim(); }); });
   }
+  // v66: jadval/grafik oynasidagi namuna ma'lumot tanlangan tilda (yozish maydoni ichida — i18n unga tegmaydi)
+  function ssSample(kind) {
+    var l = (window.SSI18n && SSI18n.lang) || 'en';
+    var S = {
+      table: { uz: "Oy,Sotuv,O'sish\nYanvar,120,5%\nFevral,150,25%\nMart,190,27%",
+               ru: "Месяц,Продажи,Рост\nЯнварь,120,5%\nФевраль,150,25%\nМарт,190,27%",
+               en: "Month,Sales,Growth\nJanuary,120,5%\nFebruary,150,25%\nMarch,190,27%" },
+      chart: { uz: "Yanvar,120\nFevral,150\nMart,190\nAprel,170",
+               ru: "Январь,120\nФевраль,150\nМарт,190\nАпрель,170",
+               en: "January,120\nFebruary,150\nMarch,190\nApril,170" }
+    };
+    return (S[kind][l] || S[kind].en).replace(/'/g, '&#39;');
+  }
   window.ssInsertTable = async function () {
     var r = await Swal.fire({
       title: 'Jadval', html: '<div style="text-align:left;font-size:13px;margin-bottom:6px">Har qator — yangi satr, ustunlar vergul bilan. Birinchi qator — sarlavha.</div>' +
-        '<textarea id="ssTblIn" class="swal2-textarea" style="height:150px;margin:0;width:100%">Oy,Sotuv,O\'sish\nYanvar,120,5%\nFevral,150,25%\nMart,190,27%</textarea>',
+        '<textarea id="ssTblIn" class="swal2-textarea" style="height:150px;margin:0;width:100%">' + ssSample('table') + '</textarea>',
       showCancelButton: true, confirmButtonText: 'Qo\'shish', cancelButtonText: 'Bekor',
       preConfirm: function () { return document.getElementById('ssTblIn').value; }
     });
@@ -436,7 +449,7 @@
     var r = await Swal.fire({
       title: 'Grafik', html: '<select id="ssChT" class="swal2-select" style="width:100%;margin:0 0 8px"><option value="bar">Ustunli</option><option value="line">Chiziqli</option><option value="pie">Doira</option><option value="donut">Halqa</option></select>' +
         '<div style="text-align:left;font-size:13px;margin-bottom:6px">Har qator: <b>nom, qiymat</b></div>' +
-        '<textarea id="ssChIn" class="swal2-textarea" style="height:130px;margin:0;width:100%">Yanvar,120\nFebral,150\nMart,190\nAprel,170</textarea>' +
+        '<textarea id="ssChIn" class="swal2-textarea" style="height:130px;margin:0;width:100%">' + ssSample('chart') + '</textarea>' +
         '<input id="ssChTi" class="swal2-input" style="margin:8px 0 0;width:100%" placeholder="Sarlavha (ixtiyoriy)">',
       showCancelButton: true, confirmButtonText: 'Qo\'shish', cancelButtonText: 'Bekor',
       preConfirm: function () { return { kind: document.getElementById('ssChT').value, text: document.getElementById('ssChIn').value, title: document.getElementById('ssChTi').value }; }

@@ -1335,6 +1335,11 @@
       return id;
     }
     function appendChatMessageActions(msgDiv, sender, id) {
+      // v66: salomlashuv (jo'natuvchisi yo'q / .ss-welcome) — AI javobi emas, tugmalar qo'yilmaydi
+      if ((sender !== 'bot' && sender !== 'user') || msgDiv.classList.contains('ss-welcome')) {
+        const old = msgDiv.querySelector('.ai-msg-actions'); if (old) old.remove();
+        return;
+      }
       let actions = msgDiv.querySelector('.ai-msg-actions');
       if (!actions) {
         actions = document.createElement('div');
