@@ -794,6 +794,13 @@
     fadeOut: ['exit', 10, 0, 'fade'], zoomOut: ['exit', 53, 16, 'zoom'], bounceOut: ['exit', 53, 16, 'zoom'], slideOutDown: ['exit', 2, 4, 'fly', 'b'],
     float: ['emph', 6, 0, 'grow', 104000], spin: ['emph', 8, 0, 'rot'], pulseLoop: ['emph', 6, 0, 'grow', 106000]
   };
+  // v68: yagona jadval (js/00d_anim_fx.js) birinchi — uning qiymatlari ustun, tartibi importdagi «asosiy nom»ni belgilaydi
+  if (window.SS_FX) (function () {
+    var merged = {};
+    Object.keys(SS_FX.ppt).forEach(function (k) { merged[k] = SS_FX.ppt[k]; });
+    Object.keys(PPT_FX).forEach(function (k) { if (!merged[k]) merged[k] = PPT_FX[k]; });
+    PPT_FX = merged;
+  })();
   var PPT_LOOPS = { float: 1, spin: 1, pulseLoop: 1 };
   function buildAnimEffects(list, nextId) {
     // list: [{spid, name, dur, delay, loop}]  ->  { xml, n }
@@ -816,33 +823,57 @@
       var spid = it.spid, loop = it.loop || PPT_LOOPS[it.name];
       var ms = Math.max(100, Math.round((it.dur > 0 ? it.dur : (loop ? 2 : 0.8)) * 1000)), dl = Math.max(0, Math.round((it.delay || 0) * 1000));
       var body = '';
+      var fx = function (dir, filter) { return '<p:animEffect transition="' + dir + '" filter="' + filter + '"><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '"/>' + tgt(spid) + '</p:cBhvr></p:animEffect>'; };
+      var FLY = { l: ['0-#ppt_w/2', '#ppt_y'], r: ['1+#ppt_w/2', '#ppt_y'], t: ['#ppt_x', '0-#ppt_h/2'], b: ['#ppt_x', '1+#ppt_h/2'] };
+      var wh = function (wFrom, wTo, hFrom, hTo) { return anim(spid, 'ppt_w', wFrom, wTo, ms) + anim(spid, 'ppt_h', hFrom, hTo, ms); };
       if (cls === 'entr') {
         body += setVis(spid, 'visible', 0);
-        if (kind === 'fade') body += fade(spid, 'in', ms);
-        else if (kind === 'fly') {
-          var fx0 = arg === 'l' ? '0-#ppt_w/2' : arg === 'r' ? '1+#ppt_w/2' : '#ppt_x', fy0 = arg === 'b' ? '1+#ppt_h/2' : arg === 't' ? '0-#ppt_h/2' : '#ppt_y';
-          body += anim(spid, 'ppt_x', fx0, '#ppt_x', ms) + anim(spid, 'ppt_y', fy0, '#ppt_y', ms);
-        }
-        else if (kind === 'zoom') body += anim(spid, 'ppt_w', 0, '#ppt_w', ms) + anim(spid, 'ppt_h', 0, '#ppt_h', ms) + fade(spid, 'in', ms);
-        else if (kind === 'wipe') body += '<p:animEffect transition="in" filter="wipe(' + (arg === 'u' ? 'up' : arg === 'l' ? 'left' : arg === 'r' ? 'right' : 'down') + ')"><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '"/>' + tgt(spid) + '</p:cBhvr></p:animEffect>';
-        else if (kind === 'spin') body += anim(spid, 'ppt_w', 0, '#ppt_w', ms) + anim(spid, 'ppt_h', 0, '#ppt_h', ms) + anim(spid, 'style.rotation', 90, 0, ms) + fade(spid, 'in', ms);
+        if (kind === 'appear') { /* darhol */ }
+        else if (kind === 'fade') body += fade(spid, 'in', ms);
+        else if (kind === 'fly') { var f1 = FLY[arg] || FLY.b; body += anim(spid, 'ppt_x', f1[0], '#ppt_x', ms) + anim(spid, 'ppt_y', f1[1], '#ppt_y', ms); }
+        else if (kind === 'float') body += fade(spid, 'in', ms) + anim(spid, 'ppt_y', arg === 'd' ? '#ppt_y-.1' : '#ppt_y+.1', '#ppt_y', ms);
+        else if (kind === 'zoom') body += wh(0, '#ppt_w', 0, '#ppt_h') + fade(spid, 'in', ms);
+        else if (kind === 'grow') body += wh(0, '#ppt_w', 0, '#ppt_h');
+        else if (kind === 'expand') body += wh('#ppt_w*0.70', '#ppt_w', '#ppt_h*0.70', '#ppt_h') + fade(spid, 'in', ms);
+        else if (kind === 'stretch') body += arg === 'x' ? anim(spid, 'ppt_w', 0, '#ppt_w', ms) : anim(spid, 'ppt_h', 0, '#ppt_h', ms);
+        else if (kind === 'swivel') body += anim(spid, 'ppt_h', 0, '#ppt_h', ms) + fade(spid, 'in', ms);
+        else if (kind === 'filter') body += fx('in', arg);
+        else if (kind === 'wipe') body += fx('in', 'wipe(' + (arg === 'u' ? 'up' : arg === 'l' ? 'left' : arg === 'r' ? 'right' : 'down') + ')');
+        else if (kind === 'spin') body += wh(0, '#ppt_w', 0, '#ppt_h') + anim(spid, 'style.rotation', 90, 0, ms) + fade(spid, 'in', ms);
       } else if (cls === 'exit') {
         if (kind === 'fade') body += fade(spid, 'out', ms);
-        else if (kind === 'fly') body += anim(spid, 'ppt_x', '#ppt_x', '#ppt_x', ms) + anim(spid, 'ppt_y', '#ppt_y', '1+#ppt_h/2', ms);
-        else if (kind === 'zoom') body += anim(spid, 'ppt_w', '#ppt_w', 0, ms) + anim(spid, 'ppt_h', '#ppt_h', 0, ms) + fade(spid, 'out', ms);
-        body += setVis(spid, 'hidden', Math.max(0, ms - 1));
+        else if (kind === 'fly') { var f2 = FLY[arg] || FLY.b; body += anim(spid, 'ppt_x', '#ppt_x', f2[0], ms) + anim(spid, 'ppt_y', '#ppt_y', f2[1], ms); }
+        else if (kind === 'float') body += fade(spid, 'out', ms) + anim(spid, 'ppt_y', '#ppt_y', arg === 'd' ? '#ppt_y+.1' : '#ppt_y-.1', ms);
+        else if (kind === 'zoom') body += wh('#ppt_w', 0, '#ppt_h', 0) + fade(spid, 'out', ms);
+        else if (kind === 'grow') body += wh('#ppt_w', 0, '#ppt_h', 0);
+        else if (kind === 'expand') body += wh('#ppt_w', '#ppt_w*0.70', '#ppt_h', '#ppt_h*0.70') + fade(spid, 'out', ms);
+        else if (kind === 'stretch') body += arg === 'x' ? anim(spid, 'ppt_w', '#ppt_w', 0, ms) : anim(spid, 'ppt_h', '#ppt_h', 0, ms);
+        else if (kind === 'filter') body += fx('out', arg);
+        else if (kind === 'spin') body += wh('#ppt_w', 0, '#ppt_h', 0) + anim(spid, 'style.rotation', 0, 90, ms) + fade(spid, 'out', ms);
+        body += setVis(spid, 'hidden', kind === 'disappear' ? 0 : Math.max(0, ms - 1));
+      } else if (cls === 'path') {
+        // harakat yo'li: koordinatalar slayd ulushlarida (PowerPoint va LibreOffice bir xil o'qiydi)
+        body += '<p:animMotion origin="layout" path="' + arg + '" pathEditMode="relative" ptsTypes=""><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '" fill="hold"/>' + tgt(spid) +
+          '<p:attrNameLst><p:attrName>ppt_x</p:attrName><p:attrName>ppt_y</p:attrName></p:attrNameLst></p:cBhvr></p:animMotion>';
       } else {                                               // emph
         var rep = loop ? ' repeatCount="indefinite"' : '';
         if (kind === 'grow') {
           var by = arg || 110000;
           body += '<p:animScale><p:cBhvr><p:cTn id="' + id() + '" dur="' + Math.round(ms / 2) + '" autoRev="1" fill="hold"' + rep + '/>' + tgt(spid) + '</p:cBhvr><p:by x="' + by + '" y="' + by + '"/></p:animScale>';
+        } else if (kind === 'growHold') {
+          body += '<p:animScale><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '" fill="hold"/>' + tgt(spid) + '</p:cBhvr><p:by x="' + (arg || 150000) + '" y="' + (arg || 150000) + '"/></p:animScale>';
+        } else if (kind === 'opacity') {
+          body += '<p:anim calcmode="lin" valueType="num"><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '" fill="hold"/>' + tgt(spid) + '<p:attrNameLst><p:attrName>style.opacity</p:attrName></p:attrNameLst></p:cBhvr>' +
+            '<p:tavLst><p:tav tm="0"><p:val><p:fltVal val="1"/></p:val></p:tav><p:tav tm="100000"><p:val><p:fltVal val="' + (arg || 0.5) + '"/></p:val></p:tav></p:tavLst></p:anim>';
         } else if (kind === 'rot') {
           body += '<p:animRot by="21600000"><p:cBhvr><p:cTn id="' + id() + '" dur="' + ms + '" fill="hold"' + rep + '/>' + tgt(spid) + '<p:attrNameLst><p:attrName>r</p:attrName></p:attrNameLst></p:cBhvr></p:animRot>';
         } else {
           body += '<p:animRot by="300000"><p:cBhvr><p:cTn id="' + id() + '" dur="' + Math.max(80, Math.round(ms / 8)) + '" autoRev="1" repeatCount="4000" fill="hold"/>' + tgt(spid) + '<p:attrNameLst><p:attrName>r</p:attrName></p:attrNameLst></p:cBhvr></p:animRot>';
         }
       }
-      out += '<p:par><p:cTn id="' + id() + '" presetID="' + pid + '" presetClass="' + cls + '" presetSubtype="' + sub + '" fill="hold" grpId="0" nodeType="' + (first ? 'afterEffect' : 'withEffect') + '">' +
+      // ease-out (sayt bilan bir xil): kirish/chiqish/harakat yo'li sekinlashib tugaydi
+      var ease = (cls === 'emph' || kind === 'appear' || kind === 'disappear') ? '' : ' decel="100000"';
+      out += '<p:par><p:cTn id="' + id() + '" presetID="' + pid + '" presetClass="' + cls + '" presetSubtype="' + sub + '" fill="hold" grpId="0" nodeType="' + (first ? 'afterEffect' : 'withEffect') + '"' + ease + '>' +
         '<p:stCondLst><p:cond delay="' + dl + '"/></p:stCondLst><p:childTnLst>' + body + '</p:childTnLst></p:cTn></p:par>';
       first = false;
     });
@@ -2026,6 +2057,25 @@
     if (cls === 'exit') { if (pid === 2 || pid === 47) return 'slideOutDown'; if (pid === 23 || pid === 53) return 'zoomOut'; }
     return FX_DEFAULT[cls] || null;
   }
+  /** Harakat yo'li: aynan bizning yo'limiz bo'lsa — o'sha nom; aks holda yo'nalishi bo'yicha eng yaqini */
+  function pathFxName(ectn) {
+    var mo = ectn.getElementsByTagNameNS(NS_P, 'animMotion')[0], d = mo ? String(mo.getAttribute('path') || '') : '';
+    var norm = function (x) { return x.replace(/\s+/g, ' ').trim(); };
+    var hit = null;
+    if (window.SS_FX) SS_FX.list.some(function (e) { if (e[1] === 'path' && norm(e[3][4]) === norm(d)) { hit = e[0]; return true; } return false; });
+    if (hit) return hit;
+    var nums = (d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi) || []).map(Number);
+    if (nums.length < 2) return 'moveRight';
+    var ex = nums[nums.length - 2], ey = nums[nums.length - 1];
+    if (/C/i.test(d)) return Math.abs(ex) < 0.01 && Math.abs(ey) < 0.01 ? 'loopCircle' : 'arcUp';
+    var ang = Math.atan2(ey, ex) * 180 / Math.PI;
+    if (ang > -22.5 && ang <= 22.5) return 'moveRight';
+    if (ang > 22.5 && ang <= 67.5) return 'moveDiagDown';
+    if (ang > 67.5 && ang <= 112.5) return 'moveDown';
+    if (ang < -22.5 && ang >= -67.5) return 'moveDiagUp';
+    if (ang < -67.5 && ang >= -112.5) return 'moveUp';
+    return 'moveLeft';
+  }
   function cTnDelay(ctn) {
     var st = kid(ctn, NS_P, 'stCondLst'), cond = st && kid(st, NS_P, 'cond');
     var d = cond ? cond.getAttribute('delay') : '0';
@@ -2060,7 +2110,7 @@
           var tg = ectn.getElementsByTagNameNS(NS_P, 'spTgt')[0], spid = tg && tg.getAttribute('spid');
           var start = iStart + cTnDelay(ectn), dur = maxBehaviorDur(ectn) || 500;
           gEnd = Math.max(gEnd, start + dur);
-          var name = pptFxName(cls, pid, sub);
+          var name = cls === 'path' ? pathFxName(ectn) : pptFxName(cls, pid, sub);
           if (!name || !spid || !spidMap[spid]) return;
           var loop = ectn.getAttribute('repeatCount') === 'indefinite' || Array.prototype.some.call(ectn.getElementsByTagNameNS(NS_P, 'cTn'), function (c) { return c.getAttribute('repeatCount') === 'indefinite'; });
           if (loop && cls === 'emph') name = name === 'spin' ? 'spin' : (name === 'swing' ? 'float' : 'pulseLoop');

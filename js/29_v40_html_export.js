@@ -395,6 +395,16 @@
         var is = inner.style;
         is.animationName = 'ssa-' + nm; is.animationDuration = dur + 's'; is.animationDelay = delay + 's'; is.animationFillMode = 'both';
         is.animationTimingFunction = nm === 'spin' ? 'linear' : (nm === 'float' || nm === 'pulseLoop') ? 'ease-in-out' : 'cubic-bezier(.25,.8,.25,1)';
+        if (window.SS_FX) {                     // v68: PowerPoint bilan bir xil vaqt egri chizig'i va slaydga nisbatan masofalar
+          is.animationTimingFunction = SS_FX.timing(nm);
+          if (SS_FX.masks[nm]) { is.webkitMaskImage = SS_FX.masks[nm]; is.maskImage = SS_FX.masks[nm]; }
+          try {
+            var bx = o.getBoundingRect ? o.getBoundingRect(true, true) : null;
+            var vx = bx ? SS_FX.varsFromBox(bx.left, bx.top, bx.width, bx.height, 960, 540)
+              : SS_FX.varsFromBox(num(o.left, 0), num(o.top, 0), num(o.width, 100) * Math.abs(num(o.scaleX, 1)), num(o.height, 100) * Math.abs(num(o.scaleY, 1)), 960, 540);
+            Object.keys(vx).forEach(function (k) { is.setProperty(k, String(Math.round(vx[k] * 10000) / 10000)); });
+          } catch (e) {}
+        }
         is.animationIterationCount = loop ? 'infinite' : '1';
       }
       return outer;

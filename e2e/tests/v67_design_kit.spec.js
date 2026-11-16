@@ -256,3 +256,35 @@ test('187 ta PowerPoint shakli: menyu, AI, PPTX eksport (o\'z nomi + sariq tutqi
   expect(Math.round(r.backRx)).toBe(48);                          // roundRect → saytning yumaloq rect'i (adj 40000 × 120)
   expect(r.arrowBox).toEqual([60 + 2 + 110, 300 + 2 + 50, 220, 100]);   // markaz bo'yicha aniq joyida (chegara 4)
 });
+
+test('animatsiyalar jadvali: har bir effekt sayt → PPTX (faqat PowerPoint XML) → sayt aylanasidan o\'z nomi bilan qaytadi', async ({ page }) => {
+  await openEditor(page);
+  const names = await page.evaluate(() => {
+    canvas.clear();
+    const list = SS_FX.list.map((e) => e[0]);
+    list.forEach((nm, i) => {
+      const r = new fabric.Rect({ left: 20 + (i % 12) * 78, top: 20 + Math.floor(i / 12) * 78, width: 60, height: 60, fill: '#3366cc' });
+      r.animName = nm; r.animDur = 0.9; r.animDelay = 0;
+      canvas.add(r);
+    });
+    saveCurrentSlideState();
+    return list;
+  });
+  expect(names.length).toBeGreaterThanOrEqual(70);
+  // saytda har biri uchun CSS kalit kadri bor
+  const missingCss = await page.evaluate((ns) => {
+    const css = document.getElementById('ssAnimStyle').textContent;
+    return ns.filter((n) => css.indexOf('@keyframes ssa-' + n + '{') < 0);
+  }, names);
+  expect(missingCss).toEqual([]);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60_000 }), page.evaluate(() => window.exportPPTX())]);
+  const b64 = fs.readFileSync(await dl.path()).toString('base64');
+  const back = await page.evaluate(async (b) => {
+    const zip = await JSZip.loadAsync(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
+    zip.remove('slide-studio/project.json');
+    await window.importPptxClient(new File([await zip.generateAsync({ type: 'blob' })], 'a.pptx'));
+    await new Promise((res) => setTimeout(res, 800));
+    return JSON.parse(slides[0].json).objects.map((o) => o.animName || '');
+  }, b64);
+  expect(back).toEqual(names);
+});
