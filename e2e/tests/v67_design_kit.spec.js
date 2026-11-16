@@ -288,3 +288,28 @@ test('animatsiyalar jadvali: har bir effekt sayt → PPTX (faqat PowerPoint XML)
   }, b64);
   expect(back).toEqual(names);
 });
+
+test('slayd o\'tishlari: har biri sayt → PPTX (faqat PowerPoint XML) → sayt aylanasidan o\'z nomi bilan qaytadi', async ({ page }) => {
+  await openEditor(page);
+  const keys = await page.evaluate(async () => {
+    const ks = SS_TR.list.map((x) => x.k);
+    saveCurrentSlideState();
+    const base = slides[0].json;
+    slides.length = 0;
+    ks.forEach((k, i) => slides.push({ id: 't' + i, json: base, imageNumbers: [], transition: k, transDur: 1.1, transAuto: 0 }));
+    activeIndex = 0;
+    return ks;
+  });
+  expect(keys.length).toBe(34);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 90_000 }), page.evaluate(() => window.exportPPTX())]);
+  const b64 = fs.readFileSync(await dl.path()).toString('base64');
+  const back = await page.evaluate(async (b) => {
+    const zip = await JSZip.loadAsync(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
+    zip.remove('slide-studio/project.json');
+    await window.importPptxClient(new File([await zip.generateAsync({ type: 'blob' })], 't.pptx'));
+    await new Promise((res) => setTimeout(res, 800));
+    return slides.map((s) => [s.transition, s.transDur]);
+  }, b64);
+  expect(back.map((x) => x[0])).toEqual(keys);
+  expect(back.every((x) => x[1] === 1.1)).toBe(true);
+});

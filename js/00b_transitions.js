@@ -27,10 +27,34 @@
     { k: 'coverL', t: 'Cover ←',       g: 'Ochilish', ppt: '<p:cover dir="l"/>',          i: 'from{transform:translateX(100%)}to{transform:translateX(0)}', ease: E },
     { k: 'coverR', t: 'Cover →',       g: 'Ochilish', ppt: '<p:cover dir="r"/>',          i: 'from{transform:translateX(-100%)}to{transform:translateX(0)}', ease: E },
     { k: 'split',  t: 'Split',         g: 'Ochilish', ppt: '<p:split orient="vert" dir="out"/>', i: 'from{clip-path:inset(0 50% 0 50%)}to{clip-path:inset(0 0 0 0)}', ease: 'ease-in-out' },
-    { k: 'circle', t: 'Circle',        g: 'Ochilish', ppt: '<p:circle/>',                 i: 'from{clip-path:circle(0% at 50% 50%)}to{clip-path:circle(78% at 50% 50%)}', ease: 'ease-in-out' }
+    { k: 'circle', t: 'Circle',        g: 'Ochilish', ppt: '<p:circle/>',                 i: 'from{clip-path:circle(0% at 50% 50%)}to{clip-path:circle(78% at 50% 50%)}', ease: 'ease-in-out' },
+    /* v68: PowerPoint va LibreOffice'da ham bor, brauzerda aynan shunday chiziladigan o'tishlar */
+    { k: 'cut',      t: 'Cut',            g: 'Yumshoq',  ppt: '<p:cut/>',                           i: 'from{opacity:1}to{opacity:1}', ease: 'linear' },
+    { k: 'fadeBlack', t: 'Fade (qora)',   g: 'Yumshoq',  ppt: '<p:fade thruBlk="1"/>',              i: '0%{filter:brightness(0)}45%{filter:brightness(0)}100%{filter:brightness(1)}', o: 'from{filter:brightness(1)}to{filter:brightness(0)}', ease: 'ease' },
+    { k: 'zoomOut',  t: 'Zoom (tashqaridan)', g: 'Yumshoq', ppt: '<p:zoom dir="out"/>',             i: 'from{opacity:0;transform:scale(1.25)}to{opacity:1;transform:scale(1)}', o: 'from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(.8)}', ease: E },
+    { k: 'flash',    t: 'Flash',          g: 'Yumshoq',  ppt: '<p14:flash/>', p14: true,            i: '0%{opacity:0;filter:brightness(4)}35%{opacity:1;filter:brightness(4)}100%{filter:brightness(1)}', ease: 'ease-out' },
+    { k: 'coverU',   t: 'Cover ↑',        g: 'Surish',   ppt: '<p:cover dir="u"/>',                 i: 'from{transform:translateY(100%)}to{transform:translateY(0)}', ease: E },
+    { k: 'coverD',   t: 'Cover ↓',        g: 'Surish',   ppt: '<p:cover dir="d"/>',                 i: 'from{transform:translateY(-100%)}to{transform:translateY(0)}', ease: E },
+    { k: 'uncoverL', t: 'Uncover ←',      g: 'Ochilish', ppt: '<p:pull dir="l"/>',                  i: 'from{clip-path:inset(0 0 0 100%)}to{clip-path:inset(0 0 0 0)}', o: 'from{transform:translateX(0)}to{transform:translateX(-100%)}', ease: E },
+    { k: 'uncoverR', t: 'Uncover →',      g: 'Ochilish', ppt: '<p:pull dir="r"/>',                  i: 'from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}', o: 'from{transform:translateX(0)}to{transform:translateX(100%)}', ease: E },
+    { k: 'uncoverU', t: 'Uncover ↑',      g: 'Ochilish', ppt: '<p:pull dir="u"/>',                  i: 'from{clip-path:inset(100% 0 0 0)}to{clip-path:inset(0 0 0 0)}', o: 'from{transform:translateY(0)}to{transform:translateY(-100%)}', ease: E },
+    { k: 'uncoverD', t: 'Uncover ↓',      g: 'Ochilish', ppt: '<p:pull dir="d"/>',                  i: 'from{clip-path:inset(0 0 100% 0)}to{clip-path:inset(0 0 0 0)}', o: 'from{transform:translateY(0)}to{transform:translateY(100%)}', ease: E },
+    { k: 'splitH',   t: 'Split (gorizontal)', g: 'Ochilish', ppt: '<p:split orient="horz" dir="out"/>', i: 'from{clip-path:inset(50% 0 50% 0)}to{clip-path:inset(0 0 0 0)}', ease: 'ease-in-out' },
+    { k: 'diamond',  t: 'Diamond',        g: 'Ochilish', ppt: '<p:diamond/>',                       i: 'from{clip-path:polygon(50% 50%,50% 50%,50% 50%,50% 50%)}to{clip-path:polygon(50% -50%,150% 50%,50% 150%,-50% 50%)}', ease: 'ease-in-out' },
+    { k: 'plus',     t: 'Plus',           g: 'Ochilish', ppt: '<p:plus/>',                          i: 'from{clip-path:' + plusPoly(0) + '}to{clip-path:' + plusPoly(1) + '}', ease: 'ease-in-out' },
+    { k: 'clock',    t: 'Clock',          g: 'Ochilish', ppt: '<p:wheel spokes="1"/>',              st: maskSt('conic-gradient(#000 var(--ssa),transparent 0)'), i: 'from{--ssa:0deg}to{--ssa:360deg}', ease: 'linear' },
+    { k: 'wheel',    t: 'Wheel',          g: 'Ochilish', ppt: '<p:wheel spokes="4"/>',              st: maskSt('repeating-conic-gradient(#000 0 var(--ssa),transparent var(--ssa) 90deg)'), i: 'from{--ssa:0deg}to{--ssa:90deg}', ease: 'linear' },
+    { k: 'wedge',    t: 'Wedge',          g: 'Ochilish', ppt: '<p:wedge/>',                         st: maskSt('conic-gradient(#000 var(--ssa),transparent var(--ssa) calc(360deg - var(--ssa)),#000 calc(360deg - var(--ssa)))'), i: 'from{--ssa:0deg}to{--ssa:180deg}', ease: 'linear' },
+    { k: 'blindsH',  t: 'Blinds (gorizontal)', g: 'Ochilish', ppt: '<p:blinds dir="horz"/>',        st: maskSt('repeating-linear-gradient(to bottom,#000 0 var(--ssp),transparent var(--ssp) 16.667%)'), i: 'from{--ssp:0%}to{--ssp:16.667%}', ease: 'ease-in-out' },
+    { k: 'blindsV',  t: 'Blinds (vertikal)', g: 'Ochilish', ppt: '<p:blinds dir="vert"/>',          st: maskSt('repeating-linear-gradient(to right,#000 0 var(--ssp),transparent var(--ssp) 16.667%)'), i: 'from{--ssp:0%}to{--ssp:16.667%}', ease: 'ease-in-out' }
   ];
   var MAP = {};
   L.forEach(function (x) { MAP[x.k] = x; });
+  function plusPoly(sc) {
+    var w = 50 * sc, l = 100 * sc, p = function (x, y) { return (50 + x) + '% ' + (50 + y) + '%'; };
+    return 'polygon(' + [p(-w, -l), p(w, -l), p(w, -w), p(l, -w), p(l, w), p(w, w), p(w, l), p(-w, l), p(-w, w), p(-l, w), p(-l, -w), p(-w, -w)].join(',') + ')';
+  }
+  function maskSt(m) { return '-webkit-mask-image:' + m + ';mask-image:' + m + ';'; }
 
   function clampDur(v, def) {
     var n = parseFloat(v);
@@ -44,9 +68,10 @@
     L.forEach(function (x) {
       out.push('@keyframes ssTrIn_' + x.k + '{' + x.i + '}');
       if (x.o) out.push('@keyframes ssTrOut_' + x.k + '{' + x.o + '}');
-      out.push(sc + prefixIn + x.k + '{animation:ssTrIn_' + x.k + ' var(--trd,.7s) ' + (x.ease || E) + ' both;will-change:transform,opacity}');
+      out.push(sc + prefixIn + x.k + '{animation:ssTrIn_' + x.k + ' var(--trd,.7s) ' + (x.ease || E) + ' both;will-change:transform,opacity;' + (x.st || '') + '}');
       if (x.o) out.push(sc + prefixOut + x.k + '{animation:ssTrOut_' + x.k + ' var(--trd,.7s) ' + (x.ease || E) + ' both;will-change:transform,opacity}');
     });
+    out.unshift('@property --ssa{syntax:"<angle>";inherits:false;initial-value:0deg}', '@property --ssp{syntax:"<percentage>";inherits:false;initial-value:0%}');
     out.push('@media (prefers-reduced-motion:reduce){[class*="' + prefixIn.split('.').pop() + '"],[class*="' + prefixOut.split('.').pop() + '"]{animation:none!important}}');
     return out.join('\n');
   }

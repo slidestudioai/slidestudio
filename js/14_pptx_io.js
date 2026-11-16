@@ -2127,10 +2127,10 @@
     });
   }
   var TR_FROM_PPT = { fade: 'fade', dissolve: 'blur', zoom: 'zoom', flip: 'flip', split: 'split', circle: 'circle',
-    push: { u: 'up', d: 'down', l: 'left', r: 'right' }, wipe: { r: 'wipeR', l: 'wipeL', d: 'wipeD', u: 'wipeU' }, cover: { l: 'coverL', r: 'coverR', u: 'up', d: 'down' },
-    pull: { l: 'coverR', r: 'coverL' }, randomBar: 'blur', cut: 'none', newsflash: 'zoom', wheel: 'circle', wedge: 'circle', diamond: 'circle', plus: 'circle',
-    blinds: 'wipeD', checker: 'blur', comb: 'split', strips: 'wipeD', random: 'fade', vortex: 'zoom', ripple: 'circle', shred: 'blur', switch: 'flip',
-    gallery: 'left', cube: 'left', doors: 'split', box: 'zoom', reveal: 'fade', honeycomb: 'blur', glitter: 'blur', flash: 'fade', prism: 'flip',
+    push: { u: 'up', d: 'down', l: 'left', r: 'right' }, wipe: { r: 'wipeR', l: 'wipeL', d: 'wipeD', u: 'wipeU' }, cover: { l: 'coverL', r: 'coverR', u: 'coverU', d: 'coverD' },
+    pull: { l: 'uncoverL', r: 'uncoverR', u: 'uncoverU', d: 'uncoverD' }, randomBar: 'blur', cut: 'cut', newsflash: 'zoom', wheel: 'wheel', wedge: 'wedge', diamond: 'diamond', plus: 'plus',
+    blinds: 'blindsH', checker: 'blur', comb: 'split', strips: 'wipeD', random: 'fade', vortex: 'zoom', ripple: 'circle', shred: 'blur', switch: 'flip',
+    gallery: 'left', cube: 'left', doors: 'split', box: 'zoom', reveal: 'fade', honeycomb: 'blur', glitter: 'blur', flash: 'flash', prism: 'flip',
     ferris: 'left', flythrough: 'zoom', warp: 'zoom', conveyor: 'left', pan: 'left', vortex2: 'zoom', morph: 'fade', curtains: 'split', wind: 'left',
     airplane: 'left', origami: 'flip', fracture: 'blur', crush: 'zoom', peelOff: 'left', pageCurlDouble: 'left', pageCurlSingle: 'left', fallOver: 'down', drape: 'down' };
   function importTransition(sdoc) {
@@ -2144,11 +2144,29 @@
     var auto = tr.getAttribute('advTm') ? num(tr.getAttribute('advTm'), 0) / 1000 : 0;
     var eff = tr.firstElementChild, key = 'none';
     if (eff) {
-      var m = TR_FROM_PPT[eff.localName];
-      var dir = eff.getAttribute('dir') || '';
-      if (typeof m === 'string') key = m;
-      else if (m) key = m[dir[0]] || m[Object.keys(m)[0]];
-      else key = 'fade';
+      var ln = eff.localName, dir = eff.getAttribute('dir') || '';
+      // v68: atributlari bilan aniq mos keladiganlar (eksportdagi SS_TR jadvalining teskarisi)
+      var exact = null;
+      if (ln === 'cut') exact = 'cut';
+      else if (ln === 'fade') exact = eff.getAttribute('thruBlk') === '1' || eff.getAttribute('thruBlk') === 'true' ? 'fadeBlack' : 'fade';
+      else if (ln === 'zoom') exact = dir === 'out' ? 'zoomOut' : 'zoom';
+      else if (ln === 'pull') exact = ({ l: 'uncoverL', r: 'uncoverR', u: 'uncoverU', d: 'uncoverD' })[dir[0] === 'l' || dir[0] === 'r' ? dir[0] : (dir[0] || 'l')] || 'uncoverL';
+      else if (ln === 'cover') exact = ({ l: 'coverL', r: 'coverR', u: 'coverU', d: 'coverD' })[dir[0] || 'l'] || 'coverL';
+      else if (ln === 'split') exact = eff.getAttribute('orient') === 'horz' ? 'splitH' : 'split';
+      else if (ln === 'wheel') exact = num(eff.getAttribute('spokes'), 4) === 1 ? 'clock' : 'wheel';
+      else if (ln === 'wedge') exact = 'wedge';
+      else if (ln === 'blinds') exact = dir === 'vert' ? 'blindsV' : 'blindsH';
+      else if (ln === 'diamond') exact = 'diamond';
+      else if (ln === 'plus') exact = 'plus';
+      else if (ln === 'flash') exact = 'flash';
+      if (exact && (!window.SS_TR || SS_TR.map[exact])) key = exact;
+      else {
+        var m = TR_FROM_PPT[ln];
+        if (typeof m === 'string') key = m;
+        else if (m) key = m[dir[0]] || m[Object.keys(m)[0]];
+        else key = 'fade';
+        if (window.SS_TR && key !== 'none' && !SS_TR.map[key]) key = 'fade';
+      }
     }
     if (key === 'none' && !auto) return { transition: 'none', transDur: 0, transAuto: 0 };
     return { transition: key, transDur: Math.max(0.2, Math.min(5, Math.round(dur * 10) / 10)), transAuto: auto };
