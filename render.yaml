@@ -40,7 +40,7 @@ services:
       - key: PAGES_PER_PACK
         value: "100"
       - key: PACK_PRICE_USD
-        value: "1.00"
+        value: "1.49"
       - key: IMG_PROXY_CACHE_MB
         value: "32"
       - key: DODO_PAYMENTS_API_KEY
@@ -51,6 +51,10 @@ services:
         sync: false
       - key: DODO_PAYMENTS_ENV          # test | live
         value: "test"
+      - key: DODO_FEE_PERCENT           # mijoz narxiga qo'shiladigan komissiya (%)
+        value: "5.5"
+      - key: DODO_FEE_FIXED_CENTS       # + fiks qism (sent)
+        value: "40"
       - key: ADMIN_TG_IDS
         sync: false
       - key: ADMIN_EMAILS
