@@ -19,13 +19,33 @@ function xfrm(sp) {
   return m ? { x: +m[1], y: +m[2], cx: +m[3], cy: +m[4] } : null;
 }
 
-test('«+» menyusi: uslub tanlanadi, retro oyna kartochkasi slaydga qo\'shiladi', async ({ page }) => {
+test('«+» avvalgidek faqat rasm yuklaydi, dizayn menyusi esa toolbar boshidagi alohida tugmada', async ({ page }) => {
+  await openEditor(page);
+  await page.waitForSelector('#ssSlidePlus', { state: 'attached' });
+  const plus = await page.evaluate(() => {
+    let called = 0;
+    const orig = window.triggerSidebarImageUpload;
+    window.triggerSidebarImageUpload = () => { called++; };
+    document.getElementById('ssSlidePlus').click();
+    window.triggerSidebarImageUpload = orig;
+    return { called, menuOpen: !!document.querySelector('#ssKitMenu.open') };
+  });
+  expect(plus).toEqual({ called: 1, menuOpen: false });
+  const pos = await page.evaluate(() => {
+    const tb = document.getElementById('ribbonToolbar');
+    const btns = [...tb.querySelectorAll('button')];
+    return { first: btns[0].id, visible: btns[0].getBoundingClientRect().width > 0 };
+  });
+  expect(pos).toEqual({ first: 'ssKitBtn', visible: true });            // boshqa tugmalardan oldin
+});
+
+test('«Dizayn» menyusi: uslub tanlanadi, retro oyna kartochkasi slaydga qo\'shiladi', async ({ page }) => {
   await openEditor(page);
   await page.evaluate(() => { canvas.clear(); canvas.setBackgroundColor('#ffffff'); });
-  await page.waitForSelector('#ssSlidePlus', { state: 'attached' });
-  await page.evaluate(() => document.getElementById('ssSlidePlus').click());
+  await page.locator('#ssKitBtn').click();
   const menu = page.locator('#ssKitMenu.open');
   await expect(menu).toBeVisible();
+  await expect(page.locator('#ssKitBtn')).toHaveAttribute('aria-expanded', 'true');
   await expect(menu.locator('[data-tab]')).toHaveCount(4);
   await menu.locator('[data-style="neo_brutalism"]').click();
   await menu.locator('[data-item="window_card"]').click();

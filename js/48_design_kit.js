@@ -8,7 +8,8 @@
  *   - Shriftlar: faqat PowerPoint'da bor shriftlar (Arial, Georgia, Courier New) — qator bo'linishi bir xil.
  *   - Koordinatalar: slayd 960×540 px = 10×5.625 dyuym (1 px = 1/96 dyuym = 0.75 pt = 9525 EMU).
  *
- * Foydalanuvchi: «+» tugmasi → menyu (Rasm / Kartochkalar / Ramkalar / Stikerlar / Fon) + uslub tanlash.
+ * Foydalanuvchi: toolbar boshidagi «Dizayn» tugmasi → menyu (Kartochkalar / Ramkalar / Stikerlar / Fon) + uslub tanlash.
+ *   (slayd burchagidagi «+» — avvalgidek faqat rasm yuklaydi.)
  * AI: elements[] ichida {"type":"kit","item":"window_card","style":"neo_brutalism",...} yozadi —
  *     bu yerda oddiy bo'laklarga yoyiladi (ssFixCardLayout dan keyin, karta sifatida joylashtirilgach).
  */
@@ -493,7 +494,17 @@
     '#ssKitMenu .kit span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}',
     '#ssKitMenu .ksw{display:flex;gap:6px;flex-wrap:wrap;padding:0 12px 12px}',
     '#ssKitMenu .ksw button{width:30px;height:30px;border-radius:8px;border:1px solid #cbd5e1;cursor:pointer}',
-    '#ssKitMenu .kcap{padding:2px 12px 0;color:#6b7280;font-size:11px}'
+    '#ssKitMenu .kcap{padding:2px 12px 0;color:#6b7280;font-size:11px}',
+    // v67: toolbar boshidagi alohida «Dizayn» tugmasi (rasm yuklovchi «+» o'z holicha qoldi)
+    '.toolbar-container #ssKitBtn.ss-kit-btn{width:auto!important;min-width:0;padding:0 12px 0 9px!important;border-radius:999px!important}',
+    '#ssKitBtn.ss-kit-btn{gap:5px;display:inline-flex;align-items:center;color:#fff;',
+    ' background:linear-gradient(135deg,#ff5c8a,#7c3aed);font-weight:600;font-size:13px;white-space:nowrap}',
+    '#ssKitBtn.ss-kit-btn:hover{filter:brightness(1.08)}',
+    '#ssKitBtn.ss-kit-btn.on{box-shadow:0 0 0 2px #fff,0 0 0 4px #7c3aed}',
+    '#ssKitBtn .material-symbols-outlined{font-size:19px;color:#fff}',
+    '@media (max-width:760px){.toolbar-container #ssKitBtn.ss-kit-btn{padding:0 8px!important}#ssKitBtn .ss-kit-lbl{display:none}}',
+    '#ssKitBtnMob.ss-kit-mab{color:#fff;background:linear-gradient(135deg,#ff5c8a,#7c3aed);border-color:transparent;font-weight:600}',
+    '#ssKitBtnMob.ss-kit-mab .material-symbols-outlined{color:#fff}'
   ].join('');
   document.head.appendChild(css);
 
@@ -532,7 +543,7 @@
     menu.addEventListener('mousedown', function (e) { e.stopPropagation(); });
     menu.addEventListener('click', function (e) { e.stopPropagation(); });
     document.body.appendChild(menu);
-    document.addEventListener('mousedown', function (e) { if (menu.classList.contains('open') && e.target.id !== 'ssSlidePlus' && !(e.target.closest && e.target.closest('#ssSlidePlus'))) close(); });
+    document.addEventListener('mousedown', function (e) { if (menu.classList.contains('open') && !(e.target.closest && e.target.closest('.ss-kit-trigger'))) close(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
     return menu;
   }
@@ -581,8 +592,9 @@
     if (y + mh > window.innerHeight - 12) y = Math.max(12, window.innerHeight - mh - 12);
     menu.style.left = Math.round(x) + 'px'; menu.style.top = Math.round(y) + 'px';
   }
-  function open(anchor) { render(); menu.classList.add('open'); place(anchor); }
-  function close() { if (menu) menu.classList.remove('open'); }
+  function btnState(on) { Array.prototype.forEach.call(document.querySelectorAll('.ss-kit-trigger'), function (b) { b.classList.toggle('on', on); b.setAttribute('aria-expanded', on ? 'true' : 'false'); }); }
+  function open(anchor) { render(); menu.classList.add('open'); place(anchor || document.getElementById('ssKitBtn')); btnState(true); }
+  function close() { if (menu) menu.classList.remove('open'); btnState(false); }
   function toggle(anchor) { if (menu && menu.classList.contains('open')) close(); else open(anchor); }
 
   window.SS_KIT = {

@@ -28,13 +28,11 @@
     var b = document.createElement('button');
     b.type = 'button';
     b.id = 'ssSlidePlus';
-    b.title = "Qo'shish: rasm, kartochka, ramka, stiker, fon";
-    b.setAttribute('aria-label', "Qo'shish: rasm, kartochka, ramka, stiker, fon");
+    b.title = "Rasm qo'shish (AI joylashtiradi)";
+    b.setAttribute('aria-label', "Rasm qo'shish (AI joylashtiradi)");
     b.innerHTML = '<span class="material-symbols-outlined">add</span>';
     b.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
-      // v67: «+» → menyu: rasm yuklash + tayyor kartochkalar, ramkalar, stikerlar va fon uslublari (js/48_design_kit.js)
-      if (window.SS_KIT && typeof window.SS_KIT.toggleMenu === 'function') { window.SS_KIT.toggleMenu(b); return; }
       // Eski skrepka bilan bir xil: rasmlar tepadagi «Rasmlar:» qatoriga RAQAMLANIB qo'shiladi,
       // keyin AI ularni tanlab slaydga joylaydi (to'g'ridan-to'g'ri slaydga emas).
       if (typeof window.triggerSidebarImageUpload === 'function') window.triggerSidebarImageUpload();

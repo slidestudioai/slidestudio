@@ -208,6 +208,8 @@
   <div id="tokenStatusBar">Varaq: <span id="statCredits">-</span> <button onclick="openTopUpModal()" title="Kredit to'ldirish" style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:13px;padding:0 4px;vertical-align:middle;">＋</button> | Sessiya: <span id="statPagesUsed">0</span></div>
 
   <div class="toolbar-container" id="ribbonToolbar">
+    <button class="tb-btn ss-kit-btn ss-kit-trigger" id="ssKitBtn" type="button" title="Dizayn: kartochkalar, ramkalar, stikerlar, fon" aria-label="Dizayn: kartochkalar, ramkalar, stikerlar, fon" aria-haspopup="dialog" onclick="window.SS_KIT &amp;&amp; SS_KIT.toggleMenu(this)"><span class="material-symbols-outlined">auto_awesome_mosaic</span><span class="ss-kit-lbl">Dizayn</span></button>
+    <div class="divider"></div>
     <button class="tb-btn" title="Undo" onclick="undo()"><span class="material-symbols-outlined">undo</span></button>
     <button class="tb-btn" title="Redo" onclick="redo()"><span class="material-symbols-outlined">redo</span></button>
     <div class="divider"></div>
@@ -255,6 +257,9 @@
   </div>
 
   <div class="mobile-action-bar" id="mobileActionBar">
+    <button class="mab-btn ss-kit-trigger ss-kit-mab" id="ssKitBtnMob" type="button" aria-haspopup="dialog" onclick="window.SS_KIT &amp;&amp; SS_KIT.toggleMenu(this)">
+      <span class="material-symbols-outlined">auto_awesome_mosaic</span> Dizayn
+    </button>
     <button class="mab-btn primary" onclick="openImportModal()">
       <span class="material-symbols-outlined">folder_open</span> Ochish
     </button>
@@ -679,10 +684,10 @@
   <script src="js/43_v50_ui_scale.js?v=1"></script>
   <script src="js/44_v54_fixes.js?v=6"></script>
   <script src="js/45_v63_guest_carry.js?v=1"></script>
-  <script src="js/48_design_kit.js?v=1"></script>
+  <script src="js/48_design_kit.js?v=2"></script>
   <script src="js/46_topup.js?v=4" defer></script>
   <script src="js/47_resize_fix.js" defer></script>
   <script src="js/voice.js?v=1" defer></script>
-  <script src="js/slide_plus.js?v=2" defer></script>
+  <script src="js/slide_plus.js?v=3" defer></script>
   </body>
 </html>
