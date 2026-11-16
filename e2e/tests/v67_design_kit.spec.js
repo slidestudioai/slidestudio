@@ -130,3 +130,52 @@ test('PPTX eksport 1:1: qalin chegara, burchak radiusi, qattiq soya, yulduz, chi
   const frame = sp.find((s) => s.includes('outerShdw') && s.includes('prst="roundRect"') && xfrm(s).x === Math.round(41.5 * EMU));             // 40 + 3/2 chegara
   expect(frame).toBeTruthy();
 });
+
+test('PPTX import: layout bezaklari, erkin shakl, burilgan guruh, gradient, shaffof fon va har bo\'lak o\'z shrift o\'lchami bilan', async ({ page }) => {
+  await openEditor(page);
+  const r = await page.evaluate(async () => {
+    const p = new PptxGenJS(); p.layout = 'LAYOUT_16x9';
+    p.addSlide().addText('x', { x: 1, y: 1, w: 1, h: 1 });
+    const zip = await JSZip.loadAsync(await p.write({ outputType: 'arraybuffer' }));
+    const A = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"';
+    const shp = (id, inner) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="s${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>${inner}</p:sp>`;
+    // layout: bezak (erkin shakl) + 90° burilgan guruh ichidagi gorizontal chiziq
+    const lay = Object.keys(zip.files).find((n) => /slideLayouts\/slideLayout1\.xml$/.test(n));
+    let lx = await zip.file(lay).async('string');
+    const cust = shp(901, `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm><a:custGeom><a:pathLst><a:path w="100" h="100"><a:moveTo><a:pt x="50" y="0"/></a:moveTo><a:cubicBezTo><a:pt x="100" y="0"/><a:pt x="100" y="100"/><a:pt x="50" y="100"/></a:cubicBezTo><a:lnTo><a:pt x="0" y="50"/></a:lnTo><a:close/></a:path></a:pathLst></a:custGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr>`);
+    const grp = `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="902" name="g"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm rot="5400000"><a:off x="4572000" y="1371600"/><a:ext cx="1828800" cy="182880"/><a:chOff x="0" y="0"/><a:chExt cx="1828800" cy="182880"/></a:xfrm></p:grpSpPr>${shp(903, '<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="182880"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="00AA00"/></a:solidFill></p:spPr>')}</p:grpSp>`;
+    lx = lx.replace('</p:spTree>', cust + grp + '</p:spTree>').replace(/<p:cSld([^>]*)>/, `<p:cSld$1><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FF0000"><a:alpha val="50000"/></a:srgbClr></a:solidFill><a:effectLst/></p:bgPr></p:bg>`);
+    zip.file(lay, lx);
+    // slayd: gradientli quti + ikki xil o'lchamdagi matn bo'laklari, autofit 50%
+    let sx = await zip.file('ppt/slides/slide1.xml').async('string');
+    const tb = shp(904, `<p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="4572000" cy="1828800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FF00FF"/></a:gs><a:gs pos="100000"><a:srgbClr val="FFD966"/></a:gs></a:gsLst><a:lin ang="0" scaled="1"/></a:gradFill></p:spPr><p:txBody><a:bodyPr><a:normAutofit fontScale="50000"/></a:bodyPr><a:p><a:r><a:rPr sz="6000" b="1"/><a:t>Katta</a:t></a:r><a:br/><a:r><a:rPr sz="2000" b="0"/><a:t>kichik matn</a:t></a:r></a:p></p:txBody>`);
+    sx = sx.replace(/<p:bg>[\s\S]*?<\/p:bg>/, '').replace('</p:spTree>', tb + '</p:spTree>');
+    zip.file('ppt/slides/slide1.xml', sx);
+    const blob = await zip.generateAsync({ type: 'blob' });
+    await window.importPptxClient(new File([blob], 't.pptx'));
+    await new Promise((res) => setTimeout(res, 800));
+    const j = JSON.parse(slides[0].json);
+    const objs = j.objects;
+    const path = objs.find((o) => o.type === 'path');
+    const green = objs.find((o) => o.type === 'rect' && o.fill === '#00aa00');
+    const grad = objs.find((o) => o.fill && typeof o.fill === 'object' && o.fill.colorStops);
+    const text = objs.find((o) => o.type === 'textbox' && /Katta/.test(o.text));
+    // har belgining haqiqiy uslubi (asosiy + o'z uslubi)
+    const eff = (line, ch) => Object.assign({ fontSize: text.fontSize, fontWeight: text.fontWeight }, (text.styles && text.styles[line] && text.styles[line][ch]) || {});
+    const big = eff(0, 0), small = eff(1, 0);
+    return {
+      bg: j.background, path: !!path, pathFirst: objs.indexOf(path) < objs.indexOf(text),
+      greenAngle: green && Math.round(green.angle), grad: grad && grad.fill.colorStops.map((s) => s.color),
+      big: Math.round(big.fontSize), bold: big.fontWeight, small: Math.round(small.fontSize * 10) / 10, smallW: small.fontWeight,
+    };
+  });
+  expect(r.bg).toBe('#ff8080');                    // 50% qizil oq ustida
+  expect(r.path).toBe(true);                       // layout'dagi erkin shakl → Fabric path
+  expect(r.pathFirst).toBe(true);                  // bezak slayd matnidan orqada
+  expect(r.greenAngle).toBe(90);                   // guruh burilishi bolaga o'tdi
+  expect(r.grad).toEqual(['#ff00ff', '#ffd966']);  // gradient
+  expect(r.big).toBe(40);                          // 60pt × 50% = 30pt = 40px (10 dyuymli slayd = 960px)
+  expect(r.bold).toBe('bold');
+  expect(r.small).toBe(13.3);                      // 20pt × 50% = 10pt — o'z o'lchami saqlanadi
+  expect(r.smallW).toBe('normal');
+});
