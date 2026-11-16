@@ -736,8 +736,8 @@ def system_info() -> Dict[str, Any]:
         "ai_key": bool(key), "ai_key_hint": ("…" + key[-4:]) if len(key) > 8 else "",
         "model": cfg.get("model_name"),
         "telegram": bool((os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()),
-        "lemon": {k: bool(os.environ.get(k)) for k in ("LEMON_SQUEEZY_API_KEY", "LEMON_SQUEEZY_STORE_ID", "LEMON_SQUEEZY_VARIANT_ID",
-                                                         "LEMON_SQUEEZY_WEBHOOK_SECRET")},
+        "payments": {k: bool(os.environ.get(k)) for k in ("DODO_PAYMENTS_API_KEY", "DODO_PRODUCT_ID", "DODO_WEBHOOK_SECRET")},
+        "payments_mode": (os.environ.get("DODO_PAYMENTS_ENV") or "test").strip().lower(),
         "public_base_url": os.environ.get("PUBLIC_BASE_URL") or "",
         "admin_tg_ids": len(admin_tg_ids()), "admin_emails": len(admin_emails()),
         "migration": {

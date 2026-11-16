@@ -1,17 +1,14 @@
-/* js/46_topup.js — "Balansni to'ldirish" modal (Lemon Squeezy overlay checkout)
+/* js/46_topup.js — "Balansni to'ldirish" modal (Dodo Payments checkout)
  *
- * Narx: foydalanuvchi NETTO summa N ni tanlaydi (paket yoki o'z miqdori).
- * Lemon Squeezy komissiyasi (6.5% + $0.50) ustiga qo'shiladi:
- *     gross = ceil((N + 0.50) / 0.935)   (cent aniqligida)
- * Server (/api/payment/create-checkout) xuddi shu formulani qayta hisoblaydi, kreditlarni o'zi belgilaydi
- * va custom_data ga net_amount + credits ni imzo bilan yozadi. Webhook kreditni N bo'yicha beradi.
+ * Narx: foydalanuvchi summa N ni tanlaydi (paket yoki o'z miqdori, kamida $1). Mijoz aynan N ni to'laydi
+ * (Dodo — Merchant of Record, komissiya mijozga qo'shilmaydi). 1 USD = 100 kredit (+ paket bonusi).
+ * Server (/api/create-checkout) kreditlarni o'zi hisoblaydi va metadata ga imzo bilan yozadi.
+ * To'lovdan keyin Dodo /?payment=success ga qaytaradi; kreditni webhook (payment.succeeded) qo'shadi.
  */
 (function () {
   'use strict';
 
   var CREDITS_PER_USD = 100;
-  var FEE_PERMILLE = 65;          // 6.5%
-  var FEE_FIXED_CENTS = 50;       // $0.50
   var MIN_CENTS = 100;            // $1.00
   var MAX_CENTS = 100000;         // $1000.00
 
@@ -26,14 +23,13 @@
   var sel = null;
   var busy = false;
   var lastFocus = null;
-  var lemonReady = false;
   var pollToken = 0;
   var els = {};
 
   /* ---------------- hisob-kitob ---------------- */
   function grossCents(netCents) {
-    // Butun sonlarda: float xatosiz va serverdagi topup_gross_cents() bilan bir xil natija.
-    return Math.ceil(((netCents + FEE_FIXED_CENTS) * 1000) / (1000 - FEE_PERMILLE));
+    // Dodo Payments: komissiya mijozga qo'shilmaydi — serverdagi topup_gross_cents() bilan bir xil.
+    return netCents | 0;
   }
   function usd(cents) { return '$' + (cents / 100).toFixed(2); }
   function num(n) { return Number(n || 0).toLocaleString('en-US'); }
@@ -119,8 +115,6 @@
 
     var net = sel ? sel.netCents : 0;
     var gross = sel ? grossCents(net) : 0;
-    setText(els.net, usd(net));
-    setText(els.fee, '+' + usd(gross - net));
     setText(els.gross, usd(gross));
     setText(els.credits, num(sel ? sel.credits : 0));
     els.payAmount.textContent = sel ? usd(gross) : '';
@@ -158,7 +152,7 @@
       sel = null;
     } else {
       els.custom.classList.remove('tu-invalid');
-      els.hint.textContent = usd(r.cents) + ' = ' + num(shownCredits) + ' kredit · komissiya bilan ' + usd(grossCents(r.cents));
+      els.hint.textContent = usd(r.cents) + ' = ' + num(shownCredits) + ' kredit';
       sel = { package: 'custom', netCents: r.cents, credits: shownCredits };
     }
     render();
@@ -187,7 +181,6 @@
     else render();
     renderBalance(false);
     refreshBalance();
-    ensureLemon();
     els.modal.hidden = false;
     requestAnimationFrame(function () { els.modal.classList.add('tu-open'); });
     setTimeout(function () {
@@ -228,30 +221,9 @@
     n.focus();
   }
 
-  /* ---------------- Lemon Squeezy ---------------- */
-  function ensureLemon() {
-    try {
-      if (!window.LemonSqueezy && typeof window.createLemonSqueezy === 'function') window.createLemonSqueezy();
-      if (window.LemonSqueezy && !lemonReady && typeof window.LemonSqueezy.Setup === 'function') {
-        window.LemonSqueezy.Setup({ eventHandler: onLemonEvent });
-        lemonReady = true;
-      }
-    } catch (e) { console.warn('[topup] lemon.js', e); }
-    return !!(window.LemonSqueezy && window.LemonSqueezy.Url && typeof window.LemonSqueezy.Url.Open === 'function');
-  }
-
-  function onLemonEvent(ev) {
-    var name = ev && (ev.event || ev.type);
-    if (name === 'Checkout.Success') {
-      // v66: Lemon'ning "rahmat" oynasi ham, «Continue» tugmasi ham kutilmaydi — darhol yopamiz, sahifa yangilanmaydi
-      try { window.LemonSqueezy.Url.Close(); } catch (_) {}
-      paymentConfirmed();
-    }
-  }
-
   /* ---------------- to'lovni kuzatish (sahifa yangilanmaydi) ----------------
-   * Lemon oynasi ochilgach bizning modal yopiladi. Fonda balans tekshirib turiladi:
-   * kredit tushishi bilan Lemon oynasi (overlay yoki alohida oyna) o'zi yopiladi va pastda xabar chiqadi. */
+   * To'lov oynasi ochilgach bizning modal yopiladi. Fonda balans tekshirib turiladi:
+   * kredit tushishi bilan to'lov oynasi (alohida oyna) o'zi yopiladi va pastda xabar chiqadi. */
   var watch = null;
 
   function startWatch(expected, win) {
@@ -287,7 +259,6 @@
     if (watch === w) watch = null;
     pollToken++;
     try { if (w.win && !w.win.closed) w.win.close(); } catch (_) {}
-    try { if (window.LemonSqueezy && window.LemonSqueezy.Url && window.LemonSqueezy.Url.Close) window.LemonSqueezy.Url.Close(); } catch (_) {}
     close();
     renderBalance(true);
     var added = (w.beforeTotal != null && now && typeof now.total === 'number') ? Math.max(0, now.total - w.beforeTotal) : w.expected;
@@ -308,8 +279,7 @@
     catch (_) { return false; }
   }
 
-  // Kompyuterda: Lemon'ning to'liq (keng, ikki ustunli) to'lov sahifasi alohida katta oynada.
-  // Overlay (sahifa ichida) doim telefon kabi tor bo'ladi — uni ichidan o'zgartirib bo'lmaydi.
+  // Kompyuterda: Dodo to'lov sahifasi alohida katta oynada (sayt yopilmaydi). Telefonda — shu oynada o'tiladi.
   // MUHIM: tugma bosilgan zahoti (await'dan oldin) ochiladi, aks holda brauzer popup'ni bloklaydi.
   function openPayWindow() {
     var w = Math.min(1120, (screen.availWidth || 1280) - 40);
@@ -336,9 +306,9 @@
 
     var tgw = null;
     try { tgw = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null; } catch (_) {}
-    var mode = tgw && typeof tgw.openLink === 'function' ? 'telegram' : (isDesktop() ? 'window' : 'overlay');
+    var mode = tgw && typeof tgw.openLink === 'function' ? 'telegram' : (isDesktop() ? 'window' : 'redirect');
     var win = null;
-    if (mode === 'window') { win = openPayWindow(); if (!win) mode = 'overlay'; }   // popup bloklansa — overlay
+    if (mode === 'window') { win = openPayWindow(); if (!win) mode = 'redirect'; }   // popup bloklansa — shu oynada
 
     var gross = grossCents(sel.netCents);
     var expected = sel.credits;
@@ -346,14 +316,13 @@
       token: tk,
       email: userEmail(),
       package: sel.package,
-      net_amount: (sel.netCents / 100).toFixed(2),
+      amount: (sel.netCents / 100).toFixed(2),
       gross_amount: (gross / 100).toFixed(2),
-      return_url: window.location.origin,
-      embed: mode === 'overlay'
+      return_url: window.location.origin
     };
     setBusy(true);
     try {
-      var r = await fetch('/api/payment/create-checkout', {
+      var r = await fetch('/api/create-checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -375,12 +344,8 @@
         try { win.focus(); } catch (_) {}
         close();
         startWatch(expected, win);
-      } else if (ensureLemon()) {
-        close();                                         // orqada hech qanday oyna qolmaydi
-        window.LemonSqueezy.Url.Open(data.checkout_url);
-        startWatch(expected, null);
       } else {
-        window.location.href = data.checkout_url;        // lemon.js yuklanmagan bo'lsa — oddiy o'tish
+        window.location.href = data.checkout_url;        // telefon: Dodo sahifasiga o'tish, keyin /?payment=success
       }
     } catch (err) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
@@ -402,8 +367,6 @@
       input: document.getElementById('tuCustomInput'),
       customCredits: document.getElementById('tuCustomCredits'),
       hint: document.getElementById('tuCustomHint'),
-      net: document.getElementById('tuNet'),
-      fee: document.getElementById('tuFee'),
       gross: document.getElementById('tuGross'),
       credits: document.getElementById('tuCredits'),
       error: document.getElementById('tuError'),
@@ -427,7 +390,32 @@
     els.input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); checkout(); } });
     els.pay.addEventListener('click', checkout);
     document.addEventListener('ss:usage', function () { if (!m.hidden) renderBalance(false); });
-    ensureLemon();
+    handleReturn();
+  }
+
+  // Shu oynada to'lovdan qaytilganda (/?payment=success&payment_id=...&status=...): xabar + balansni kuzatish.
+  // Alohida oyna (popup) bo'lsa — index.html boshidagi skript asosiy oynaga xabar berib, o'zini yopadi.
+  function handleReturn() {
+    var q;
+    try { q = new URLSearchParams(window.location.search); } catch (_) { return; }
+    if (q.get('payment') !== 'success') return;
+    try { if (window.opener && window.opener !== window) return; } catch (_) {}
+    var status = String(q.get('status') || 'succeeded').toLowerCase();
+    try {
+      ['payment', 'payment_id', 'status', 'subscription_id', 'email'].forEach(function (k) { q.delete(k); });
+      var rest = q.toString();
+      history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash);
+    } catch (_) {}
+    if (status !== 'succeeded' && status !== 'active' && status !== 'processing') {
+      toast("To'lov yakunlanmadi. Qaytadan urinib ko'ring.", true);
+      return;
+    }
+    // Balans hali yuklanmagan bo'lishi mumkin (sahifa yangi ochildi) — bir necha marta yangilaymiz,
+    // webhook odatda bir necha soniyada keladi.
+    toast("✅ To'lov qabul qilindi. Kreditlar bir necha soniyada qo'shiladi.");
+    [1500, 5000, 10000, 20000, 40000].forEach(function (ms) {
+      setTimeout(function () { refreshBalance(); }, ms);
+    });
   }
 
   window.openTopUpModal = open;

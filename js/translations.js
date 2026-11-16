@@ -471,7 +471,7 @@ window.SS_I18N = {
     "Siz olasiz:": ["Вы получите:", "You get:"],
     "To'lovga o'tish": ["Перейти к оплате", "Go to payment"],
     "Qabul qilinadigan to'lov turlari": ["Принимаемые способы оплаты", "Accepted payment methods"],
-    "Xavfsiz to'lov Lemon Squeezy orqali. Karta ma'lumotlaringiz bizda saqlanmaydi.": ["Безопасная оплата через Lemon Squeezy. Мы не храним данные вашей карты.", "Secure payment via Lemon Squeezy. We never store your card details."],
+    "Xavfsiz to'lov Dodo Payments orqali. Karta ma'lumotlaringiz bizda saqlanmaydi.": ["Безопасная оплата через Dodo Payments. Мы не храним данные вашей карты.", "Secure payment via Dodo Payments. We never store your card details."],
     "Balans yangilandi.": ["Баланс обновлён.", "Balance updated."],
     "To'lovni yakunlang — kreditlar o'zi qo'shiladi.": ["Завершите оплату — кредиты начислятся автоматически.", "Finish the payment — credits are added automatically."],
     "✅ To'lov qabul qilindi. Kreditlar qo'shilmoqda…": ["✅ Оплата принята. Кредиты начисляются…", "✅ Payment received. Adding credits…"],
