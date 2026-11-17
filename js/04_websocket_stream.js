@@ -109,6 +109,24 @@
       };
     })();
     window.AiSearchUI = AiSearchUI;
+    // Speed: the server no longer waits 0.35 s per search row (SEARCH_STAGGER=0). The «one by one» look is kept
+    // here, visually only: rows update at most every 120 ms, while the AI itself never waits for this.
+    const _ssSearchUiQ = [];
+    let _ssSearchUiAt = 0, _ssSearchUiTimer = null;
+    function _ssSearchUiPump() {
+      _ssSearchUiTimer = null;
+      while (_ssSearchUiQ.length) {
+        const wait = _ssSearchUiAt + 120 - Date.now();
+        if (wait > 0) { _ssSearchUiTimer = setTimeout(_ssSearchUiPump, wait); return; }
+        const fn = _ssSearchUiQ.shift();
+        _ssSearchUiAt = Date.now();
+        try { fn(); } catch (e) {}
+      }
+    }
+    function _ssSearchUi(fn) {
+      _ssSearchUiQ.push(fn);
+      if (!_ssSearchUiTimer) _ssSearchUiPump();
+    }
     // Audit H5: the 'end' handling is shared by a normal end and by a resumed (reconnected) turn
     async function _ssHandleEnd(data) {
       try { AiSearchUI.thinkingDone(); AiSearchUI.thinkingFinal(); } catch (e) {}
@@ -218,6 +236,21 @@
       socket.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
+          // Stop pressed: everything until this turn's 'end' belongs to the stopped turn — do not mix it into a new one
+          if (window._ssStoppedReq) {
+            if ((data.type === 'end' || data.type === 'error') && (!data.request_id || data.request_id === window._ssStoppedReq)) {
+              window._ssStoppedReq = null;
+              clearTimeout(window._ssStoppedTimer);
+              try {
+                if (data.type === 'end') {
+                  if (typeof applyServerUsage === 'function') applyServerUsage(data);
+                  else if (window.Monitoring && window.Monitoring.applyServerUsage) window.Monitoring.applyServerUsage(data);
+                }
+              } catch (e) {}
+              return;
+            }
+            if (/^(chunk|thinking|search_start|search_done|search_request|queue|image_pool|reset|gif_fix)$/.test(data.type || '')) return;
+          }
           if (data.type === 'error' &&
               (data.code === 'invalid_token' ||
                data.message.includes('token is expired') || data.message.includes('invalid JWT'))) {
@@ -252,6 +285,9 @@
             try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
             try { AiSearchUI.thinkingDone(); } catch (e) {}
             handleAiResponseStream(data.text || data.content || '');
+          } else if (data.type === 'image_pool') {
+            // unused images of this presentation (server session pool) — last guard against a duplicate URL
+            window._ssImagePool = Array.isArray(data.unused) ? data.unused : [];
           } else if (data.type === 'thinking') {
             try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
             try { AiSearchUI.thinking(data.sec); } catch (e) {}
@@ -264,10 +300,10 @@
             clientAiSearch(data);
           } else if (data.type === 'search_start') {
             try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
-            try { AiSearchUI.start(data.query, data.kind, data.n); } catch (e) {}
+            _ssSearchUi(function () { AiSearchUI.start(data.query, data.kind, data.n); });
           } else if (data.type === 'search_done') {
             try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
-            try { AiSearchUI.done(data.query, data.kind, data.count); } catch (e) {}
+            _ssSearchUi(function () { AiSearchUI.done(data.query, data.kind, data.count); });
           } else if (data.type === 'gif_fix') {
 
             console.log("[gif_fix] etiborsiz — qayta bajarish ochirilgan");
@@ -1031,6 +1067,7 @@
       if (!isAiStreaming) return;
       currentAiStreamBuffer += chunk;
       try { persistStreamProgress(false); } catch (e) {}
+      try { if (window.SSLazyMedia) window.SSLazyMedia.scanStream(currentAiStreamBuffer); } catch (e) {}   // preload media URLs early
 
       const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/gi;
       let match;
@@ -1689,6 +1726,7 @@
       aiSessionActive = true;
       currentAiStreamBuffer = "";
       currentAiReplyText = "";
+      try { if (window.SSLazyMedia) window.SSLazyMedia.resetStream(); } catch (e) {}
       processedJsonBlocks.clear();
       executedActionSignatures.clear();
       _resetDeckAppliedThisStream = false;
@@ -1946,6 +1984,7 @@
         if (sidebarBtn) {
           sidebarBtn.classList.add('stop-mode');
           sidebarBtn.innerHTML = `<span class="material-symbols-outlined">stop</span>`;
+          sidebarBtn.title = "To'xtatish"; sidebarBtn.setAttribute('aria-label', "To'xtatish");
           sidebarBtn.onclick = stopAiStream;
         }
         if (bottomBtn) {
@@ -1957,6 +1996,7 @@
         if (sidebarBtn) {
           sidebarBtn.classList.remove('stop-mode');
           sidebarBtn.innerHTML = `<span class="material-symbols-outlined">send</span>`;
+          sidebarBtn.title = 'Yuborish'; sidebarBtn.setAttribute('aria-label', 'Yuborish');
           sidebarBtn.onclick = sendSidebarAiPrompt;
         }
         if (bottomBtn) {
@@ -1984,7 +2024,23 @@
       updateSendButtons(false);
       aiSessionActive = false;
       try { recordGlobalState(); } catch (e) {}
-      try { _manualSocketClose = true; if (socket) socket.close(); } catch (e) {}
+      // Stop: tell the server to stop THIS turn (it closes the AI stream at once = no more tokens). The socket stays
+      // open (closing it would look like a network drop, and the server would keep the turn running for resume).
+      // Slides that are already finished stay on screen.
+      const _req = window._ssAiReq;
+      window._ssAiReq = null;
+      _ssResume = null;
+      let _sent = false;
+      try {
+        if (_req && _req.id && isSocketReady()) {
+          socket.send(JSON.stringify({ type: 'cancel', request_id: _req.id, token: supabaseToken }));
+          window._ssStoppedReq = _req.id;
+          clearTimeout(window._ssStoppedTimer);       // safety: never ignore messages for long if no 'end' comes
+          window._ssStoppedTimer = setTimeout(function () { window._ssStoppedReq = null; }, 10000);
+          _sent = true;
+        }
+      } catch (e) {}
+      if (!_sent) { try { _manualSocketClose = true; if (socket) socket.close(); } catch (e) {} }
       // Socket qayta ochilishi mumkin — lekin yangi stream boshlanmasin
       setTimeout(() => { window._userStoppedAi = false; }, 3000);
       showToast("AI javobi to'xtatildi.");

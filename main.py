@@ -500,6 +500,7 @@ init_supabase()
 from backend import jwt_auth          # Audit H3: local JWT verification
 from backend.services import resume as _resume   # Audit H5
 from backend.services import abuse as _abuse     # Audit M2
+from backend.services import image_pool as _ipool  # session image pool (reuse found images, one URL once)
 _resume.configure(lambda: supabase)
 jwt_auth.configure(config.get("supabase_url") or "", os.environ.get("SUPABASE_JWT_SECRET", ""))
 
@@ -2622,7 +2623,11 @@ GIF_SAFE_POOL = [
     "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif",
 ]
 _ANIM_WORDS = ("gif", "animation", "animated", "loop", "motion", "spinner", "particles", "globe rotating", "loading")
-SEARCH_STAGGER = 0.35          # v57: har qator kamida shuncha turadi — «birma-bir» ko'rinish (qidiruvlar baribir parallel)
+# Speed: no artificial wait per search row (was 0.35 s each = up to 3.5 s per turn). Set SEARCH_STAGGER=0.35 for the old look.
+try:
+    SEARCH_STAGGER = max(0.0, float(os.environ.get("SEARCH_STAGGER", "0") or 0))
+except ValueError:
+    SEARCH_STAGGER = 0.0
 
 
 def _tool_search_kind(query: str, kind: Any) -> str:
@@ -2682,10 +2687,12 @@ async def _client_side_search_many(websocket, jobs: List[Tuple[int, str, str]], 
         left = deadline - time.time()
         if left <= 0:
             break
-        try:
-            raw = await asyncio.wait_for(websocket.receive_text(), timeout=left)
-        except asyncio.TimeoutError:
+        if getattr(websocket, "cancelled", lambda: False)():     # Stop pressed: do not wait for the browser
             break
+        try:
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=min(left, 0.5))
+        except asyncio.TimeoutError:
+            continue
         try:
             msg = json.loads(raw)
         except Exception:
@@ -2769,6 +2776,16 @@ async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: b
         for t in tasks:
             if not t.done():
                 t.cancel()
+    # Session image pool: remember every result for this presentation, never return an already used URL
+    _pk = _ipool.current_pool.get()
+    if _pk:
+        for (q, k), r in zip(jobs, results):
+            _ipool.add_results(_pk, q, k, r)
+        results = [_ipool.filter_used(_pk, r) for r in results]
+        try:
+            await ev({"type": "image_pool", "unused": _ipool.client_list(_pk)})
+        except WebSocketDisconnect:
+            pass
     return results
 
 
@@ -2978,6 +2995,24 @@ async def _close_ai_stream(stream) -> None:
 class _DsBusy(Exception):
     pass
 
+
+async def _end_stopped_turn(websocket, rid, uid: str, usage: dict) -> None:
+    """Stop pressed before any text arrived: nothing is charged, the turn simply ends."""
+    if rid:
+        _resume.abort(rid, uid, websocket.detached)
+    _metrics.inc("ai_turns_total", {"result": "stopped"})
+    await websocket.send_json({"type": "end", "finish_reason": "stopped", "interrupted": True, "request_id": rid,
+                               "ai_msg": {"role": "assistant", "content": ""}, "units_charged": 0, "pages_charged": 0,
+                               "charge_reason": "stopped", **usage_payload(usage)})
+
+
+class _SkipCharge(Exception):
+    pass
+
+
+class _TurnStopped(Exception):
+    """The user pressed «To'xtatish» — the AI turn ends at once (stream closed, no more tokens)."""
+
 class _ds_slot:
     """`async with _ds_slot(ws):` — GEMINI_SEMAPHORE (DEEPSEEK_CONCURRENCY) navbati; to'lib ketsa foydalanuvchiga o'rni aytiladi."""
     def __init__(self, ws):
@@ -2993,7 +3028,18 @@ class _ds_slot:
                                              "message": f"Navbatdasiz ({_ds_waiting}). Biroz kuting…"})
                 except Exception:
                     pass
-                await asyncio.wait_for(GEMINI_SEMAPHORE.acquire(), timeout=DS_QUEUE_TIMEOUT)
+                _t_end = time.monotonic() + DS_QUEUE_TIMEOUT
+                while True:                          # wait for a slot, but leave at once if the user pressed Stop
+                    if getattr(self.ws, "cancelled", lambda: False)():
+                        raise _TurnStopped()
+                    left = _t_end - time.monotonic()
+                    if left <= 0:
+                        raise asyncio.TimeoutError()
+                    try:
+                        await asyncio.wait_for(GEMINI_SEMAPHORE.acquire(), timeout=min(0.5, left))
+                        break
+                    except asyncio.TimeoutError:
+                        continue
             except asyncio.TimeoutError:
                 raise _DsBusy("503 overloaded: queue timeout")
             finally:
@@ -3111,6 +3157,8 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
                 sep_pending = False     # keyingi raundning matni oldiga bo'sh qator qo'yiladi
                 try:
                     for _round in range(MAX_TOOL_ROUNDS + 1):
+                        if websocket.cancelled():
+                            raise _TurnStopped()
                         kwargs = {
                             "model": model,
                             "messages": msgs,
@@ -3135,6 +3183,8 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
                         # so DeepSeek stops generating (no tokens paid for nobody) and the pooled connection is freed at once.
                         try:
                             async for chunk in stream:
+                                if websocket.cancelled():        # Stop pressed: leave now (finally closes the stream)
+                                    raise _TurnStopped()
                                 try:
                                     choice = chunk.choices[0] if chunk.choices else None
                                     if choice is not None:
@@ -3242,6 +3292,13 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
                                 q_, kind_ = _jobs[_job_of[i]]
                                 found = _found_all[_job_of[i]]
                                 result = {"query": q_, "kind": kind_, "results": found, "note": _search_note(kind_, bool(found))}
+                                _pk = _ipool.current_pool.get()
+                                if _pk:      # the AI also sees earlier, still unused finds of this presentation
+                                    result["session_unused_images"] = [
+                                        {"url": it["url"], "kind": it["kind"], "title": _pb.sanitize_inline(it.get("title") or it.get("query"), 80)}
+                                        for it in _ipool.unused(_pk, kind_, 8, exclude=[x.get("url") for x in found if isinstance(x, dict)])]
+                                    result["rule"] = ("Never use an image URL twice in this presentation; "
+                                                      "prefer session_unused_images before searching again.")
                             msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
                                          "content": json.dumps(result, ensure_ascii=False)[:6000]})
 
@@ -3318,7 +3375,50 @@ class _DetachableWS:
     def __getattr__(self, name):
         return getattr(self._ws, name)
 
-    def begin_turn(self, allow: bool, on_detach=None) -> None:
+    # --- Stop button: a reader task keeps reading the socket DURING an AI turn, so {"type": "cancel"} is seen
+    #     at once (before, the server read nothing while streaming). Other messages are queued in order.
+    _EOF = object()
+
+    def start_reader(self) -> None:
+        self._inbox = asyncio.Queue()
+        self.cancel_rid = None
+        self.turn_rid = None
+        self._reader = asyncio.ensure_future(self._read_loop())
+
+    async def _read_loop(self) -> None:
+        try:
+            while True:
+                raw = await self._ws.receive_text()
+                d = None
+                if isinstance(raw, str) and '"cancel"' in raw:
+                    try:
+                        d = json.loads(raw)
+                    except ValueError:
+                        d = None
+                if isinstance(d, dict) and d.get("type") == "cancel":
+                    self.cancel_rid = str(d.get("request_id") or "*")[:80]
+                    _metrics.inc("ai_cancel_total", help="Stop button presses")
+                    continue
+                await self._inbox.put(raw)
+        except BaseException:
+            try:
+                self._inbox.put_nowait(self._EOF)
+            except Exception:
+                pass
+
+    def stop_reader(self) -> None:
+        r = getattr(self, "_reader", None)
+        if r is not None and not r.done():
+            r.cancel()
+
+    def cancelled(self) -> bool:
+        rid = getattr(self, "cancel_rid", None)
+        return bool(rid) and (rid == "*" or rid == getattr(self, "turn_rid", None))
+
+    def begin_turn(self, allow: bool, on_detach=None, rid=None) -> None:
+        if getattr(self, "cancel_rid", None) not in (None, rid):
+            self.cancel_rid = None               # a stop for an older turn does not stop this one
+        self.turn_rid = rid
         self.allow_detach = bool(allow) and RESUME_DETACH_SEC > 0
         self.detached = False
         self.detached_at = 0.0
@@ -3351,7 +3451,14 @@ class _DetachableWS:
     async def receive_text(self):
         if self.detached:
             raise WebSocketDisconnect()
-        return await self._ws.receive_text()
+        inbox = getattr(self, "_inbox", None)
+        if inbox is None:
+            return await self._ws.receive_text()
+        item = await inbox.get()
+        if item is self._EOF:
+            inbox.put_nowait(self._EOF)
+            raise WebSocketDisconnect()
+        return item
 
 
 async def _handle_resume(websocket, data: dict) -> None:
@@ -3416,6 +3523,7 @@ async def ws_chat(websocket: WebSocket):
             await websocket.close()
             return
         ws_count += 1
+    websocket.start_reader()                      # Stop button: «cancel» is read even while the AI is writing
     session_key = None
     uid = ""
     email = ""
@@ -3533,11 +3641,17 @@ async def ws_chat(websocket: WebSocket):
                     await websocket.send_json({"type": "error",
                                                "message": "AI xizmati hozircha sozlanmagan. Administratorga murojaat qiling."})
                     continue
+                # Session image pool for this presentation (browser sends deck_session + the URLs already on its slides)
+                _pkey = _ipool.pool_key(uid, data.get("deck_session"))
+                _uiu = data.get("used_image_urls")
+                if isinstance(_uiu, list):
+                    _ipool.mark_used(_pkey, [u for u in _uiu[:300] if isinstance(u, str)])
+                _ipool.current_pool.set(_pkey)
                 messages, user_content = _pb.build_turn_messages(      # Audit M5/M1: backend/services/prompt_builder.py
                     base_prompt=build_system_prompt(), data=data, usage=usage, bill_mode=bill_mode, model=model, mode=mode,
                     plan_slides=plan_slides, plan_index=plan_index, scope=scope, active_slide=active_slide,
                     images_meta=images_meta, deck_state=deck_state, chat_history=chat_history, prompt=prompt,
-                    max_ctx=_max_ctx_cfg())
+                    max_ctx=_max_ctx_cfg(), image_pool_block=_ipool.prompt_block(_pkey, _pb.sanitize_inline))
                 full_reply = ""
                 usage_meta = None
                 stream_err = None
@@ -3557,9 +3671,9 @@ async def ws_chat(websocket: WebSocket):
                         _t = asyncio.get_running_loop().create_task(asyncio.to_thread(_resume.detached, _r, _u))
                         _bg_tasks.add(_t)
                         _t.add_done_callback(_bg_tasks.discard)
-                    websocket.begin_turn(True, _on_detach)
+                    websocket.begin_turn(True, _on_detach, rid=_rid)
                 else:
-                    websocket.begin_turn(False)
+                    websocket.begin_turn(False, rid=None)
                 _t = _Turn()                                   # Audit M5: AI part lives in _run_ai_turn
                 await _run_ai_turn(websocket, _t, api_key=api_key, model=model, mode=mode, prompt=prompt,
                                    user_content=user_content, messages=messages, plan_slides=plan_slides,
@@ -3570,6 +3684,11 @@ async def ws_chat(websocket: WebSocket):
                     if _rid:
                         _resume.abort(_rid, str(uid), websocket.detached)
                     raise WebSocketDisconnect()
+                _stopped = isinstance(stream_err, _TurnStopped)
+                if _stopped and not full_reply.strip():
+                    _ai_inflight_release(_held_uid); _held_uid = None
+                    await _end_stopped_turn(websocket, _rid, str(uid), usage)
+                    continue
                 if stream_err and not full_reply.strip():
                     if _rid:
                         _resume.abort(_rid, str(uid), websocket.detached)
@@ -3598,6 +3717,7 @@ async def ws_chat(websocket: WebSocket):
                     continue
 
                 _stream_text = full_reply                    # Audit H5: exactly what was streamed (before the GIF fix)
+                _ipool.mark_used(_pkey, _ipool.urls_in_reply(_stream_text))     # these URLs are taken now
                 try:
                     if _extract_bad_gif_urls(full_reply):
                         fixed = await _fix_gif_urls_in_reply(model, full_reply)
@@ -3636,12 +3756,16 @@ async def ws_chat(websocket: WebSocket):
                     except Exception:
                         _n_search_turn = 0
 
+                    if _stopped and int(pages_from_actions) == 0 and _n_search_turn == 0:
+                        raise _SkipCharge()          # stopped with text only (no slide, no search): nothing to charge
                     # Audit H2: one atomic SQL call (balance + ledger + spent). Lock kept for the legacy fallback path.
                     async with _user_lock(uid):
                         usage, pages_charged, charge_reason = await asyncio.to_thread(
                             charge_turn_atomic, uid, email, usage, int(pages_from_actions), _n_search_turn,
                             mode_for_model(model), tot,
                             {"pages_needed": int(pages_from_actions), "breakdown": pages_breakdown[:20]})
+                except _SkipCharge:
+                    charge_reason = "stopped"
                 except Exception as _ce:
                     _metrics.inc("ai_charge_failures_total", help="AI turns whose charge failed")
                     obs.capture(_ce)
@@ -3655,7 +3779,11 @@ async def ws_chat(websocket: WebSocket):
                         _resume.abort(_rid, str(uid), websocket.detached)
                     raise WebSocketDisconnect()
                 bal_payload = usage_payload(usage)
-                if isinstance(stream_err, TimeoutError):
+                if _stopped:
+                    finish_reason = "stopped"
+                    if _rid:
+                        _resume.abort(_rid, str(uid), websocket.detached)
+                elif isinstance(stream_err, TimeoutError):
                     finish_reason = "timeout"                 # Audit H6: frontend shows «vaqt tugadi» + «Davom ettirish»
                     print(f"[AI] turn deadline user={str(uid)[:8]} model={model} chars={len(full_reply)}")
                 elif stream_err:
@@ -3682,7 +3810,7 @@ async def ws_chat(websocket: WebSocket):
                     "request_id": _rid,
                     **bal_payload,
                 }
-                if _rid:
+                if _rid and not _stopped:                   # a stopped turn is not kept for resume
                     await asyncio.to_thread(_resume.finish, _rid, str(uid), stream_text=_stream_text, end_payload=_end,
                                             extra_units=_extra_units, mode=mode_for_model(model),
                                             was_detached=websocket.detached)
@@ -3725,6 +3853,7 @@ async def ws_chat(websocket: WebSocket):
         except Exception:
             pass
     finally:
+        websocket.stop_reader()
         if _held_uid:
             _ai_inflight_release(_held_uid)
         with ws_lock:

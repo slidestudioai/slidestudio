@@ -17,7 +17,9 @@ module.exports = defineConfig({
     // MAX_AI_INFLIGHT_PER_USER: all e2e tests share ONE dev user and run in parallel workers; in production the
     // limit is 1 AI turn per user at a time (Audit C2), which would answer AI_BUSY to the parallel test.
     env: { PORT: String(PORT), SLIDE_STUDIO_DEV_MODE: '1', SLIDE_STUDIO_DEV_TOKEN: 'devtok', SLIDE_STUDIO_HMAC_SECRET: 'e2e-' + 'x'.repeat(40),
-           MAX_AI_INFLIGHT_PER_USER: '8' },
+           MAX_AI_INFLIGHT_PER_USER: '8',
+           // same reason: per-user AI rate limits (prod: 15 chat / 5 plan / 40 generate per minute) are per ONE user
+           WS_RPM_CHAT: '300', WS_RPM_PLAN: '100', WS_RPM_GENERATE: '600' },
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

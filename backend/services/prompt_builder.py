@@ -253,7 +253,8 @@ def ai_balance_rules(usage: dict, bill_mode: str) -> str:
 
 def build_turn_messages(*, base_prompt: str, data: Dict[str, Any], usage: dict, bill_mode: str, model: str, mode: str,
                         plan_slides: Any, plan_index: Any, scope: str, active_slide: Any, images_meta: List[Any],
-                        deck_state: Any, chat_history: Any, prompt: str, max_ctx: int = 10) -> Tuple[List[dict], str]:
+                        deck_state: Any, chat_history: Any, prompt: str, max_ctx: int = 10,
+                        image_pool_block: str = "") -> Tuple[List[dict], str]:
     """Returns (messages, user_content) for the AI call."""
     sys_p = base_prompt + GUARD_RULE
     # Audit M1: the client hint is no longer part of the SYSTEM prompt — it goes into the user turn, marked untrusted
@@ -275,6 +276,7 @@ def build_turn_messages(*, base_prompt: str, data: Dict[str, Any], usage: dict, 
         "if asked, say you are Slide Studio AI, the built-in assistant of this app.\n"
     )
     sys_p += ai_balance_rules(usage, bill_mode)
+    sys_p += image_pool_block or ""              # session image pool: reuse found images, never the same URL twice
     if scope == "current_slide":
         sys_p += (
             f"\n\n[SCOPE: CURRENT_SLIDE]\nJoriy varoq: {active_slide}-slayd.\n"

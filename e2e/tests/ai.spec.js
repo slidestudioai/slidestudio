@@ -80,24 +80,23 @@ test('«Qayta yaratish»: slaydlar ikkilanmaydi', async ({ page }) => {
 test('rasm qidiruvi natijalari birma-bir chiqadi, slayd yaratilayotganda skelet ko\'rinadi', async ({ page }) => {
   await openEditor(page);
   await login(page);
-  await page.fill('#aiSidebarInput', 'sekin: 5 ta slayd yarat, 5 ta rasm bilan');
-  await page.evaluate(() => sendSidebarAiPrompt());
-  const okCounts = [];
-  let sawSkeleton = false, sawBuilding = false;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 30_000) {
-    const st = await page.evaluate(() => ({
+  // the state is recorded INSIDE the page every 30 ms (a 150 ms poll from the test could miss short steps under load)
+  await page.evaluate(() => {
+    window.__rows = [];
+    window.__rowsTimer = setInterval(() => window.__rows.push({
       ok: document.querySelectorAll('.ai-search-row.ok, .ai-search-row.none').length,
       skel: !!document.getElementById('ssSlideSkel'),
       building: document.body.classList.contains('ss-ai-building'),
-      streaming: isAiStreaming,
-    }));
-    okCounts.push(st.ok);
-    sawSkeleton = sawSkeleton || st.skel;
-    sawBuilding = sawBuilding || st.building;
-    if (!st.streaming && Date.now() - t0 > 2000) break;
-    await page.waitForTimeout(150);
-  }
+    }), 30);
+  });
+  await page.fill('#aiSidebarInput', 'sekin: 5 ta slayd yarat, 5 ta rasm bilan');
+  await page.evaluate(() => sendSidebarAiPrompt());
+  await page.waitForFunction(() => isAiStreaming, null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => !isAiStreaming, null, { timeout: 30_000 });
+  const rows = await page.evaluate(() => { clearInterval(window.__rowsTimer); return window.__rows; });
+  const okCounts = rows.map((r) => r.ok);
+  const sawSkeleton = rows.some((r) => r.skel);
+  const sawBuilding = rows.some((r) => r.building);
   const distinct = [...new Set(okCounts)].filter((n) => n > 0 && n < 5);
   expect(distinct.length).toBeGreaterThanOrEqual(2);              // hammasi bir zumda emas — oraliq holatlar bo'lgan
   expect(sawSkeleton).toBe(true);
@@ -140,9 +139,9 @@ test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi'
   }
   expect(maxActive).toBe(4);
   expect(trace.some((t) => t.ov)).toBe(true);                         // qurilayotganda «N-slayd tayyorlanmoqda» kartasi chiqadi
-  const span = {};                                                     // har slaydda karta kamida ~2 soniya turadi
+  const span = {};                                                     // karta HAR slaydda ko'rinadi ...
   for (const t of trace) if (t.ov) { const r = span[t.active] || (span[t.active] = [t.at, t.at]); r[1] = t.at; }
-  for (const k of Object.keys(span)) expect(span[k][1] - span[k][0]).toBeGreaterThanOrEqual(1800);
+  // ... lekin endi sun'iy ushlab turilmaydi (avval har slaydda kamida 2 s kutilardi — tezlik uchun olib tashlandi)
   expect(Object.keys(span).length).toBe(5);
   expect((await deck(page)).length).toBe(5);
   // birma-bir paydo bo'lish effekti slaydga yashirin (opacity 0) obyekt qoldirmaydi, karta oxirida yopiladi
