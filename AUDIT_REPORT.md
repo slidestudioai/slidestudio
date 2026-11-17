@@ -88,11 +88,20 @@ Status legend: **FIXED** = done in this branch with tests. **TODO** = proposed, 
   - `update_usage_atomic` now always uses CAS (8 tries with jitter) and raises `UsageConflict` instead of overwriting.
   - Tested on a real PostgreSQL 16: all rules, re-running the snippet, 20 parallel charges, 5 parallel retries with one id.
 
-### H3. Every API call asks Supabase Auth over the network — **TODO**
+### H3. Every API call asks Supabase Auth over the network — **FIXED**
 - Files: `main.py` (`/api/user/usage`, payments, admin entry), `backend/community.py`.
 - `supabase.auth.get_user(token)` = 1 HTTP call per request. Supabase Auth has rate limits; at 100k users it becomes
   the bottleneck and a single point of failure.
-- Fix: verify the JWT locally (Supabase JWKS / JWT secret, `PyJWT`), check `exp`/`aud`; cache for 60 s.
+- Fix (done): new `backend/jwt_auth.py` + `main.auth_user_cached` (used by WebSocket and `/api/user/usage`).
+  - Signature, `exp`, `aud=authenticated`, `iss`, `role=authenticated` are checked **locally**. Public keys come from
+    `{SUPABASE_URL}/auth/v1/.well-known/jwks.json` (ES256/RS256, cached 10 min, re-fetched on key rotation at most
+    once per minute). Legacy HS256 projects: set `SUPABASE_JWT_SECRET`.
+  - Junk, expired and forged tokens are rejected with **no network call** (also cached for 60 s).
+  - The algorithm comes from the key, never from the token header (`alg=none` and HS256-with-public-key attacks are blocked).
+  - Supabase Auth is still asked **once per session every 10 min** (`AUTH_REVALIDATE_SEC`) to catch logout / ban /
+    deleted users. Before: once per minute per token. If Supabase Auth is down, tokens with a valid signature are accepted.
+  - Without keys/URL (or `JWT_LOCAL_VERIFY=0`) it works exactly like before.
+  - Not changed on purpose: payments, admin entry and community (they need the full user object or must be strict; low traffic).
 
 ### H4. Balance polling: ~3,300 req/s at 100k users — **FIXED**
 - Files: `js/35_v45_tglink.js` (every 30 s + on focus), `main.py` `/api/user/usage` (5–6 DB calls each: auth, merge
@@ -112,10 +121,17 @@ Status legend: **FIXED** = done in this branch with tests. **TODO** = proposed, 
   and sees nothing. Fix: keep the last finished reply per user for 10 min (Redis/DB, key = request id); the client
   sends a `request_id` and on reconnect asks `resume`; save `currentAiStreamBuffer` to `sessionStorage`.
 
-### H6. Deep model and tool rounds can hold an AI slot for minutes — **TODO**
+### H6. Deep model and tool rounds can hold an AI slot for minutes — **FIXED**
 - File: `main.py` (`timeout=600`, `MAX_TOOL_ROUNDS`, queue 90 s).
 - One turn can take up to 10 min per call × rounds. With 40 slots, a few slow turns block everyone else.
-- Fix: a total deadline per turn (e.g. 180 s fast / 300 s deep) with `asyncio.timeout`, and a smaller per-call read timeout (60 s between chunks).
+- Fix (done):
+  - `asyncio.timeout` around the whole turn (presearch + all tool rounds): `AI_TURN_DEADLINE_FAST=300`, `AI_TURN_DEADLINE_DEEP=600`.
+    (Long decks legitimately take minutes, so the defaults are generous; the point is a hard upper bound.)
+  - HTTP read timeout = max silence between two chunks: `AI_READ_TIMEOUT=120` (was 600 for the whole call).
+  - On timeout: the stream is closed, the AI slot and the per-user slot are released. With a partial answer the client
+    gets `finish_reason: "timeout"` → «Javob to'liq emas (vaqt tugadi)» + «Davom ettirish» (no auto-continue, so no loops);
+    only finished actions are charged. With no answer: a clear error and **nothing is charged**.
+  - The Telegram bot already had 175 s limits — not changed.
 
 ---
 
@@ -165,6 +181,11 @@ Status legend: **FIXED** = done in this branch with tests. **TODO** = proposed, 
 | `MAX_AI_INFLIGHT_PER_USER` | 1 | Parallel AI turns per user (per worker) |
 | `WS_MAX_SIZE` | 4194304 | Max WebSocket message size (bytes) |
 | `USAGE_CACHE_TTL` | 15 | Seconds the balance payload is cached per user |
+| `SUPABASE_JWT_SECRET` | empty | Only for Legacy HS256 JWT projects |
+| `JWT_LOCAL_VERIFY` | 1 | Local JWT check on/off |
+| `AUTH_REVALIDATE_SEC` | 600 | How often a session is re-checked with Supabase Auth |
+| `AI_READ_TIMEOUT` | 120 | Max silence between two AI chunks (s) |
+| `AI_TURN_DEADLINE_FAST` / `_DEEP` | 300 / 600 | Max total time of one AI turn (s) |
 
 ## Database migration (run once in Supabase → SQL Editor)
 
@@ -184,5 +205,8 @@ on the old path.
 6. C5: send a 5 MB WebSocket message → connection is closed (code 1009), server RAM stays flat.
 7. H2: after running the SQL, generate 2 slides → `usage_ledger` has 1 new row with `charge_id`; in logs there is
    no `[CHARGE] ⚠️ ... yo'q` warning. Run two charges at the same time → the balance is correct.
+9. H3: in logs there should be no `[JWT] JWKS olinmadi`. Log out in one tab → within 10 min the other tab's AI request
+   gets "Sessiya tugagan". Send a random string as token → rejected instantly.
+10. H6: set `AI_TURN_DEADLINE_FAST=20`, ask for a 15-slide deck → after 20 s «vaqt tugadi» + «Davom ettirish»; the next request works at once.
 8. H4: open DevTools → Network: `/api/user/usage` every ~2 min, not every 30 s; after a test payment the balance
    updates in a few seconds.

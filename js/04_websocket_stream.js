@@ -194,7 +194,7 @@
 
             const _fr = data.finish_reason || 'stop';
             if (_fr !== 'stop') {
-              try { markStreamInterrupted(_fr === 'length' ? 'length' : 'error'); } catch (e) {}
+              try { markStreamInterrupted(_fr === 'length' ? 'length' : (_fr === 'timeout' ? 'timeout' : 'error')); } catch (e) {}
             } else if (_streamCtx) {
               try { clearInterrupted(_streamCtx.id); } catch (e) {}
               _streamCtx = null;
