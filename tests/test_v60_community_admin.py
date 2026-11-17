@@ -317,6 +317,7 @@ def test_cap_is_what_admin_gave(sb, client, monkeypatch):
     d = client.get("/api/user/usage", params={"token": "tok-c"}).json()
     assert d["units_total"] == 80 * U and d["cap_units"] == 80 * U                     # 80/80 (avval 80/160)
     sb.usage("uc")["paid_credits"] -= 5 * U                                            # 5 varaq sarfladi
+    main.usage_cache_drop("uc")       # direct DB edit = "another server"; Audit H4 cache would hide it for 15 s
     d = client.get("/api/user/usage", params={"token": "tok-c"}).json()
     assert d["units_total"] == 75 * U and d["cap_units"] == 80 * U                     # 75/80
 

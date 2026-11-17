@@ -29,8 +29,13 @@ def sb(monkeypatch):
     main._RL.clear()
     main._TOK_CACHE.clear()
     main._UWIN.clear()
+    main._USAGE_CACHE.clear()
+    main._PENDING_CHARGES.clear()
+    main._CHARGE_RPC.update(ok=True, checked=0.0)
+    main._AI_INFLIGHT.clear()
     yield fake
     main._RL.clear()
+    main._USAGE_CACHE.clear()
 
 
 @pytest.fixture()

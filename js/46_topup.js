@@ -80,7 +80,7 @@
     }
   }
   async function refreshBalance() {
-    try { if (typeof loadUserStats === 'function') await loadUserStats(); } catch (_) {}
+    try { if (typeof loadUserStats === 'function') await loadUserStats(true); } catch (_) {}
     renderBalance(false);
   }
 

@@ -536,6 +536,20 @@ def deduct_credits(user: dict, amount: int, allow_debt: bool = False) -> dict:
     user["slide_credits"] = user["free_credits"] + user["paid_credits"]
     return user
 
+def turn_cost(pages_from_actions: int, searches: int = 0, mode: str = "fast") -> Tuple[int, str]:
+    """Cost of one AI turn in UNITS + base reason. Shared by charge_for_ai_turn and the SQL charge (charge_units)."""
+    c = MODES.get(mode if mode in MODES else "fast")
+    pages_from_actions = max(0, int(pages_from_actions or 0))
+    searches = max(0, int(searches or 0))
+    if pages_from_actions > 0:
+        wanted, reason = pages_from_actions * c["page"], "slide_actions"
+    else:
+        wanted, reason = c["chat"], "chat"
+    if searches:
+        wanted += searches * c["search"]
+        reason += "+search"
+    return wanted, reason
+
 def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, mode: str = "fast") -> Tuple[dict, int, str]:
     """
     Bitta AI javobi uchun narx (BIRLIK, aniq butun son):
@@ -552,16 +566,8 @@ def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, m
     was_suspended = free_suspended(user)
     if not window_started(user) and not was_suspended:
         user["last_reset_time"] = _now().isoformat()
-    pages_from_actions = max(0, int(pages_from_actions or 0))
-    searches = max(0, int(searches or 0))
     total_credits_before = total_credits(user)
-    if pages_from_actions > 0:
-        wanted, reason = pages_from_actions * c["page"], "slide_actions"
-    else:
-        wanted, reason = c["chat"], "chat"
-    if searches:
-        wanted += searches * c["search"]
-        reason += "+search"
+    wanted, reason = turn_cost(pages_from_actions, searches, mode)
     take = max(0, min(wanted, raw_balance(user) + max_debt_units()))
     if take > 0:
         user = deduct_credits(user, take, allow_debt=True)

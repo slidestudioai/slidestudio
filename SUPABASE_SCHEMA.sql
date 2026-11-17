@@ -520,3 +520,133 @@ create table if not exists public.tg_prefs (
   updated_at timestamptz not null default now()
 );
 alter table public.tg_prefs enable row level security;
+
+
+-- ============================================================================
+-- 13) Audit H2: ATOMIC AI charge — one call, one transaction.
+--     Replaces "read -> compute in Python -> CAS write (retries) -> ledger insert -> ledger sum"
+--     (4-8 HTTP calls, and the last retry could overwrite a payment).
+--     Locks the user row (FOR UPDATE), applies the 24h free reset, charges free first, then paid
+--     (a bounded debt is allowed, p_max_debt), writes the ledger row and returns the new balance.
+--     p_charge_id makes retries safe: the same id is never charged twice.
+--     SAFE TO RE-RUN: only "add column if not exists", "create ... if not exists", "create or replace".
+--     Nothing is dropped, no user data is changed.
+-- ============================================================================
+alter table public.usage_ledger add column if not exists charge_id text;
+create unique index if not exists usage_ledger_charge_id_uq
+  on public.usage_ledger (charge_id) where charge_id is not null;
+
+create or replace function public.charge_units(
+  p_user_id     text,
+  p_units       int,
+  p_reason      text,
+  p_daily_units int,
+  p_max_debt    int,
+  p_tokens      bigint default 0,
+  p_searches    int    default 0,
+  p_details     jsonb  default '{}'::jsonb,
+  p_charge_id   text   default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r          public.user_usage%rowtype;
+  v_now      timestamptz := now();
+  v_free     int;
+  v_paid     int;
+  v_last     timestamptz;
+  v_susp     boolean;
+  v_total0   int;
+  v_take     int  := 0;
+  v_tf       int;
+  v_reason   text := coalesce(nullif(p_reason, ''), 'chat');
+  v_spent    bigint;
+begin
+  if p_user_id is null or p_units < 0 or p_daily_units < 0 or p_max_debt < 0 then
+    raise exception 'bad arguments';
+  end if;
+
+  -- the row lock comes FIRST: a parallel retry with the same p_charge_id waits here, then sees the committed ledger row
+  select * into r from public.user_usage where user_id = p_user_id for update;
+  if not found then
+    raise exception 'user_not_found';
+  end if;
+
+  if p_charge_id is not null and exists (select 1 from public.usage_ledger where charge_id = p_charge_id) then
+    return jsonb_build_object('duplicate', true, 'charged', 0, 'reason', 'duplicate',
+                              'free_credits', r.free_credits, 'paid_credits', r.paid_credits,
+                              'last_reset_time', r.last_reset_time);
+  end if;
+
+  v_free := coalesce(r.free_credits, 0);
+  v_paid := coalesce(r.paid_credits, 0);
+  v_last := r.last_reset_time;
+
+  -- 1) 24h free reset (same rules as backend/monitoring.py apply_24h_reset)
+  v_susp := p_daily_units > 0 and v_paid >= p_daily_units;
+  if v_susp then
+    v_free := least(v_free, p_daily_units);
+    if v_free <= 0 and (v_last is null or v_now - v_last < interval '24 hours') then
+      v_last := v_now - interval '24 hours';
+    end if;
+  elsif v_last is null or v_now - v_last >= interval '24 hours' then
+    v_free := p_daily_units;
+    v_last := v_now;
+  else
+    v_free := least(v_free, p_daily_units);
+  end if;
+
+  -- 2) charge (same rules as monitoring.charge_for_ai_turn). p_units = 0 -> only tokens are counted.
+  if p_units > 0 then
+    if not v_susp and v_free >= p_daily_units then
+      v_last := v_now;                                   -- the 24h window starts with the first spend
+    end if;
+    v_total0 := greatest(0, v_free + v_paid);
+    v_take   := greatest(0, least(p_units, v_free + v_paid + p_max_debt));
+    if v_take > 0 then
+      v_tf   := least(greatest(0, v_free), v_take);
+      v_free := v_free - v_tf;
+      v_paid := v_paid - (v_take - v_tf);                -- may go below 0 = debt (bounded by p_max_debt)
+      if v_take > v_total0 then
+        v_reason := v_reason || '+debt';
+      end if;
+    else
+      v_reason := 'no_credits';
+    end if;
+    if v_susp and v_free <= 0 then
+      v_last := v_now - interval '24 hours';             -- paid balance used up -> free limit comes back at once
+    end if;
+  else
+    v_reason := 'tokens_only';
+  end if;
+
+  update public.user_usage
+     set free_credits    = v_free,
+         paid_credits    = v_paid,
+         slide_credits   = v_free + v_paid,
+         last_reset_time = v_last,
+         total_tokens    = coalesce(total_tokens, 0) + greatest(0, coalesce(p_tokens, 0)),
+         daily_tokens    = coalesce(daily_tokens, 0) + greatest(0, coalesce(p_tokens, 0)),
+         last_active     = v_now
+   where user_id = p_user_id;
+
+  if v_take > 0 then
+    insert into public.usage_ledger (user_id, kind, amount, free_after, paid_after, searches, details, charge_id)
+    values (p_user_id, v_reason, -v_take, v_free, v_paid, greatest(0, coalesce(p_searches, 0)),
+            coalesce(p_details, '{}'::jsonb), p_charge_id);
+  end if;
+
+  select coalesce(sum(-amount), 0) into v_spent
+    from public.usage_ledger
+   where user_id = p_user_id and amount < 0 and created_at >= v_last;
+
+  return jsonb_build_object('duplicate', false, 'charged', v_take, 'reason', v_reason,
+                            'free_credits', v_free, 'paid_credits', v_paid,
+                            'last_reset_time', v_last, 'spent_units', v_spent);
+end;
+$$;
+
+revoke all on function public.charge_units(text, int, text, int, int, bigint, int, jsonb, text) from public, anon, authenticated;
+grant execute on function public.charge_units(text, int, text, int, int, bigint, int, jsonb, text) to service_role;

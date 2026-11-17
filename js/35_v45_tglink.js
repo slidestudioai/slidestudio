@@ -129,7 +129,7 @@
   async function sync() {
     if (document.hidden || !logged() || navigator.onLine === false) return;
     var now = Date.now();
-    if (now - last < 15000) return;
+    if (now - last < 30000) return;            // Audit H4: at most 1 call / 30 s on focus
     last = now;
     try {
       var r = await fetch('/api/user/usage', { headers: { Authorization: 'Bearer ' + token() } });
@@ -139,7 +139,7 @@
       fails = 0;
     } catch (e) { fails++; }
   }
-  function loop() { setTimeout(function () { sync().then(loop, loop); }, Math.min(300000, 30000 * Math.pow(2, Math.min(fails, 4)))); }
+  function loop() { setTimeout(function () { sync().then(loop, loop); }, Math.min(600000, 120000 * Math.pow(2, Math.min(fails, 2)))); }
   document.addEventListener('visibilitychange', sync);
   window.addEventListener('focus', sync);
   loop();
