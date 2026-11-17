@@ -1,0 +1,44 @@
+/* v68 — ENG OXIRIDA yuklanadi.
+ * 1. Tepadagi tugmalar (Namoyish, AI, ...) kichik ekranda sig'masa — barmoq bilan chapga/o'ngga suriladi
+ *    (avval oxirgi tugmalar ekrandan tashqarida qolib, ko'rinmay qolardi).
+ * 2. Xabar (toast) pastki boshqaruv tugmalari ustini yopmasin.
+ */
+
+/* ---------- 1. Tepadagi tugmalar: gorizontal surish ---------- */
+@media (max-width: 1024px) {
+  .top-header { overflow: hidden; }
+  .top-header > .btn-hamburger { flex-shrink: 0; }
+  .header-actions {
+    flex: 1 1 auto !important;
+    flex-shrink: 1 !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    justify-content: flex-start;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    touch-action: pan-x;
+    padding: 3px 2px;            /* soya / fokus halqasi kesilmasin */
+  }
+  .header-actions::-webkit-scrollbar { display: none; }
+  .header-actions > * { flex-shrink: 0 !important; }
+  /* sig'sa — avvalgidek o'ngga yopishib turadi; sig'masa — boshidan suriladi */
+  .header-actions::before { content: ''; margin-left: auto; }
+  /* qaysi tomonda yashirin tugma bor — o'sha chet xiralashadi (surish mumkinligi ko'rinadi) */
+  .header-actions.ss-more-right { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+  .header-actions.ss-more-left { -webkit-mask-image: linear-gradient(to right, transparent, #000 22px); mask-image: linear-gradient(to right, transparent, #000 22px); }
+  .header-actions.ss-more-left.ss-more-right { -webkit-mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, transparent, #000 22px, #000 calc(100% - 22px), transparent); }
+  /* til menyusi endi surilayotgan blok ichida kesilmasligi uchun JS uni position:fixed qiladi */
+  #ssLangMenu.ss-fixed { position: fixed !important; right: auto !important; }
+}
+
+/* ---------- 2. Toast pastki tugmalar (◀ 💾 ⛶ ▶ va «Shu varoq haqida yozing») ustiga tushmasin ---------- */
+@media (min-width: 769px) {
+  #toastNotification { bottom: 112px !important; }
+}
+@media (max-width: 768px) {
+  #toastNotification { bottom: 150px !important; }
+}

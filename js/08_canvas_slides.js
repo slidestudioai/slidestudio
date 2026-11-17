@@ -57,6 +57,10 @@
         };
         slides.push(slideObj);
         activeIndex = slides.length - 1;
+        // v68: kanvas endi YANGI varaqniki. Avval _canvasOwner eski (oldin yuklangan) varaqda qolardi va
+        // _ownerMismatch() yangi varaqdagi HAR BIR saqlashni o'tkazib yuborardi — boshqa varaqqa o'tib, keyin
+        // yangi varaq qo'shilsa, unga yozilgan narsalar yo'qolardi.
+        _canvasOwner = slideObj;
         try { renderSidebar(); } catch (e) {}
         try { updateSlideCounterUI(); } catch (e) {}
         try { updateAllImageBadges(); } catch (e) {}

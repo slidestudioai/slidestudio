@@ -584,8 +584,9 @@
   ].join('');
   document.head.appendChild(css);
 
-  var TABS = [['cards', 'Kartochkalar'], ['frames', 'Ramkalar'], ['stickers', 'Stikerlar'], ['backgrounds', 'Fon']];
-  var tab = 'cards', menu = null, previewCache = {};
+  // v68: birinchi bo'lim — «Mavzular» (51_design_themes.js): butun slayd(lar) dizayni, PowerPoint'dagi kabi
+  var TABS = [['themes', 'Mavzular'], ['cards', 'Kartochkalar'], ['frames', 'Ramkalar'], ['stickers', 'Stikerlar'], ['backgrounds', 'Fon']];
+  var tab = 'themes', menu = null, previewCache = {};
 
   async function preview(key, styleK) {
     var ck = styleK + '|' + key;
@@ -626,10 +627,24 @@
   function render() {
     var m = buildMenu();
     // rasm yuklash bu yerda yo'q — u uchun slayd burchagidagi «+» tugmasi bor
-    var h = '<div class="kh"><div class="kst">' + Object.keys(STYLES).map(function (k) { return '<button type="button" data-style="' + k + '" class="' + (k === current ? 'on' : '') + '" title="' + STYLES[k].hint + '">' + STYLES[k].label + '</button>'; }).join('') + '</div></div>';
-    h += '<div class="ktb">' + TABS.map(function (t) { return '<button type="button" data-tab="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div>';
+    var TH = window.SS_THEMES;
+    if (tab === 'themes' && !TH) tab = 'cards';
+    var h = tab === 'themes' ? '' : '<div class="kh"><div class="kcap" style="padding:0 0 6px">Uslub (ranglar)</div><div class="kst">' + Object.keys(STYLES).map(function (k) { return '<button type="button" data-style="' + k + '" class="' + (k === current ? 'on' : '') + '" title="' + STYLES[k].hint + '">' + STYLES[k].label + '</button>'; }).join('') + '</div></div>';
+    h += '<div class="ktb">' + TABS.filter(function (t) { return t[0] !== 'themes' || TH; }).map(function (t) { return '<button type="button" data-tab="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div>';
     if (tab === 'backgrounds') {
       h += '<div class="kcap">Fon rangi</div><div class="ksw" style="padding-top:6px">' + STYLES[current].bgs.map(function (c) { return '<button type="button" data-bg="' + c + '" title="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>';
+    }
+    if (tab === 'themes') {
+      m.innerHTML = h + TH.html();
+      m.onclick = function (e) {
+        e.stopPropagation();
+        var b = e.target.closest ? e.target.closest('button') : null;
+        if (!b) return;
+        if (b.dataset.tab) { tab = b.dataset.tab; render(); return; }
+        TH.onClick(b, render, close);
+      };
+      TH.bind(m, close);
+      return;
     }
     var keys = Object.keys(ITEMS).filter(function (k) { return ITEMS[k].cat === tab; });
     h += '<div class="kgrid">' + keys.map(function (k) { return '<button type="button" class="kit" data-item="' + k + '" title="' + ITEMS[k].label + '"><img alt="" data-prev="' + k + '"><span>' + ITEMS[k].label + '</span></button>'; }).join('') + '</div>';

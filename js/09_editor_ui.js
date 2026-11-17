@@ -80,6 +80,15 @@
     }
     let userZoomMultiplier = 1;
     let userPanX = 0, userPanY = 0;
+    function _sideReserve(wrapper) {
+      try {
+        const z = document.getElementById('mobileZoomCtl');
+        if (!z || getComputedStyle(z).display === 'none') return 0;
+        const zr = z.getBoundingClientRect(), wr = wrapper.getBoundingClientRect();
+        if (!zr.width) return 0;
+        return Math.max(0, Math.ceil(wr.right - zr.left) + 8);
+      } catch (e) { return 0; }
+    }
     function _canvasBase() {
       const wrapper = document.getElementById('canvasWrapper');
       if (!wrapper) return null;
@@ -87,7 +96,10 @@
         document.getElementById('editorContainer').classList.contains('fullscreen-fit-mode');
       const padding = isFitMode ? 8 : 12;
       const cw = wrapper.clientWidth, ch = wrapper.clientHeight;
-      const w = Math.max(0, cw - padding * 2), h = Math.max(0, ch - padding * 2);
+      // v68: o'ngdagi zoom tugmalari (+ − ⛶ ✋) va chap-yuqoridagi «+» slayd USTIGA chiqmasin —
+      // ikki yonda ular egallagan joy qoldiriladi (slayd markazda qolishi uchun ikkala tomonda teng).
+      const padX = Math.max(padding, _sideReserve(wrapper));
+      const w = Math.max(0, cw - padX * 2), h = Math.max(0, ch - padding * 2);
       if (w <= 0 || h <= 0) return null;
       const baseScale = Math.min(w / 960, h / 540);
       return { cw, ch, baseScale };
