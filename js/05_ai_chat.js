@@ -405,7 +405,18 @@
       return u;
     }
     window.sanitizeImageUrl = sanitizeImageUrl;
-    async function resolveRemoteToDataUrl(url) {
+    // Speed: the stream preloader and the slide ask for the same image at nearly the same time — share one request
+    const _proxyInflight = new Map();
+    function resolveRemoteToDataUrl(url) {
+      const key = String(url || '');
+      if (_proxyInflight.has(key)) return _proxyInflight.get(key);
+      const p = _resolveRemoteToDataUrlOnce(url);
+      _proxyInflight.set(key, p);
+      const clear = function () { _proxyInflight.delete(key); };
+      p.then(clear, clear);
+      return p;
+    }
+    async function _resolveRemoteToDataUrlOnce(url) {
       url = sanitizeImageUrl(url);
       if (!url || typeof url !== 'string') return url;
       if (url.startsWith('data:')) return url;

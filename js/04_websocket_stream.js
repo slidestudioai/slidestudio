@@ -1031,6 +1031,7 @@
       if (!isAiStreaming) return;
       currentAiStreamBuffer += chunk;
       try { persistStreamProgress(false); } catch (e) {}
+      try { if (window.SSLazyMedia) window.SSLazyMedia.scanStream(currentAiStreamBuffer); } catch (e) {}   // preload media URLs early
 
       const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/gi;
       let match;
@@ -1689,6 +1690,7 @@
       aiSessionActive = true;
       currentAiStreamBuffer = "";
       currentAiReplyText = "";
+      try { if (window.SSLazyMedia) window.SSLazyMedia.resetStream(); } catch (e) {}
       processedJsonBlocks.clear();
       executedActionSignatures.clear();
       _resetDeckAppliedThisStream = false;

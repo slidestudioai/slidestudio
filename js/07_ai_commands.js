@@ -1,6 +1,8 @@
     // v58: AI slaydlarni ketma-ket yaratganda har bir slayd tayyor bo'lgach ekranda 1 soniya QOLADI
     // (yuklanish effekti bilan), shundan keyingina keyingi slaydga o'tiladi.
-    const SS_SLIDE_HOLD_MS = 700;   // v59: elementlar endi birma-bir paydo bo'ladi — ushlab turish qisqaroq
+    // Speed: only a short visual transition between slides (was 700 ms + a 2 s minimum per slide).
+    // Media no longer blocks a slide (see js/53_lazy_media.js), so slides follow each other at the speed of the stream.
+    const SS_SLIDE_HOLD_MS = 220;
     window._ssLastDoneAt = 0;
     async function ssPaceBeforeSlide(targetIdx) {
       try {
@@ -12,7 +14,7 @@
     }
     // v59: hozir qaysi slayd QURILAYOTGANI (-1 = hech qaysi). Kanvas ustidagi «N-slayd tayyorlanmoqda» kartasi shunga qarab chiqadi.
     window._ssBuildingIdx = -1;
-    const SS_MIN_BUILD_MS = 2000;   // v60: «tayyorlanmoqda» kartasi har slaydda kamida 2 soniya turadi (miltillab o'tib ketmaydi)
+    const SS_MIN_BUILD_MS = 0;      // Speed: no artificial 2 s minimum for the «tayyorlanmoqda» card (was 2000)
     window._ssBuildStartAt = 0;
     function ssSetBuilding(idx) {
       const v = (typeof idx === 'number') ? idx : -1;
@@ -46,10 +48,11 @@
           if (!isAiStreaming || typeof canvas === 'undefined' || !canvas) return finish();
           const objs = canvas.getObjects().filter(function (o) { return o && o.visible !== false; });
           if (!objs.length) return finish();
-          const n = objs.length, DUR = 340, LIFT = 14;
-          const step = Math.max(60, Math.min(180, 1000 / n));
+          // Speed: whole slide reveal <= ~0.5 s (was up to ~1.4 s per slide)
+          const n = objs.length, DUR = 260, LIFT = 10;
+          const step = Math.max(12, Math.min(40, 240 / n));
           rows = objs.map(function (o) {
-            const media = !!(o.isGif || o.isVideo || o.isEmbed || o.type === 'gifImage' || o.type === 'videoImage' || o.type === 'embedVideo');
+            const media = !!(o.isGif || o.isVideo || o.isEmbed || o.ssMediaSlot || o.type === 'gifImage' || o.type === 'videoImage' || o.type === 'embedVideo');
             return { o: o, op: (o.opacity == null ? 1 : o.opacity), top: o.top, lift: media ? 0 : LIFT };
           });
           window._ssRevealing = true;
@@ -1231,7 +1234,10 @@
               if (_rPHIdx !== idx) await ssPaceBeforeSlide(idx);
               await ssShowBuildSlot(idx);   // v59: qurilish davomida ekran + effekt shu slaydda
               const elems = Array.isArray(cmd.elements) ? cmd.elements : [];
-              const newCanvas = await createFabricCanvasFromElements(elems, cmd.background || '#ffffff');
+              window._ssBuildTargetIdx = idx;             // lazy media: this slide's own image URLs are not "used elsewhere"
+              let newCanvas;
+              try { newCanvas = await createFabricCanvasFromElements(elems, cmd.background || '#ffffff'); }
+              finally { window._ssBuildTargetIdx = -1; }
 
               let jsonStr = JSON.stringify(newCanvas.toJSON(SERIALIZE_PROPS));
               try {
@@ -1264,6 +1270,13 @@
                   }
                 }
               } catch (e) {}
+              try { if (window.SSLazyMedia && slides[idx] && slides[idx].json && slides[idx].json.indexOf('ssMediaSlot') >= 0 && jsonStr.indexOf('ssMediaSlot') >= 0) {
+                // rebuilt slide: old slots are dropped unless the same slot id is still in the new version
+                const keep = new Set((jsonStr.match(/mslot_[a-z0-9]+_\d+/g) || []));
+                const old = JSON.parse(slides[idx].json);
+                old.objects = (old.objects || []).filter(function (o) { return o && o.ssSlotId && !keep.has(o.ssSlotId); });
+                window.SSLazyMedia.forgetSlotsIn(old);
+              } else if (window.SSLazyMedia && slides[idx] && slides[idx].json) window.SSLazyMedia.forgetSlotsIn(slides[idx].json); } catch (e) {}
               const _keepBgType = slides[idx] ? slides[idx].bgType : undefined;
               const _keepBgVal = slides[idx] ? slides[idx].bgVal : undefined;
               slides[idx] = {
@@ -1813,6 +1826,8 @@
     window.ssFixCardLayout = ssFixCardLayout;
     async function createFabricCanvasFromElements(elements = [], background = '#ffffff') {
       try { if (Array.isArray(elements)) elements = ssFixCardLayout(elements); } catch (e) { console.warn('ssFixCardLayout:', e); }
+      // one image URL only once per presentation (server session pool gives an unused replacement)
+      try { if (window.SSLazyMedia && Array.isArray(elements)) elements = window.SSLazyMedia.dedupeElements(elements); } catch (e) {}
       const tempEl = document.createElement('canvas');
       tempEl.width = 960; tempEl.height = 540;
       const tempCanvas = new fabric.Canvas(tempEl, { backgroundColor: background });
@@ -1845,12 +1860,13 @@
         if (document.fonts && document.fonts.load) {
           const fams = new Set();
           list.forEach(function (e) { if (e && (e.type === 'text' || e.type === 'textbox')) fams.add(e.fontFamily || 'Roboto'); });
-          await Promise.race([
-            Promise.all(Array.from(fams).flatMap(function (f) {
-              return [document.fonts.load('400 16px "' + f + '"'), document.fonts.load('700 16px "' + f + '"')];
-            })),
-            new Promise(function (r) { setTimeout(r, 2500); })
-          ]);
+          // Speed: fonts are preloaded at page start (53_lazy_media.js), so this is ~0 ms. If a font is still loading
+          // we wait at most 300 ms (was 2.5 s) and re-measure the text when it arrives (SSLazyMedia.reflowWhenFontsReady).
+          const _fl = Promise.all(Array.from(fams).flatMap(function (f) {
+            return [document.fonts.load('400 16px "' + f + '"'), document.fonts.load('700 16px "' + f + '"')];
+          }));
+          await Promise.race([_fl, new Promise(function (r) { setTimeout(r, 300); })]);
+          try { if (window.SSLazyMedia) window.SSLazyMedia.reflowWhenFontsReady(_fl); } catch (e) {}
         }
       } catch (e) {}
 
@@ -1869,7 +1885,10 @@
       }
       try { globalImageCounter = Math.max(globalImageCounter || 0, localMax); } catch (e) {}
       for (const el of list) {
-        const fabEl = await parseElementToFabric(el);
+        // Speed: an AI image/video no longer blocks the slide — a shimmer slot is shown now, the media fades in later
+        let fabEl = null;
+        try { if (window.SSLazyMedia && window.SSLazyMedia.shouldDefer(el)) fabEl = window.SSLazyMedia.slotFor(el); } catch (e) { fabEl = null; }
+        if (!fabEl) fabEl = await parseElementToFabric(el);
         if (fabEl) {
           if (isImageLike(el) && el.imageNumber != null) {
             try {
@@ -2214,6 +2233,7 @@
               objectCaching: false
             });
             try { loadedImg.setCoords(); } catch (e) {}
+            if (isHttpUrl) { try { loadedImg.ssSrcUrl = el.ssSrcUrl || el.src; loadedImg.set('ssSrcUrl', loadedImg.ssSrcUrl); } catch (e) {} }
             loadedImg.dirty = true;
             if (el._oid != null) { loadedImg._oid = el._oid; loadedImg.set('_oid', el._oid); }
             ensureObjectId(loadedImg);

@@ -181,7 +181,8 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
     let currentSat = 100;
     let currentVal = 100;
     let globalObjectIdCounter = 0;
-    const SERIALIZE_PROPS = ['id', 'imageNumber', 'imageHash', '_oid', 'src', 'crossOrigin', 'isGif', 'gifUrl', 'isFallback', 'isVideo', 'videoUrl', 'videoLoop', 'videoMuted', 'videoAutoplay', 'ssKind', 'ssSpec'];
+    const SERIALIZE_PROPS = ['id', 'imageNumber', 'imageHash', '_oid', 'src', 'crossOrigin', 'isGif', 'gifUrl', 'isFallback', 'isVideo', 'videoUrl', 'videoLoop', 'videoMuted', 'videoAutoplay', 'ssKind', 'ssSpec',
+      'ssSrcUrl', 'ssMediaSlot', 'ssSlotId', 'ssSlotEl'];   // lazy media (53_lazy_media.js): original URL + pending slot
     function nextObjectId() { globalObjectIdCounter += 1; return globalObjectIdCounter; }
     function ensureObjectId(obj) {
       if (!obj) return null;
@@ -480,7 +481,7 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
             if (sk && !(img.complete && img.naturalWidth)) { try { img.dispatchEvent(new Event('error')); } catch (e) {} }
           }, 20000);
           img.style.opacity = '0';
-          img.style.transition = 'opacity 0.35s ease';
+          img.style.transition = 'opacity 0.3s ease';
           if (!sk) { sk = build(kind); sk.classList.add('in-wrap'); wrap.insertBefore(sk, wrap.firstChild); }
           else { sk.className = 'media-skeleton shimmer in-wrap ' + (kind === 'image' ? 'image-loading' : 'gif-loading'); sk.style.opacity = '1';
                  if (!sk.querySelector('.skeleton-spinner')) sk.innerHTML = '<div class="skeleton-spinner"></div><span class="skeleton-tag">' + (kind === 'image' ? 'RASM' : 'GIF') + '</span>'; }
