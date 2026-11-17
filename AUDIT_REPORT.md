@@ -205,8 +205,8 @@ on the old path.
 6. C5: send a 5 MB WebSocket message → connection is closed (code 1009), server RAM stays flat.
 7. H2: after running the SQL, generate 2 slides → `usage_ledger` has 1 new row with `charge_id`; in logs there is
    no `[CHARGE] ⚠️ ... yo'q` warning. Run two charges at the same time → the balance is correct.
+8. H4: open DevTools → Network: `/api/user/usage` every ~2 min, not every 30 s; after a test payment the balance
+   updates in a few seconds.
 9. H3: in logs there should be no `[JWT] JWKS olinmadi`. Log out in one tab → within 10 min the other tab's AI request
    gets "Sessiya tugagan". Send a random string as token → rejected instantly.
 10. H6: set `AI_TURN_DEADLINE_FAST=20`, ask for a 15-slide deck → after 20 s «vaqt tugadi» + «Davom ettirish»; the next request works at once.
-8. H4: open DevTools → Network: `/api/user/usage` every ~2 min, not every 30 s; after a test payment the balance
-   updates in a few seconds.
