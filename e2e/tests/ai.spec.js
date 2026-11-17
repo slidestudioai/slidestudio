@@ -155,9 +155,10 @@ test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi'
 test('rasm topilmasa AI uni boshqa so\'z bilan qayta qidiradi, keyin slaydlarni yasaydi', async ({ page }) => {
   await openEditor(page);
   await login(page);
-  await ask(page, '3 ta slayd yarat, 3 ta rasm bilan, topilmas');
+  // bitta slayd (tahrir) — AI o'zi qidiradi (bir nechta slayd/taqdimotda esa server hamma mavzuni oldindan qidiradi)
+  await ask(page, '1 ta slayd yarat, 1 ta rasm bilan, topilmas');
   const rows = await page.$$eval('.ai-search-row', (r) => r.map((x) => x.innerText));
   expect(rows.join(' | ')).toContain('yoq narsa');
   expect(rows.join(' | ')).toContain('subject retry');   // topilmagani uchun boshqa so'z bilan qayta qidirildi (chatda ko'rinadi)
-  expect((await deck(page)).length).toBe(3);
+  expect((await deck(page)).length).toBe(1);
 });

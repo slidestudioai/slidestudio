@@ -42,3 +42,13 @@
 @media (max-width: 768px) {
   #toastNotification { bottom: 150px !important; }
 }
+
+/* ---------- AI yozish paneli: js/voice.js ishga tushmasa ham (eski kesh, bloklovchi, sekin tarmoq) ixcham qoladi ----------
+ * Avval bu qoidalar faqat voice.js ichida qo'shilardi: skript ishlamasa «UZ» mikrofon yonida oddiy yozuv bo'lib turar,
+ * skrepka chiqib qolar va matn maydoni siqilardi. Mikrofon faqat ovozli yozish haqiqatan ishlasa ko'rinadi. */
+#attachBtnSidebar { display: none !important; }
+.ai-sidebar-input-box .ss-mic-btn { position: relative; overflow: visible; }
+.ai-sidebar-input-box .ss-mic-btn.ss-mic-off { display: none !important; }
+.ss-mic-btn .ss-mic-lang { position: absolute; right: -2px; bottom: -2px; font: 700 8px/1 system-ui, sans-serif; font-style: normal;
+  background: #ede9fe; color: #6d28d9; border-radius: 4px; padding: 2px 3px; pointer-events: none; }
+.ai-sidebar-input-box textarea { min-width: 0; }
