@@ -12,6 +12,10 @@
     return e;
   }
   function icon(name) { var s = el('span', 'material-symbols-outlined', name); return s; }
+  function authHdr() {            // Audit C4: token in a header, not in the URL
+    var t = tok();
+    return t ? { Authorization: 'Bearer ' + t } : {};
+  }
   async function api(path, opts) {
     var res = await fetch(path, opts);
     var data = null;
@@ -79,7 +83,7 @@
         return;
       }
       var loading = el('div', 'cm-muted', 'Havola tayyorlanmoqda…'); b.appendChild(loading);
-      var r = await api('/api/referral/me?token=' + encodeURIComponent(tok()));
+      var r = await api('/api/referral/me', { headers: authHdr() });
       loading.remove();
       if (!r.ok || !r.data.code) {
         b.appendChild(el('div', 'cm-error', (r.data && r.data.error) || 'Havolani olib bo\'lmadi. Keyinroq urinib ko\'ring.'));
@@ -214,7 +218,7 @@
     load: async function (reset) {
       var self = this;
       if (reset) this.state = { posts: [], total: 0, offset: 0 };
-      var r = await api('/api/feedback/list?limit=15&offset=' + this.state.posts.length + '&token=' + encodeURIComponent(tok()));
+      var r = await api('/api/feedback/list?limit=15&offset=' + this.state.posts.length, { headers: authHdr() });
       if (!r.ok) {
         if (this.root) { this.root.textContent = ''; this.root.appendChild(el('div', 'cm-error', (r.data && r.data.error) || 'Fikrlarni yuklab bo\'lmadi')); }
         return;

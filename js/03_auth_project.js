@@ -512,7 +512,7 @@
     async function loadUserStats() {
       if (!supabaseToken || supabaseToken === "dev-token") return;
       try {
-        const res = await fetch(`/api/user/usage?token=${encodeURIComponent(supabaseToken)}`);
+        const res = await fetch('/api/user/usage', { headers: { Authorization: 'Bearer ' + supabaseToken } });
         const data = await res.json();
         if (data.error) return;
         try {

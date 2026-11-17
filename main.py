@@ -1487,7 +1487,8 @@ def _merge_duplicates_once(uid: str, email: str) -> None:
 
 
 @app.get("/api/user/usage")
-def user_usage(token: str = ""):
+def user_usage(request: Request, token: str = ""):
+    token = _bearer(request, token)       # Audit C4: header preferred; ?token= kept only for old cached clients
     if not supabase or not token:
         u = normalize_user_row({
             "free_credits": free_daily_units(),
@@ -2959,6 +2960,18 @@ def _deepseek_client(api_key: str, base_url: str):
         )
     return _ds_client_cache["client"]
 
+async def _close_ai_stream(stream) -> None:
+    """Audit C3: stop the upstream generation and give the HTTP connection back to the pool."""
+    close = getattr(stream, "close", None)
+    if close is None:
+        return
+    try:
+        r = close()
+        if asyncio.iscoroutine(r):
+            await r
+    except Exception:
+        pass
+
 class _DsBusy(Exception):
     pass
 
@@ -3018,6 +3031,27 @@ def _user_rate_hit(uid: str, kind: str) -> int:
             _UWIN.pop(k, None)
     return 0
 
+# ---- Audit C2: one AI turn at a time per user ----
+# The balance is checked BEFORE generation and charged AFTER it. Without this guard a user could open many tabs
+# (or spam "Generate") and start N turns that all pass the balance check at the same moment.
+# NOTE: the counter is per worker process. For a hard cross-worker guarantee set REDIS_URL (see AUDIT_REPORT.md).
+MAX_AI_INFLIGHT_PER_USER = _env_i("MAX_AI_INFLIGHT_PER_USER", 1)
+_AI_INFLIGHT: Dict[str, int] = {}
+
+def _ai_inflight_acquire(uid: str) -> bool:
+    n = _AI_INFLIGHT.get(uid, 0)
+    if n >= MAX_AI_INFLIGHT_PER_USER:
+        return False
+    _AI_INFLIGHT[uid] = n + 1
+    return True
+
+def _ai_inflight_release(uid: str) -> None:
+    n = _AI_INFLIGHT.get(uid, 0) - 1
+    if n > 0:
+        _AI_INFLIGHT[uid] = n
+    else:
+        _AI_INFLIGHT.pop(uid, None)
+
 # ---- token -> foydalanuvchi keshi (har xabarda Supabase Auth'ga HTTP so'rov ketmasin) ----
 _TOK_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
 TOK_TTL = 60.0
@@ -3044,6 +3078,7 @@ async def ws_chat(websocket: WebSocket):
     email = ""
     DEV_MODE = os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() == "1"
     DEV_TOKEN = os.environ.get("SLIDE_STUDIO_DEV_TOKEN", "")
+    _held_uid = None                      # Audit C2: uid whose in-flight slot this connection holds
     try:
         _ws_errs = 0
         while True:
@@ -3443,6 +3478,11 @@ async def ws_chat(websocket: WebSocket):
                 finish_reason = None
                 client = None
                 client_gone = False
+                if not _ai_inflight_acquire(str(uid)):
+                    await websocket.send_json({"type": "error", "code": "AI_BUSY",
+                                               "message": "Oldingi so'rovingiz hali bajarilmoqda (boshqa oynada ham bo'lishi mumkin). Tugashini kuting."})
+                    continue
+                _held_uid = str(uid)
                 try:
 
                     client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
@@ -3495,60 +3535,65 @@ async def ws_chat(websocket: WebSocket):
                                 round_text = ""
                                 calls: Dict[int, dict] = {}
                                 stream = await client.chat.completions.create(**kwargs)
-                                async for chunk in stream:
-                                    try:
-                                        choice = chunk.choices[0] if chunk.choices else None
-                                        if choice is not None:
-                                            fr = getattr(choice, "finish_reason", None)
-                                            if fr:
-                                                finish_reason = fr
-                                            delta = choice.delta
-                                            _rc = getattr(delta, "reasoning_content", None) if delta else None
-                                            if _rc:
-                                                # v54: Chuqur AI avval uzoq «o'ylaydi» — Tez AI kabi jonli holat ko'rinsin (sukut bo'lmasin)
-                                                _think_chars += len(_rc)
-                                                _now_t = time.monotonic()
-                                                if _now_t - _think_last >= 1.0:
-                                                    _think_last = _now_t
+                                # Audit C3: the stream is closed on ANY exit (user closed tab -> WebSocketDisconnect),
+                                # so DeepSeek stops generating (no tokens paid for nobody) and the pooled connection is freed at once.
+                                try:
+                                    async for chunk in stream:
+                                        try:
+                                            choice = chunk.choices[0] if chunk.choices else None
+                                            if choice is not None:
+                                                fr = getattr(choice, "finish_reason", None)
+                                                if fr:
+                                                    finish_reason = fr
+                                                delta = choice.delta
+                                                _rc = getattr(delta, "reasoning_content", None) if delta else None
+                                                if _rc:
+                                                    # v54: Chuqur AI avval uzoq «o'ylaydi» — Tez AI kabi jonli holat ko'rinsin (sukut bo'lmasin)
+                                                    _think_chars += len(_rc)
+                                                    _now_t = time.monotonic()
+                                                    if _now_t - _think_last >= 1.0:
+                                                        _think_last = _now_t
+                                                        try:
+                                                            await websocket.send_json({"type": "thinking", "chars": _think_chars,
+                                                                                       "sec": int(_now_t - _think_t0)})
+                                                        except (WebSocketDisconnect, RuntimeError):
+                                                            raise WebSocketDisconnect()
+                                                txt = getattr(delta, "content", None) if delta else None
+                                                if txt:
+                                                    if sep_pending and txt.strip():
+                                                        sep_pending = False
+                                                        full_reply += "\n\n"
+                                                        try:
+                                                            await websocket.send_json({"type": "chunk", "text": "\n\n"})
+                                                        except (WebSocketDisconnect, RuntimeError):
+                                                            raise WebSocketDisconnect()
+                                                    round_text += txt
+                                                    full_reply += txt
                                                     try:
-                                                        await websocket.send_json({"type": "thinking", "chars": _think_chars,
-                                                                                   "sec": int(_now_t - _think_t0)})
+                                                        await websocket.send_json({"type": "chunk", "text": txt})
                                                     except (WebSocketDisconnect, RuntimeError):
                                                         raise WebSocketDisconnect()
-                                            txt = getattr(delta, "content", None) if delta else None
-                                            if txt:
-                                                if sep_pending and txt.strip():
-                                                    sep_pending = False
-                                                    full_reply += "\n\n"
-                                                    try:
-                                                        await websocket.send_json({"type": "chunk", "text": "\n\n"})
-                                                    except (WebSocketDisconnect, RuntimeError):
-                                                        raise WebSocketDisconnect()
-                                                round_text += txt
-                                                full_reply += txt
-                                                try:
-                                                    await websocket.send_json({"type": "chunk", "text": txt})
-                                                except (WebSocketDisconnect, RuntimeError):
-                                                    raise WebSocketDisconnect()
-                                            for tc in (getattr(delta, "tool_calls", None) or []):
-                                                slot = calls.setdefault(int(getattr(tc, "index", 0) or 0), {"id": "", "name": "", "args": ""})
-                                                if getattr(tc, "id", None):
-                                                    slot["id"] = tc.id
-                                                fn = getattr(tc, "function", None)
-                                                if fn is not None:
-                                                    if getattr(fn, "name", None):
-                                                        slot["name"] += fn.name
-                                                    if getattr(fn, "arguments", None):
-                                                        slot["args"] += fn.arguments
-                                        if getattr(chunk, "usage", None):
-                                            u_ = chunk.usage
-                                            agg_in += getattr(u_, "prompt_tokens", 0) or 0
-                                            agg_out += getattr(u_, "completion_tokens", 0) or 0
-                                            agg_tot += getattr(u_, "total_tokens", 0) or ((getattr(u_, "prompt_tokens", 0) or 0) + (getattr(u_, "completion_tokens", 0) or 0))
-                                    except WebSocketDisconnect:
-                                        raise
-                                    except Exception:
-                                        continue
+                                                for tc in (getattr(delta, "tool_calls", None) or []):
+                                                    slot = calls.setdefault(int(getattr(tc, "index", 0) or 0), {"id": "", "name": "", "args": ""})
+                                                    if getattr(tc, "id", None):
+                                                        slot["id"] = tc.id
+                                                    fn = getattr(tc, "function", None)
+                                                    if fn is not None:
+                                                        if getattr(fn, "name", None):
+                                                            slot["name"] += fn.name
+                                                        if getattr(fn, "arguments", None):
+                                                            slot["args"] += fn.arguments
+                                            if getattr(chunk, "usage", None):
+                                                u_ = chunk.usage
+                                                agg_in += getattr(u_, "prompt_tokens", 0) or 0
+                                                agg_out += getattr(u_, "completion_tokens", 0) or 0
+                                                agg_tot += getattr(u_, "total_tokens", 0) or ((getattr(u_, "prompt_tokens", 0) or 0) + (getattr(u_, "completion_tokens", 0) or 0))
+                                        except WebSocketDisconnect:
+                                            raise
+                                        except Exception:
+                                            continue
+                                finally:
+                                    await _close_ai_stream(stream)
                                 if not calls and model == "deepseek-reasoner" and not _dsml_retried and _DSML_RE.search(round_text or "") and "```json" not in (round_text or ""):
                                     _dsml_retried = True           # model mavjud bo'lmagan tool'ni chaqirmoqchi bo'ldi — JSON'siz to'xtab qolmasin
                                     print("[DEEP] DSML/tool matni — qayta so'raladi")
@@ -3663,6 +3708,7 @@ async def ws_chat(websocket: WebSocket):
                     else:
                         print(f"[AI] stream xatosi: {str(stream_err)[:300]}")
                         msg = "AI xizmatida xatolik yuz berdi. Qayta urinib ko'ring."
+                    _ai_inflight_release(_held_uid); _held_uid = None
                     await websocket.send_json({"type": "error", "message": msg})
                     continue
 
@@ -3710,6 +3756,8 @@ async def ws_chat(websocket: WebSocket):
                     print(f"[MONITORING] charge: {_ce}")
                     charge_reason = "charge_error"
                     usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
+                if _held_uid:
+                    _ai_inflight_release(_held_uid); _held_uid = None
                 if client_gone:
                     raise WebSocketDisconnect()
                 bal_payload = usage_payload(usage)
@@ -3743,6 +3791,8 @@ async def ws_chat(websocket: WebSocket):
                 if (websocket.client_state != WebSocketState.CONNECTED
                         or websocket.application_state != WebSocketState.CONNECTED):
                     raise WebSocketDisconnect()
+                if _held_uid:
+                    _ai_inflight_release(_held_uid); _held_uid = None
                 _ws_errs += 1
                 print(f"[WS] xabar xatosi ({_ws_errs}): {type(e).__name__}: {str(e)[:300]}")
                 try:
@@ -3766,6 +3816,8 @@ async def ws_chat(websocket: WebSocket):
         except Exception:
             pass
     finally:
+        if _held_uid:
+            _ai_inflight_release(_held_uid)
         with ws_lock:
             ws_count = max(0, ws_count - 1)
 

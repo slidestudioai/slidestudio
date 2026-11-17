@@ -10,7 +10,7 @@ ENV PORT=8080
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request,os;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8080')+'/healthz')" || exit 1
 CMD ["gunicorn", "main:app", \
-  "--worker-class", "uvicorn.workers.UvicornWorker", \
+  "--worker-class", "backend.worker.SlideStudioWorker", \
   "--workers", "4", \
   "--worker-connections", "1000", \
   "--keep-alive", "5", \
