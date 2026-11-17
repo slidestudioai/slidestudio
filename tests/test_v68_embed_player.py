@@ -45,3 +45,19 @@ def test_bot_html_uses_relay_when_site_url_known(monkeypatch):
     monkeypatch.delenv("PUBLIC_BASE_URL")
     monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
     assert 'src="https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0"' in tg_decks._html_embed(it, "")
+
+
+def test_prompt_lists_every_theme_and_free_action():
+    """AI ko'rsatmasi dasturdagi HAR BIR mavzuni biladi; set_theme — bepul (balans yechilmaydi)."""
+    import os
+    import re
+    from backend import monitoring
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    js = open(os.path.join(root, "js", "51_design_themes.js"), encoding="utf-8").read()
+    ids = re.findall(r"^\s*\['([a-z_]+)', '", js, re.M)
+    assert len(ids) >= 30
+    prompt = main._read_default_system_prompt()
+    assert '"action":"set_theme"' in prompt
+    for i in ids:
+        assert f'"{i}" (' in prompt, i
+    assert "set_theme" in monitoring.FREE_ACTIONS

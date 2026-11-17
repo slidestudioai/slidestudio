@@ -135,3 +135,24 @@ test('mavzuli slayd PPTX ga haqiqiy shakllar (rasm emas) bilan chiqadi', async (
     expect((xml.match(/<p:sp>/g) || []).length).toBeGreaterThanOrEqual(3);   // bezak — tahrirlanadigan shakllar
   }
 });
+
+test('AI: {"action":"set_theme"} butun taqdimotga mavzu qo\'yadi (oxirgi slayd ham, kartadagi matn o\'zgarmaydi)', async ({ page }) => {
+  await openEditor(page);
+  await page.evaluate(() => {
+    supabaseToken = 'devtok'; currentUserEmail = 't@e2e.uz';
+    window.ensureValidToken = async () => true;
+    window.clientAiSearch = function (req) { socket.send(JSON.stringify({ type: 'search_result', id: req.id, results: [] })); };
+    toggleAISidebar(true);
+  });
+  await page.waitForFunction(() => socket && socket.readyState === 1);
+  await page.fill('#aiSidebarInput', 'Kosmos haqida 3 ta slayd yarat mavzu:space');
+  await page.evaluate(() => sendSidebarAiPrompt());
+  await page.waitForFunction(() => isAiStreaming, null, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => !isAiStreaming, null, { timeout: 60_000 });
+  await expect.poll(() => page.evaluate(() => slides.length === 3 && slides.every((s) => {
+    const j = JSON.parse(s.json || '{}');
+    return j.background === '#050816' && (j.objects || []).some((o) => o.ssKitItem === 'theme_space');
+  })), { timeout: 15_000 }).toBe(true);
+  const fills = await page.evaluate(() => slides.map((s) => (JSON.parse(s.json).objects || []).filter((o) => o.type === 'textbox').map((o) => o.fill)));
+  for (const f of fills) expect(f).toEqual(['#0F172A', '#334155']);   // matnlar karta (#F1F5F9) ustida — o'qilishi buzilmaydi
+});

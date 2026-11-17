@@ -146,6 +146,9 @@ def _reply_actions(prompt, urls):
     acts = [{"action": "replace_slide", "slide": 1, **_slide(1, "Sarlavha 1", urls, gif)}]
     for i in range(2, n + 1):
         acts.append({"action": "insert_slide", "after": i - 1, **_slide(i, f"Sarlavha {i}", urls, gif)})
+    m = re.search(r"mavzu:(\w+)", prompt)              # v68: «mavzu:space» -> oxirida set_theme (hamma slaydlarga)
+    if m:
+        acts.append({"action": "set_theme", "theme": m.group(1), "target": "all"})
     return acts
 
 

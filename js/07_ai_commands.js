@@ -865,6 +865,13 @@
               await aiStyleMedia(cmd);
               break;
             }
+            case 'set_theme':
+            case 'apply_theme':
+            case 'set_design': {
+              // v68: butun slayd(lar) dizayni (51_design_themes.js): {"action":"set_theme","theme":"midnight","target":"all"|"slide":N}
+              try { if (window.SS_THEMES) await window.SS_THEMES.aiSetTheme(cmd); } catch (e) { console.warn('set_theme:', e); }
+              break;
+            }
             case 'set_transition':
             case 'slide_transition': {
               // v48: butun slayd o'tish animatsiyasi: {"action":"set_transition","slide":N | "target":"all","transition":"fade|zoom|flip|up|blur|none"}

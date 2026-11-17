@@ -265,35 +265,99 @@
     return !!(window.isAiStreaming || window.isAiApplyingCommands || window.aiSessionActive ||
       (typeof isAiStreaming !== 'undefined' && isAiStreaming) || (typeof isAiApplyingCommands !== 'undefined' && isAiApplyingCommands));
   }
+  /* --- boshqa (ochiq bo'lmagan) slaydga: to'g'ridan-to'g'ri JSON ustida — slaydlar orasida sakramaydi, tez --- */
+  function jbox(o) {
+    var w = (+o.width || 0) * (o.scaleX == null ? 1 : +o.scaleX), h = (+o.height || 0) * (o.scaleY == null ? 1 : +o.scaleY);
+    if (o.type === 'circle' && !o.width) { w = h = 2 * (+o.radius || 0) * (o.scaleX || 1); }
+    var l = +o.left || 0, t = +o.top || 0;
+    if (o.originX === 'center') l -= w / 2; else if (o.originX === 'right') l -= w;
+    if (o.originY === 'center') t -= h / 2; else if (o.originY === 'bottom') t -= h;
+    return { left: l, top: t, width: w, height: h };
+  }
+  function jHasFill(o) {
+    if (!o || isText(o) || o.ssRole === 'bgdecor') return false;
+    var f = o.fill;
+    if (!f || f === 'transparent' || f === 'none') return o.type === 'image' || o.type === 'group' || !!o.isEmbed || !!o.isGif || !!o.isVideo;
+    if (typeof f === 'string' && /rgba\([^)]*,\s*0(\.0+)?\s*\)$/.test(f)) return false;
+    return true;
+  }
+  async function decorJson(T) {
+    var objs = await toObjects(decorParts(T)), out = [];
+    var props = (typeof SERIALIZE_PROPS !== 'undefined') ? SERIALIZE_PROPS : ['ssKit', 'ssRole', 'ssKitItem'];
+    objs.forEach(function (o) { try { if (typeof ensureObjectId === 'function') ensureObjectId(o); } catch (e) {} out.push(o.toObject(props)); });
+    return out;
+  }
+  async function applyToSlideJson(idx, T) {
+    var s = slides[idx]; if (!s) return false;
+    var j; try { j = JSON.parse(s.json || '{}'); } catch (e) { j = {}; }
+    var objs = (j.objects || []).filter(function (o) { return o && o.ssRole !== 'bgdecor'; });
+    j.background = T.bg; delete j.backgroundImage; delete j.backgroundGif; delete j.backgroundVideo;
+    var texts = [];
+    objs.forEach(function (o, i) { if (isText(o) && !o.ssKit && !o.ssKind && !o.isButton && !o.linkUrl) texts.push(i); });
+    var maxFs = Math.max.apply(null, [0].concat(texts.map(function (i) { return (objs[i].fontSize || 0) * (objs[i].scaleY || 1); })));
+    texts.forEach(function (ti) {
+      var o = objs[ti], b = jbox(o), cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      for (var k = ti - 1; k >= 0; k--) {
+        var q = objs[k];
+        if (!jHasFill(q) || (q.opacity != null && q.opacity < 0.35)) continue;
+        var r = jbox(q);
+        if (r.width >= 24 && r.height >= 16 && cx >= r.left && cx <= r.left + r.width && cy >= r.top && cy <= r.top + r.height) return;
+      }
+      var fs = (o.fontSize || 0) * (o.scaleY || 1);
+      var isTitle = fs >= 30 || (fs >= maxFs - 0.5 && (o.fontWeight === 'bold' || +o.fontWeight >= 600));
+      clearStyleKeys(o, ['fill', 'fontFamily']);
+      o.fill = isTitle ? T.title : T.body; o.fontFamily = isTitle ? T.fontTitle : T.fontBody;
+    });
+    j.objects = (await decorJson(T)).concat(objs);
+    s.json = JSON.stringify(j);
+    try { if (typeof refreshSlideThumb === 'function') refreshSlideThumb(idx); } catch (e) {}
+    return true;
+  }
+  function themeKey(v) {
+    v = String(v || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+    if (THEMES[v]) return v;
+    for (var k in THEMES) if (THEMES[k].label.toLowerCase().replace(/[\s-]+/g, '_') === v) return k;
+    var AL = { office: 'office', ofis: 'office', ocean: 'ocean', okean: 'ocean', dark: 'midnight', night: 'midnight', tun: 'midnight',
+      neon: 'tech', tech: 'tech', texnologiya: 'tech', kids: 'kids', bolalar: 'kids', nature: 'leaf', eco: 'leaf', green: 'leaf', tabiat: 'leaf',
+      gold: 'gold', oltin: 'gold', luxury: 'gold', academic: 'academic', akademik: 'academic', science: 'academic', minimal: 'minimal',
+      pastel: 'spring', space: 'space', kosmos: 'space', business: 'office', corporate: 'office', biznes: 'office', white: 'clean', plain: 'clean', none: 'clean' };
+    return AL[v] || null;
+  }
   var busy = false;
-  async function apply(id, scope) {
-    var T = THEMES[id], c = cv();
+  /** scope: 'all' | 'one' | massiv [slayd indekslari, 0 dan]. opts.ai — AI chaqirdi (AI ishlayotgan payt ruxsat) */
+  async function apply(id, scope, opts) {
+    opts = opts || {};
+    var key = themeKey(id), T = key && THEMES[key], c = cv();
     if (!T || !c) return false;
     if (busy) return false;
-    if (aiBusy()) { toast('AI slayd yasayapti — tugagach mavzuni tanlang', 'error'); return false; }
+    if (!opts.ai && aiBusy()) { toast('AI slayd yasayapti — tugagach mavzuni tanlang', 'error'); return false; }
     busy = true;
     try {
       try { if (window.SS_KIT && SS_KIT.setStyle) SS_KIT.setStyle(T.kit); } catch (e) {}
       try { c.discardActiveObject(); } catch (e) {}
-      var all = scope === 'all' && typeof slides !== 'undefined' && slides.length > 1 && typeof switchSlide === 'function';
-      if (!all) {
-        await applyToCanvas(c, T);
-        saveState();
-      } else {
-        var back = activeIndex;
-        for (var i = 0; i < slides.length; i++) {
-          if (i !== activeIndex) await switchSlide(i);
-          if (activeIndex !== i) continue;              // almashtirib bo'lmadi — o'tkazib yuboramiz
-          await applyToCanvas(cv(), T);
-          saveState();
-        }
-        if (activeIndex !== back) await switchSlide(back);
+      var n = (typeof slides !== 'undefined') ? slides.length : 1, list;
+      if (Array.isArray(scope)) list = scope.filter(function (i) { return i >= 0 && i < n; });
+      else if (scope === 'all') list = Array.from({ length: n }, function (_, i) { return i; });
+      else list = [activeIndex];
+      for (var x = 0; x < list.length; x++) {
+        if (list[x] === activeIndex) { await applyToCanvas(c, T); saveState(); }
+        else await applyToSlideJson(list[x], T);
       }
-      try { if (typeof recordGlobalState === 'function') recordGlobalState(); } catch (e) {}
+      try { if (!opts.ai && typeof recordGlobalState === 'function') recordGlobalState(); } catch (e) {}
       try { if (typeof renderSidebar === 'function') renderSidebar(); } catch (e) {}
-      toast('«' + T.label + '» mavzusi ' + (all ? 'hamma slaydlarga' : 'shu slaydga') + ' qo\'llandi');
+      if (!opts.silent) toast('«' + T.label + '» mavzusi ' + (list.length > 1 ? 'hamma slaydlarga' : 'shu slaydga') + ' qo\'llandi');
       return true;
     } finally { busy = false; }
+  }
+  /** AI buyrug'i: {"action":"set_theme","theme":"midnight","target":"all"} yoki {"slide":N} yoki {"slides":[1,3]} */
+  async function aiSetTheme(cmd) {
+    cmd = cmd || {};
+    var id = cmd.theme || cmd.name || cmd.design || cmd.style;
+    var scope;
+    if (Array.isArray(cmd.slides)) scope = cmd.slides.map(function (v) { return (parseInt(v, 10) || 0) - 1; });
+    else if (cmd.slide != null && cmd.target !== 'all') scope = [(parseInt(cmd.slide, 10) || 1) - 1];
+    else scope = 'all';
+    return apply(id, scope, { ai: true, silent: true });
   }
   function currentThemeOf(c) {
     c = c || cv(); if (!c) return null;
@@ -431,7 +495,7 @@
 
   window.SS_THEMES = {
     THEMES: THEMES, ORDER: ORDER, DECOR: DECOR,
-    apply: apply, applyToCanvas: applyToCanvas, current: currentThemeOf,
+    apply: apply, applyToCanvas: applyToCanvas, applyToSlideJson: applyToSlideJson, aiSetTheme: aiSetTheme, themeKey: themeKey, current: currentThemeOf,
     html: html, bind: bind, onClick: onClick, preview: preview
   };
 })();
