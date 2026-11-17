@@ -252,6 +252,9 @@
             try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
             try { AiSearchUI.thinkingDone(); } catch (e) {}
             handleAiResponseStream(data.text || data.content || '');
+          } else if (data.type === 'image_pool') {
+            // unused images of this presentation (server session pool) — last guard against a duplicate URL
+            window._ssImagePool = Array.isArray(data.unused) ? data.unused : [];
           } else if (data.type === 'thinking') {
             try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
             try { AiSearchUI.thinking(data.sec); } catch (e) {}

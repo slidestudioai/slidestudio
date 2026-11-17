@@ -500,6 +500,7 @@ init_supabase()
 from backend import jwt_auth          # Audit H3: local JWT verification
 from backend.services import resume as _resume   # Audit H5
 from backend.services import abuse as _abuse     # Audit M2
+from backend.services import image_pool as _ipool  # session image pool (reuse found images, one URL once)
 _resume.configure(lambda: supabase)
 jwt_auth.configure(config.get("supabase_url") or "", os.environ.get("SUPABASE_JWT_SECRET", ""))
 
@@ -2773,6 +2774,16 @@ async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: b
         for t in tasks:
             if not t.done():
                 t.cancel()
+    # Session image pool: remember every result for this presentation, never return an already used URL
+    _pk = _ipool.current_pool.get()
+    if _pk:
+        for (q, k), r in zip(jobs, results):
+            _ipool.add_results(_pk, q, k, r)
+        results = [_ipool.filter_used(_pk, r) for r in results]
+        try:
+            await ev({"type": "image_pool", "unused": _ipool.client_list(_pk)})
+        except WebSocketDisconnect:
+            pass
     return results
 
 
@@ -3246,6 +3257,13 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
                                 q_, kind_ = _jobs[_job_of[i]]
                                 found = _found_all[_job_of[i]]
                                 result = {"query": q_, "kind": kind_, "results": found, "note": _search_note(kind_, bool(found))}
+                                _pk = _ipool.current_pool.get()
+                                if _pk:      # the AI also sees earlier, still unused finds of this presentation
+                                    result["session_unused_images"] = [
+                                        {"url": it["url"], "kind": it["kind"], "title": _pb.sanitize_inline(it.get("title") or it.get("query"), 80)}
+                                        for it in _ipool.unused(_pk, kind_, 8, exclude=[x.get("url") for x in found if isinstance(x, dict)])]
+                                    result["rule"] = ("Never use an image URL twice in this presentation; "
+                                                      "prefer session_unused_images before searching again.")
                             msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
                                          "content": json.dumps(result, ensure_ascii=False)[:6000]})
 
@@ -3537,11 +3555,17 @@ async def ws_chat(websocket: WebSocket):
                     await websocket.send_json({"type": "error",
                                                "message": "AI xizmati hozircha sozlanmagan. Administratorga murojaat qiling."})
                     continue
+                # Session image pool for this presentation (browser sends deck_session + the URLs already on its slides)
+                _pkey = _ipool.pool_key(uid, data.get("deck_session"))
+                _uiu = data.get("used_image_urls")
+                if isinstance(_uiu, list):
+                    _ipool.mark_used(_pkey, [u for u in _uiu[:300] if isinstance(u, str)])
+                _ipool.current_pool.set(_pkey)
                 messages, user_content = _pb.build_turn_messages(      # Audit M5/M1: backend/services/prompt_builder.py
                     base_prompt=build_system_prompt(), data=data, usage=usage, bill_mode=bill_mode, model=model, mode=mode,
                     plan_slides=plan_slides, plan_index=plan_index, scope=scope, active_slide=active_slide,
                     images_meta=images_meta, deck_state=deck_state, chat_history=chat_history, prompt=prompt,
-                    max_ctx=_max_ctx_cfg())
+                    max_ctx=_max_ctx_cfg(), image_pool_block=_ipool.prompt_block(_pkey, _pb.sanitize_inline))
                 full_reply = ""
                 usage_meta = None
                 stream_err = None
@@ -3602,6 +3626,7 @@ async def ws_chat(websocket: WebSocket):
                     continue
 
                 _stream_text = full_reply                    # Audit H5: exactly what was streamed (before the GIF fix)
+                _ipool.mark_used(_pkey, _ipool.urls_in_reply(_stream_text))     # these URLs are taken now
                 try:
                     if _extract_bad_gif_urls(full_reply):
                         fixed = await _fix_gif_urls_in_reply(model, full_reply)

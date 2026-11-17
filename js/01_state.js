@@ -70,6 +70,12 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
         if (payload && typeof payload === 'object' && !payload.type && 'prompt' in payload) {
           payload.request_id = payload.request_id || ('r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
           window._ssAiReq = { id: payload.request_id, at: Date.now() };
+          // session image pool: one pool per presentation; the server must know which URLs the slides already use
+          if (!window._ssDeckSession) window._ssDeckSession = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+          let _ds = window._ssDeckSession;
+          try { if (typeof currentProjectId !== 'undefined' && currentProjectId) _ds = 'p' + String(currentProjectId).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 70); } catch (e) {}
+          payload.deck_session = _ds;
+          try { payload.used_image_urls = window.SSLazyMedia ? Array.from(window.SSLazyMedia.deckUsedUrls()).slice(0, 300) : []; } catch (e) {}
         }
       } catch (e) {}
       if (isSocketReady()) {
