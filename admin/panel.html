@@ -201,8 +201,8 @@ async function saveSettings(){
 /* ---------------- YANA: xabar / tizim / jurnal ---------------- */
 let mtab='bc';
 async function more(m){
-  m.innerHTML=`<div class="chips">${[['bc','📣 Xabar'],['sys','🛠 Tizim'],['led','🧾 Jurnal']].map(c=>`<span class="chip ${mtab===c[0]?'on':''}" onclick="mtab='${c[0]}';more($('#main'))">${c[1]}</span>`).join('')}</div><div id="mbody"></div>`;
-  await ({bc,sys,led}[mtab])($('#mbody'));
+  m.innerHTML=`<div class="chips">${[['bc','📣 Xabar'],['sys','🛠 Tizim'],['led','🧾 Jurnal'],['ipc','🛡 Ko\'p akkaunt']].map(c=>`<span class="chip ${mtab===c[0]?'on':''}" onclick="mtab='${c[0]}';more($('#main'))">${c[1]}</span>`).join('')}</div><div id="mbody"></div>`;
+  await ({bc,sys,led,ipc}[mtab])($('#mbody'));
 }
 async function bc(b){
   b.innerHTML=`<div class="card"><label>Kimga</label><select id="b_a" onchange="bcCount()"><option value="all">Hamma bot foydalanuvchilari</option><option value="free">Faqat bepul</option><option value="pro">Faqat VIP/admin</option><option value="linked">Faqat Google ulaganlar</option></select><small id="b_c" style="color:var(--mut)"></small><label>Xabar (oddiy matn)</label><textarea id="b_t" maxlength="3500" placeholder="Xabar matni…"></textarea><div class="row" style="margin-top:10px"><button class="btn" id="b_s" onclick="bcSend()">Yuborish</button></div><div id="b_p" style="margin-top:10px"></div></div>`;bcCount();
@@ -221,6 +221,13 @@ async function sys(b){
 }
 async function pause(v){if(!confirm(v?'Yangi AI so\'rovlari to\'xtatilsinmi?':'Davom ettirilsinmi?'))return;try{await api('pause',{value:v});more($('#main'));}catch(e){}}
 async function setKey(){const k=$('#k_i').value.trim();if(!k)return;try{const r=await api('set_ai_key',{key:k});toast('✓ '+r.note);$('#k_i').value='';more($('#main'));}catch(e){}}
+/* Audit M2: bir tarmoqdan (IP xeshi) ko'p yangi akkaunt */
+async function ipc(b){
+  b.innerHTML='<div class="card" id="ipb"><div class="empty">Yuklanmoqda…</div></div>';
+  try{const r=await api('ip_clusters',{days:7,min:3});const c=r.clusters||[];
+    $('#ipb').innerHTML=`<div class="kv"><span>Limit: 24 soatda bir IP'dan yangi akkaunt</span><b>${r.limit||'o\'chiq'}</b></div>`+(c.length?c.map(x=>`<div class="item"><div class="t"><b>IP #${esc(x.ip_hash)} · ${x.accounts} ta akkaunt</b><small>cheklangan: ${x.limited} · pullik: ${x.paid} · oxirgi: ${fdate(x.last_at)}</small><small>${x.users.map(u=>`<a href="#" onclick="openUser('${esc(u.user_id)}');return false">${esc(u.email||u.user_id)}</a>`).join(', ')}</small></div></div>`).join(''):'<div class="empty">7 kunda shubhali guruh yo\'q</div>');
+  }catch(e){$('#ipb').innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
+}
 let ltab='ledger';
 async function led(b){
   b.innerHTML=`<div class="chips">${[['ledger','Balans'],['orders','To\'lovlar'],['audit','Admin harakatlari']].map(c=>`<span class="chip ${ltab===c[0]?'on':''}" onclick="ltab='${c[0]}';led($('#mbody'))">${c[1]}</span>`).join('')}</div><div class="card" style="padding:0" id="lbody"><div class="empty">…</div></div>`;

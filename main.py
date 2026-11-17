@@ -494,6 +494,7 @@ init_supabase()
 
 from backend import jwt_auth          # Audit H3: local JWT verification
 from backend.services import resume as _resume   # Audit H5
+from backend.services import abuse as _abuse     # Audit M2
 _resume.configure(lambda: supabase)
 jwt_auth.configure(config.get("supabase_url") or "", os.environ.get("SUPABASE_JWT_SECRET", ""))
 
@@ -1109,6 +1110,13 @@ def _client_ip(request) -> str:
             return parts[-min(TRUSTED_PROXY_HOPS, len(parts))][:64]
     return request.client.host if request.client else "?"
 
+def _safe_client_ip(conn) -> str:
+    """Audit M2: IP for the abuse check — never breaks the request."""
+    try:
+        return _client_ip(conn)
+    except Exception:
+        return "?"
+
 def _rate_limited(ip: str, path: str) -> bool:
     if path.startswith(_RL_EXEMPT):
         return False
@@ -1282,6 +1290,33 @@ app.include_router(admin_core.router)
 
 _bg_tasks: set = set()
 
+_PURGE = {"last": 0.0, "off": False}
+
+
+def purge_old_rows_once() -> Optional[dict]:
+    """Audit M3: daily retention (SQL public.purge_old_rows). payment_events is never deleted."""
+    if not supabase or _PURGE["off"]:
+        return None
+    _PURGE["last"] = time.time()
+    try:
+        r = supabase.rpc("purge_old_rows", {
+            "p_ledger_days": max(30, _env_int("RETENTION_LEDGER_DAYS", 365)),
+            "p_audit_days": max(30, _env_int("RETENTION_AUDIT_DAYS", 365)),
+            "p_adsent_days": max(3, _env_int("RETENTION_ADSENT_DAYS", 7)),
+            "p_turns_days": 1, "p_batch": 5000,
+        }).execute()
+        data = r.data[0] if isinstance(r.data, list) and r.data else r.data
+        print(f"[PURGE] eski yozuvlar o'chirildi: {data}")
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        if _is_missing_rpc(e) or "purge_old_rows" in str(e).lower():
+            print("[PURGE] ⚠️ SQL funksiya public.purge_old_rows yo'q (SUPABASE_SCHEMA.sql 14-bo'lim) — tozalash o'chiq.")
+            _PURGE["off"] = True
+        else:
+            print(f"[PURGE] {str(e)[:160]}")
+        return None
+
+
 async def _housekeeping_loop():
     """Har 10 daqiqada eskirgan xotirani tozalaydi (RAM o'sib ketmasligi uchun)."""
     import gc
@@ -1302,6 +1337,10 @@ async def _housekeeping_loop():
             with _RL_LOCK:
                 for k in [k for k, v in _RL.items() if not v or now - v[-1] > 120]:
                     _RL.pop(k, None)
+            for k in [k for k, v in list(_UWIN.items()) if not v or now - v[-1] > 120]:
+                _UWIN.pop(k, None)
+            if now - _PURGE["last"] > 86400 + (os.getpid() % 3600):     # Audit M3: once a day, workers spread out
+                await asyncio.to_thread(purge_old_rows_once)
             gc.collect()
         except Exception as e:
             print(f"[HOUSEKEEPING] {str(e)[:120]}")
@@ -1710,6 +1749,8 @@ def user_usage(request: Request, token: str = "", fresh: int = 0):
             return cached
         _merge_duplicates_once(uid, email)
         u = get_or_create_user_usage(uid, email)
+        if _abuse.check_new_account(supabase, uid, u, _safe_client_ip(request), _SCALING_HMAC_SECRET):   # Audit M2
+            u = get_or_create_user_usage(uid, email)
         u["spent_24h"] = ledger_spent(uid, u.get("last_reset_time"))
         payload = usage_payload(u)
         payload["cap_units"] = balance_cap_units(uid, apply_24h_reset(dict(u)))
@@ -2264,7 +2305,9 @@ async def dodo_webhook(request: Request):
         pages = min(remaining, amount * (1000 - DODO_FEE_PERMILLE) // 1000) if partial else remaining
         if pages <= 0:
             return {"ok": True, "duplicate": True}
-        key = f"refund-{pay_key}-{refund_id or amount}"
+        # Audit M3: without refund_id the key used to be the amount, so two partial refunds of the same amount
+        # collided (the 2nd was lost). webhook-id is unique per event and stable across Dodo's retries.
+        key = f"refund-{pay_key}-{refund_id or request.headers.get('webhook-id') or amount}"
         u = await _credit_user(user_id, "", key, pages, -1, etype, payment_id)
         if u is None:
             return {"ok": True, "duplicate": True}
@@ -3453,6 +3496,9 @@ async def ws_chat(websocket: WebSocket):
                                                "message": f"Juda tez-tez so'rov yuboryapsiz. {_wait} soniyadan keyin qayta urinib ko'ring."})
                     continue
                 usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
+                if await asyncio.to_thread(_abuse.check_new_account, supabase, str(uid), usage,    # Audit M2
+                                           _safe_client_ip(websocket), _SCALING_HMAC_SECRET):
+                    usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
                 if usage.get("blocked"):
                     await websocket.send_json({"type": "error", "message": "Akkaunt bloklangan."})
                     continue

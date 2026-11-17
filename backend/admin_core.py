@@ -969,6 +969,13 @@ def _dispatch(op: str, body: Dict[str, Any], actor: str):
         audit(actor, "ai.key", "", {"tail": key[-4:]})
         return {"ok": True, "note": "Kalit yangilandi (restartdan keyin AI_API_KEY env qiymati qaytadi — Render env'ni ham yangilang)."}
     # ---- jurnallar
+    if op == "ip_clusters":                       # Audit M2: many new accounts from one network
+        from backend.services import abuse
+        try:
+            return {"clusters": abuse.ip_clusters(_sb(), int(body.get("days") or 7), int(body.get("min") or 3)),
+                    "limit": abuse.limit()}
+        except Exception as e:
+            raise AdminError("Ma'lumot olinmadi (SUPABASE_SCHEMA.sql 14-bo'lim ishga tushirilganmi?): " + str(e)[:120], 409)
     if op in ("ledger", "audit", "orders"):
         sb = _sb()
         tbl, cols, order = {"ledger": ("usage_ledger", "user_id,kind,amount,free_after,paid_after,created_at", "created_at"),

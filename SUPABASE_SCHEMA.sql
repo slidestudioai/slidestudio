@@ -650,3 +650,81 @@ $$;
 
 revoke all on function public.charge_units(text, int, text, int, int, bigint, int, jsonb, text) from public, anon, authenticated;
 grant execute on function public.charge_units(text, int, text, int, int, bigint, int, jsonb, text) to service_role;
+
+
+-- ============================================================================
+-- 14) Audit H5 + M2 + M3. SAFE TO RE-RUN: only "add column if not exists", "create ... if not exists",
+--     "create or replace". Nothing is dropped; existing user data is not changed.
+--     purge_old_rows() deletes ONLY old log rows, and only when the server calls it (daily, see AUDIT_REPORT.md).
+-- ============================================================================
+
+-- H5: result of an AI turn whose connection dropped (for "resume" after reconnect; kept ~1 day)
+create table if not exists public.ai_turn_results (
+  request_id   text        primary key,
+  user_id      text        not null,
+  status       text        not null default 'running',     -- running | done | aborted
+  reply        text,
+  end_payload  jsonb,
+  extra_units  int         not null default 0,             -- charged only when the resume really delivers it
+  mode         text,
+  created_at   timestamptz not null default now()
+);
+create index if not exists ai_turn_results_created_idx on public.ai_turn_results (created_at);
+alter table public.ai_turn_results enable row level security;
+revoke all on public.ai_turn_results from anon, authenticated;
+grant all on public.ai_turn_results to service_role;
+
+-- M2: HMAC hash of the sign-up IP (the IP itself is never stored)
+alter table public.user_usage add column if not exists signup_ip_hash text;
+create index if not exists user_usage_signup_ip_idx
+  on public.user_usage (signup_ip_hash, created_at) where signup_ip_hash is not null;
+create index if not exists user_usage_created_idx on public.user_usage (created_at desc);
+
+-- M3: faster "last top-up" lookup (balance_cap_units) and time-based purge
+create index if not exists usage_ledger_topup_idx
+  on public.usage_ledger (user_id, created_at desc)
+  where kind in ('purchase', 'refund', 'admin_credit', 'account_merge_in', 'tg_link_in');
+create index if not exists usage_ledger_created_idx on public.usage_ledger (created_at);
+
+-- M3: retention. Deletes in small batches (no long table locks). payment_events is NEVER deleted.
+create or replace function public.purge_old_rows(
+  p_ledger_days int default 365,
+  p_audit_days  int default 365,
+  p_adsent_days int default 7,
+  p_turns_days  int default 1,
+  p_batch       int default 5000
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  n_ledger int := 0; n_audit int := 0; n_adsent int := 0; n_turns int := 0; n int;
+begin
+  if p_ledger_days < 30 or p_audit_days < 30 or p_adsent_days < 3 or p_turns_days < 1 or p_batch < 1 then
+    raise exception 'bad arguments (minimums: ledger/audit 30 days, ad_sent 3, turns 1)';
+  end if;
+  loop
+    delete from public.usage_ledger where id in (
+      select id from public.usage_ledger where created_at < now() - make_interval(days => p_ledger_days) limit p_batch);
+    get diagnostics n = row_count; n_ledger := n_ledger + n; exit when n < p_batch;
+  end loop;
+  loop
+    delete from public.admin_audit where id in (
+      select id from public.admin_audit where created_at < now() - make_interval(days => p_audit_days) limit p_batch);
+    get diagnostics n = row_count; n_audit := n_audit + n; exit when n < p_batch;
+  end loop;
+  loop
+    delete from public.ad_sent where id in (
+      select id from public.ad_sent where sent_at < now() - make_interval(days => p_adsent_days) limit p_batch);
+    get diagnostics n = row_count; n_adsent := n_adsent + n; exit when n < p_batch;
+  end loop;
+  delete from public.ai_turn_results where created_at < now() - make_interval(days => p_turns_days);
+  get diagnostics n_turns = row_count;
+  return jsonb_build_object('usage_ledger', n_ledger, 'admin_audit', n_audit, 'ad_sent', n_adsent,
+                            'ai_turn_results', n_turns);
+end;
+$$;
+
+revoke all on function public.purge_old_rows(int, int, int, int, int) from public, anon, authenticated;
+grant execute on function public.purge_old_rows(int, int, int, int, int) to service_role;
