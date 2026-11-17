@@ -50,6 +50,8 @@ try:
         normalize_user_row,
         apply_24h_reset,
         charge_for_ai_turn,
+        turn_cost,
+        max_debt_units,
         usage_payload,
         add_paid_credits,
         remove_paid_credits,
@@ -764,22 +766,29 @@ def save_user_credits(user_id: str, user: dict, tokens_add: int = 0, cas: bool =
             print(f"[SAVE CREDITS2] {e2}")
         return False
 
-def update_usage_atomic(user_id: str, email: str, fn, retries: int = 5):
+class UsageConflict(RuntimeError):
+    """The balance kept changing under us (or the DB write failed) — nothing was written."""
+
+
+def update_usage_atomic(user_id: str, email: str, fn, retries: int = 8):
     """v53: balansni xavfsiz o'zgartirish: o'qi -> fn(usage) -> (yangi_usage, natija) -> CAS bilan yoz.
     To'qnashuvda qaytadan o'qib hisoblanadi (fn SOF bo'lishi shart: faqat dict'ni o'zgartirsin).
-    Natija: (yozilgan_usage, natija)."""
-    u2, out = None, None
+    Audit H2: EVERY attempt uses CAS. The old code wrote the last attempt WITHOUT CAS, which could overwrite a payment
+    that arrived in between. Now it raises UsageConflict instead. Natija: (yozilgan_usage, natija)."""
+    import random
     for attempt in range(max(1, retries)):
         u = get_or_create_user_usage(user_id, email)
         u2, out = fn(dict(u))
         for k in ("_v_free", "_v_paid"):
             if k in u:
                 u2[k] = u[k]
-        ok = save_user_credits(user_id, u2, 0, cas=attempt < retries - 1)
+        ok = save_user_credits(user_id, u2, 0, cas=True)
         if ok is not False:
+            usage_cache_drop(user_id)
             return u2, out
         print(f"[USAGE CAS] to'qnashuv user={str(user_id)[:8]} urinish={attempt + 1}")
-    return u2, out
+        time.sleep(random.uniform(0.005, 0.03) * (attempt + 1))     # jitter: parallel writers do not collide again
+    raise UsageConflict(f"usage_conflict user={str(user_id)[:8]}")
 
 def update_user_tokens(user_id: str, tokens: int, credits_delta: int = 0):
     """Legacy wrapper — yangi tizimda save_user_credits + charge_for_ai_turn ishlatiladi."""
@@ -799,6 +808,195 @@ def update_user_tokens(user_id: str, tokens: int, credits_delta: int = 0):
         update_usage_atomic(user_id, "", _apply)
     except Exception as e:
         print(f"[TOKEN UPD] {e}")
+
+# =============================================================================================
+# Audit H4: short per-user cache of /api/user/usage (5-6 DB calls each) and of token -> user lookups.
+# =============================================================================================
+USAGE_CACHE_TTL = float(_env_int("USAGE_CACHE_TTL", 15))
+USAGE_CACHE_FRESH_MIN = 2.0          # ?fresh=1 (payment watchers) is honoured only if the entry is older than this
+_USAGE_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_USAGE_CACHE_LOCK = threading.Lock()
+
+
+def usage_cache_get(uid: str, fresh: bool = False):
+    with _USAGE_CACHE_LOCK:
+        hit = _USAGE_CACHE.get(str(uid))
+    if not hit:
+        return None
+    age = time.time() - hit[0]
+    if age >= USAGE_CACHE_TTL or (fresh and age >= USAGE_CACHE_FRESH_MIN):
+        return None
+    return hit[1]
+
+
+def usage_cache_put(uid: str, payload: dict) -> None:
+    with _USAGE_CACHE_LOCK:
+        _USAGE_CACHE[str(uid)] = (time.time(), payload)
+        _USAGE_CACHE.move_to_end(str(uid))
+        while len(_USAGE_CACHE) > 20000:
+            _USAGE_CACHE.popitem(last=False)
+
+
+def usage_cache_drop(uid: str) -> None:
+    """Call after ANY balance change in this process (charge, payment, referral)."""
+    with _USAGE_CACHE_LOCK:
+        _USAGE_CACHE.pop(str(uid), None)
+
+
+# =============================================================================================
+# Audit H2: ATOMIC charge — SQL function public.charge_units (SUPABASE_SCHEMA.sql, section 13).
+#   1 HTTP call instead of 4-8, row lock instead of CAS retries, ledger row in the same transaction,
+#   idempotent by charge_id (safe to retry). If the function is not installed yet -> old CAS path.
+#   If the DB is down -> the charge is queued in memory and retried (not given away for free).
+# =============================================================================================
+_CHARGE_RPC = {"ok": True, "checked": 0.0}
+_PENDING_CHARGES: List[dict] = []
+_PENDING_LOCK = threading.Lock()
+PENDING_CHARGES_MAX = 10000
+
+
+def _is_missing_rpc(err: Exception) -> bool:
+    m = str(err).lower()
+    return "pgrst202" in m or "could not find the function" in m or ("charge_units" in m and "does not exist" in m)
+
+
+def _charge_rpc_call(job: dict) -> dict:
+    r = supabase.rpc("charge_units", {
+        "p_user_id": job["uid"], "p_units": int(job["units"]), "p_reason": job["reason"],
+        "p_daily_units": int(job["daily"]), "p_max_debt": int(job["max_debt"]),
+        "p_tokens": int(job["tokens"]), "p_searches": int(job["searches"]),
+        "p_details": job["details"] or {}, "p_charge_id": job["charge_id"],
+    }).execute()
+    data = r.data
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    if not isinstance(data, dict):
+        raise RuntimeError("charge_units: bad response")
+    return data
+
+
+def _charge_legacy(uid: str, email: str, pages: int, searches: int, mode: str, tokens: int,
+                   details: dict, kind_prefix: str) -> Tuple[dict, int, str]:
+    """Old path (CAS in Python) — used only until the SQL function is installed."""
+    def _fn(u):
+        u["total_tokens"] = (u.get("total_tokens") or 0) + max(0, tokens)
+        u["daily_tokens"] = (u.get("daily_tokens") or 0) + max(0, tokens)
+        u, ch, rs = charge_for_ai_turn(u, pages, searches, mode)
+        return u, (ch, rs)
+    usage, (charged, reason) = update_usage_atomic(uid, email, _fn)
+    if int(charged) > 0:
+        ledger_log(uid, kind_prefix + str(reason), -int(charged), usage, searches, details)
+    usage["spent_24h"] = ledger_spent(uid, usage.get("last_reset_time"))
+    return usage, int(charged), str(reason)
+
+
+def charge_turn_atomic(uid: str, email: str, usage: Optional[dict], pages: int, searches: int, mode: str,
+                       tokens: int = 0, details: Optional[dict] = None, kind_prefix: str = "",
+                       charge_id: Optional[str] = None) -> Tuple[dict, int, str]:
+    """Charge one AI turn. Returns (usage_after, charged_units, reason). Sync — run it with asyncio.to_thread.
+    `usage` = row read earlier (for VIP/daily-limit info); None -> it is read here."""
+    import uuid as _uuid
+    details = details or {}
+    if usage is None:
+        usage = get_or_create_user_usage(uid, email)
+    if not supabase or not uid or str(uid).startswith(("dev-", "anon-", "guest-")):
+        u, ch, rs = charge_for_ai_turn(dict(usage), pages, searches, mode)          # dev / guest: memory only
+        return u, ch, rs
+    unlimited = is_unlimited(usage)
+    units, reason = (0, "unlimited") if unlimited else turn_cost(pages, searches, mode)
+    job = {"uid": str(uid), "email": email or "", "units": units, "reason": kind_prefix + reason,
+           "daily": daily_units_for(usage), "max_debt": max_debt_units(), "tokens": max(0, int(tokens or 0)),
+           "searches": max(0, int(searches or 0)), "details": details,
+           "charge_id": charge_id or _uuid.uuid4().hex, "pages": pages, "mode": mode, "kind_prefix": kind_prefix,
+           "tries": 0, "first": time.time()}
+    usage_cache_drop(uid)
+    if not _CHARGE_RPC["ok"] and time.time() - _CHARGE_RPC["checked"] < 600:
+        return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix)
+    last_err = None
+    for attempt in range(3):
+        try:
+            res = _charge_rpc_call(job)
+            _CHARGE_RPC["ok"] = True
+            out = dict(usage)
+            for k in ("free_credits", "paid_credits", "last_reset_time"):
+                if k in res:
+                    out[k] = res[k]
+            out["slide_credits"] = int(out.get("free_credits") or 0) + int(out.get("paid_credits") or 0)
+            out["total_tokens"] = int(out.get("total_tokens") or 0) + job["tokens"]
+            out["daily_tokens"] = int(out.get("daily_tokens") or 0) + job["tokens"]
+            if "spent_units" in res:
+                out["spent_24h"] = int(res["spent_units"] or 0)
+            _cas_version(out, out.get("free_credits"), out.get("paid_credits"))
+            charged = int(res.get("charged") or 0)
+            rs = "unlimited" if unlimited else str(res.get("reason") or reason)
+            if rs.startswith(kind_prefix) and kind_prefix:
+                rs = rs[len(kind_prefix):]
+            return out, charged, rs
+        except Exception as e:
+            if _is_missing_rpc(e):
+                if _CHARGE_RPC["ok"]:
+                    print("[CHARGE] ⚠️ SQL funksiya public.charge_units yo'q — eski (CAS) yo'l ishlatiladi. "
+                          "SUPABASE_SCHEMA.sql 13-bo'limini Supabase SQL Editor'da ishga tushiring.")
+                _CHARGE_RPC.update(ok=False, checked=time.time())
+                return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix)
+            if "user_not_found" in str(e).lower():
+                raise
+            last_err = e
+            time.sleep(0.2 * (attempt + 1))
+    # DB is unreachable: do NOT give the turn away for free — queue it and retry in the background
+    _queue_pending_charge(job, last_err)
+    u, ch, _ = charge_for_ai_turn(dict(usage), pages, searches, mode)               # best estimate for the UI
+    return u, ch, "charge_deferred"
+
+
+def _queue_pending_charge(job: dict, err: Optional[Exception]) -> None:
+    with _PENDING_LOCK:
+        if len(_PENDING_CHARGES) >= PENDING_CHARGES_MAX:
+            print(f"[CHARGE] ❌ navbat to'la — yechim yo'qoldi user={job['uid'][:8]} units={job['units']}")
+            return
+        _PENDING_CHARGES.append(job)
+    print(f"[CHARGE] ⚠️ baza javob bermadi, yechim navbatga qo'yildi user={job['uid'][:8]} "
+          f"units={job['units']} id={job['charge_id']} err={str(err)[:120]}")
+
+
+def retry_pending_charges() -> int:
+    """Retries queued charges (same charge_id -> never charged twice). Returns how many are still waiting."""
+    with _PENDING_LOCK:
+        jobs = list(_PENDING_CHARGES)
+        _PENDING_CHARGES.clear()
+    keep = []
+    for job in jobs:
+        try:
+            if _CHARGE_RPC["ok"]:
+                _charge_rpc_call(job)
+            else:
+                _charge_legacy(job["uid"], job["email"], job["pages"], job["searches"], job["mode"],
+                               job["tokens"], job["details"], job["kind_prefix"])
+            usage_cache_drop(job["uid"])
+        except Exception as e:
+            if _is_missing_rpc(e):
+                _CHARGE_RPC.update(ok=False, checked=time.time())
+            job["tries"] += 1
+            if job["tries"] < 60 and time.time() - job["first"] < 86400:
+                keep.append(job)
+            else:
+                print(f"[CHARGE] ❌ yechim bekor qilindi (60 urinish) user={job['uid'][:8]} units={job['units']}")
+    with _PENDING_LOCK:
+        _PENDING_CHARGES[:0] = keep
+        return len(_PENDING_CHARGES)
+
+
+async def _pending_charges_loop():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if _PENDING_CHARGES:
+                left = await asyncio.to_thread(retry_pending_charges)
+                if left:
+                    print(f"[CHARGE] navbatda hali {left} ta yechim")
+        except Exception as e:
+            print(f"[CHARGE] retry loop: {str(e)[:120]}")
+
 
 def calc_cost(model: str, inp: int, out: int) -> float:
     for m in AVAILABLE_MODELS:
@@ -1103,6 +1301,7 @@ try:
         apply_reset=apply_24h_reset,
         charge=charge_for_ai_turn,
         save_usage=save_user_credits,
+        charge_atomic=lambda *a, **k: charge_turn_atomic(*a, **k),   # Audit H2: atomic SQL charge (kech bog'lanadi)
         update_atomic=update_usage_atomic,         # v53: o'qi-hisobla-yoz (optimistic lock, qayta urinish bilan)
         user_lock=lambda uid: _user_lock(uid),     # v52: bot, sayt va webhook uchun yagona lock
         ledger_log=lambda *a, **k: ledger_log(*a, **k),   # v44.1: ledger_log pastroqda e'lon qilingan -> kech bog'lanadi (NameError tuzatildi)
@@ -1213,8 +1412,11 @@ async def _lifespan_v43(_app):
     except Exception as e:
         print(f"[ADMIN] ishga tushirish: {str(e)[:100]}")
     t = asyncio.create_task(_housekeeping_loop())
+    _pc_task = asyncio.create_task(_pending_charges_loop())      # Audit H2: retries charges queued during a DB outage
     _bg_tasks.add(t)
     t.add_done_callback(_bg_tasks.discard)
+    _bg_tasks.add(_pc_task)
+    _pc_task.add_done_callback(_bg_tasks.discard)
     if os.environ.get("KEEPALIVE", "").strip().lower() in ("1", "true", "yes", "on"):
         _kt = asyncio.create_task(_keepalive_loop())
         _bg_tasks.add(_kt)
@@ -1228,6 +1430,14 @@ async def _lifespan_v43(_app):
         yield
     finally:
         t.cancel()
+        _pc_task.cancel()
+        if _PENDING_CHARGES:              # deploy/restart: one last try, the queue lives only in RAM
+            try:
+                left = await asyncio.wait_for(asyncio.to_thread(retry_pending_charges), timeout=10)
+                if left:
+                    print(f"[CHARGE] ❌ to'xtashda {left} ta yechim bazaga yozilmadi")
+            except Exception as e:
+                print(f"[CHARGE] shutdown flush: {str(e)[:120]}")
         if tgbot is not None:
             try:
                 await tgbot.shutdown()
@@ -1384,6 +1594,7 @@ def ledger_log(user_id: str, kind: str, amount: int, usage: dict = None, searche
     """v35: har bir balans o'zgarishi usage_ledger jadvaliga yoziladi. Jadval bo'lmasa — jim o'tadi (asosiy oqim buzilmaydi)."""
     if not supabase or not user_id or str(user_id).startswith(("dev-", "anon-", "guest-")) or not amount:
         return
+    usage_cache_drop(user_id)        # Audit H4: every balance change (admin, purchase, merge) writes a ledger row
     try:
         u = usage or {}
         supabase.table("usage_ledger").insert({
@@ -1486,8 +1697,29 @@ def _merge_duplicates_once(uid: str, email: str) -> None:
         print(f"[MERGE] {email}: {str(e)[:160]}")
 
 
+def auth_user_cached(token: str):
+    """Audit H4: token -> (uid, email) with a 60 s cache (shared by HTTP and WebSocket).
+    None = invalid token. Raises on network errors (caller decides)."""
+    tk = hash_user_id(token)
+    with _TOK_LOCK:
+        hit = _TOK_CACHE.get(tk)
+    if hit and time.time() - hit[2] < TOK_TTL:
+        return hit[0], hit[1]
+    user_res = supabase.auth.get_user(token)
+    if not user_res or not user_res.user:
+        with _TOK_LOCK:
+            _TOK_CACHE.pop(tk, None)
+        return None
+    uid, email = str(user_res.user.id), user_res.user.email or ""
+    with _TOK_LOCK:
+        _TOK_CACHE[tk] = (uid, email, time.time())
+        while len(_TOK_CACHE) > 5000:
+            _TOK_CACHE.popitem(last=False)
+    return uid, email
+
+
 @app.get("/api/user/usage")
-def user_usage(request: Request, token: str = ""):
+def user_usage(request: Request, token: str = "", fresh: int = 0):
     token = _bearer(request, token)       # Audit C4: header preferred; ?token= kept only for old cached clients
     if not supabase or not token:
         u = normalize_user_row({
@@ -1498,16 +1730,21 @@ def user_usage(request: Request, token: str = ""):
         })
         return {**usage_payload(u), "total_tokens": 0, "daily_tokens": 0}
     try:
-        user_res = supabase.auth.get_user(token)
-        if not user_res or not user_res.user:
+        who = auth_user_cached(token)
+        if not who:
             return {"error": "invalid_token"}
-        _merge_duplicates_once(str(user_res.user.id), user_res.user.email or "")
-        u = get_or_create_user_usage(user_res.user.id, user_res.user.email or "")
-        u["spent_24h"] = ledger_spent(user_res.user.id, u.get("last_reset_time"))
+        uid, email = who
+        cached = usage_cache_get(uid, fresh=bool(fresh))
+        if cached is not None:
+            return cached
+        _merge_duplicates_once(uid, email)
+        u = get_or_create_user_usage(uid, email)
+        u["spent_24h"] = ledger_spent(uid, u.get("last_reset_time"))
         payload = usage_payload(u)
-        payload["cap_units"] = balance_cap_units(str(user_res.user.id), apply_24h_reset(dict(u)))
+        payload["cap_units"] = balance_cap_units(uid, apply_24h_reset(dict(u)))
         payload["total_tokens"] = u.get("total_tokens", 0)
         payload["daily_tokens"] = u.get("daily_tokens", 0)
+        usage_cache_put(uid, payload)
         return payload
     except Exception as e:
         print(f"[USAGE] {e}")
@@ -1961,6 +2198,7 @@ async def _credit_user(user_id: str, email: str, key: str, pages: int, sign: int
         res = await asyncio.to_thread(_apply_payment_sync, key, user_id, pages, sign, event_name)
         if res.get("duplicate"):
             return None
+        usage_cache_drop(user_id)
         u = await asyncio.to_thread(get_or_create_user_usage, user_id, email)
         await asyncio.to_thread(ledger_log, user_id, "refund" if sign < 0 else "purchase",
                                 sign * pages * UNIT, u, 0, {"order": ref})
@@ -3054,6 +3292,7 @@ def _ai_inflight_release(uid: str) -> None:
 
 # ---- token -> foydalanuvchi keshi (har xabarda Supabase Auth'ga HTTP so'rov ketmasin) ----
 _TOK_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_TOK_LOCK = threading.Lock()          # accessed from the thread pool (HTTP) and the event loop (WS)
 TOK_TTL = 60.0
 
 @app.websocket("/ws/chat")
@@ -3117,22 +3356,12 @@ async def ws_chat(websocket: WebSocket):
                                                    "message": "AI bilan yozishish uchun tizimga kiring."})
                         continue
                     try:
-                        _tk = hash_user_id(token)
-                        _hit = _TOK_CACHE.get(_tk)
-                        if _hit and time.time() - _hit[2] < TOK_TTL:
-                            uid, email = _hit[0], _hit[1]
-                        else:
-                            user_res = await asyncio.to_thread(supabase.auth.get_user, token)
-                            if not user_res or not user_res.user:
-                                _TOK_CACHE.pop(_tk, None)
-                                await websocket.send_json({"type": "error", "code": "invalid_token",
-                                                           "message": "Sessiya tugagan. Qayta kiring."})
-                                continue
-                            uid = user_res.user.id
-                            email = user_res.user.email or ""
-                            _TOK_CACHE[_tk] = (uid, email, time.time())
-                            while len(_TOK_CACHE) > 5000:
-                                _TOK_CACHE.popitem(last=False)
+                        who = await asyncio.to_thread(auth_user_cached, token)
+                        if not who:
+                            await websocket.send_json({"type": "error", "code": "invalid_token",
+                                                       "message": "Sessiya tugagan. Qayta kiring."})
+                            continue
+                        uid, email = who
                     except Exception as e:
                         await websocket.send_json({"type": "error", "code": "invalid_token",
                                                    "message": "Kirishni tekshirib bo'lmadi. Qayta kiring."})
@@ -3740,20 +3969,14 @@ async def ws_chat(websocket: WebSocket):
                     except Exception:
                         _n_search_turn = 0
 
-                    def _charge_fn(u, _t=tot, _p=int(pages_from_actions), _n=_n_search_turn, _m=mode_for_model(model)):
-                        u["total_tokens"] = (u.get("total_tokens") or 0) + _t
-                        u["daily_tokens"] = (u.get("daily_tokens") or 0) + _t
-                        u, ch, rs = charge_for_ai_turn(u, _p, _n, _m)
-                        return u, (ch, rs)
+                    # Audit H2: one atomic SQL call (balance + ledger + spent). Lock kept for the legacy fallback path.
                     async with _user_lock(uid):
-                        usage, (pages_charged, charge_reason) = await asyncio.to_thread(update_usage_atomic, uid, email, _charge_fn)
-                        if int(pages_charged) > 0:
-                            await asyncio.to_thread(
-                                ledger_log, uid, str(charge_reason), -int(pages_charged), usage, _n_search_turn,
-                                {"pages_needed": int(pages_from_actions), "breakdown": pages_breakdown[:20]})
-                        usage["spent_24h"] = await asyncio.to_thread(ledger_spent, uid, usage.get("last_reset_time"))
+                        usage, pages_charged, charge_reason = await asyncio.to_thread(
+                            charge_turn_atomic, uid, email, usage, int(pages_from_actions), _n_search_turn,
+                            mode_for_model(model), tot,
+                            {"pages_needed": int(pages_from_actions), "breakdown": pages_breakdown[:20]})
                 except Exception as _ce:
-                    print(f"[MONITORING] charge: {_ce}")
+                    print(f"[MONITORING] ❌ charge: {type(_ce).__name__}: {str(_ce)[:200]}")
                     charge_reason = "charge_error"
                     usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
                 if _held_uid:

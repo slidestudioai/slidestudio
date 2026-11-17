@@ -725,6 +725,11 @@ async def _charge(uid: str, email: str, pages: int, tokens: int, mode: str, deta
         u["daily_tokens"] = (u.get("daily_tokens") or 0) + tokens
         u, ch, rs = _deps["charge"](u, int(pages), 0, mode)
         return u, (ch, rs)
+    if _deps.get("charge_atomic"):              # Audit H2: same atomic SQL charge as the website (1 call, ledger inside)
+        async with _ulock(uid):
+            usage, charged, _reason = await asyncio.to_thread(
+                _deps["charge_atomic"], uid, email, None, int(pages), 0, mode, tokens, details, "tg_")
+        return usage, int(charged)
     async with _ulock(uid):
         if _deps.get("update_atomic"):          # v53: boshqa server nusxasi / webhook bilan to'qnashuvda qayta hisoblaydi
             usage, (charged, reason) = await asyncio.to_thread(_deps["update_atomic"], uid, email, _fn)

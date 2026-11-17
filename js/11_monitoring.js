@@ -338,7 +338,7 @@
     for (let i = 0; i < 10; i++) {
       await new Promise(function (r) { setTimeout(r, i === 0 ? 1500 : 3000); });
       try {
-        if (typeof loadUserStats === 'function') await loadUserStats();
+        if (typeof loadUserStats === 'function') await loadUserStats(true);
       } catch (_) {}
       if ((_state.paid_credits | 0) > before) {
         try { showToast('✅ +' + ((_state.paid_credits | 0) - before) + ' varaq qo\'shildi!'); } catch (_) {}

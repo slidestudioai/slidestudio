@@ -64,22 +64,29 @@ Status legend: **FIXED** = done in this branch with tests. **TODO** = proposed, 
 
 ## HIGH
 
-### H1. All limits and locks live in one process's memory — **TODO**
+### H1. All limits and locks live in one process's memory — **TODO (in-memory fallback kept, no Redis yet)**
 - Files: `main.py` (`_RL`, `_UWIN`, `_TOK_CACHE`, `_AI_INFLIGHT`, `_user_locks`, `ws_count`, `bump_msg`), `backend/scaling.py`.
 - With 4 workers (and more instances later): rate limits are really ×4, `DEEPSEEK_CONCURRENCY=40` is really 160
   calls, `MAX_WS` is per worker, the daily message limit resets on every restart/deploy.
 - Fix: use Redis (`REDIS_URL` code already exists in `backend/scaling.py` but is unused): sliding-window rate limit
   (`INCR`+`EXPIRE`), in-flight lease (`SET uid NX EX 300`), global AI semaphore. Keep the in-memory fallback.
 
-### H2. Charging = 4–8 Supabase HTTP calls, and the last retry can erase a payment — **TODO**
+### H2. Charging = 4–8 Supabase HTTP calls, and the last retry can erase a payment — **FIXED (needs the SQL below)**
 - Files: `main.py` (`update_usage_atomic`, `save_user_credits`, `ledger_log`, `ledger_spent`).
 - Every AI turn: read row → CAS write (up to 5 tries) → ledger insert → sum of up to 5000 ledger rows.
   The **last retry writes without CAS** (`cas=attempt < retries - 1`), so under heavy conflict it can overwrite
   a payment that just arrived (money lost for the user).
 - Also: if the charge fails (Supabase outage), the user gets the slides free (`charge_reason = "charge_error"`).
-- Fix: one SQL function `charge_units(p_user, p_units, p_kind, p_details)` — `SELECT … FOR UPDATE`, update balance,
-  insert ledger, return the new balance — in one transaction (like `apply_payment`). Keep a `spent_since_reset`
-  column instead of summing the ledger. Log + alert on charge failure.
+- Fix (done):
+  - New SQL function `public.charge_units` (`SUPABASE_SCHEMA.sql`, section 13): row lock (`FOR UPDATE`), 24h reset,
+    charge (free → paid → bounded debt), ledger insert and "spent since reset" — **one call, one transaction**.
+    Idempotent by `charge_id` (the same id is never charged twice, also under parallel retries).
+  - `main.charge_turn_atomic()` is used by the website WebSocket **and** the Telegram bot.
+  - If the SQL function is not installed yet → the old CAS path is used automatically (logged once, re-checked every 10 min).
+  - If Supabase is down → the charge is **queued** (not given away) and retried every 60 s with the same `charge_id`,
+    and once more on shutdown/deploy. Note: the queue is in RAM — a hard crash during an outage loses it (Redis would fix this).
+  - `update_usage_atomic` now always uses CAS (8 tries with jitter) and raises `UsageConflict` instead of overwriting.
+  - Tested on a real PostgreSQL 16: all rules, re-running the snippet, 20 parallel charges, 5 parallel retries with one id.
 
 ### H3. Every API call asks Supabase Auth over the network — **TODO**
 - Files: `main.py` (`/api/user/usage`, payments, admin entry), `backend/community.py`.
@@ -87,11 +94,17 @@ Status legend: **FIXED** = done in this branch with tests. **TODO** = proposed, 
   the bottleneck and a single point of failure.
 - Fix: verify the JWT locally (Supabase JWKS / JWT secret, `PyJWT`), check `exp`/`aud`; cache for 60 s.
 
-### H4. Balance polling: ~3,300 req/s at 100k users — **TODO**
+### H4. Balance polling: ~3,300 req/s at 100k users — **FIXED**
 - Files: `js/35_v45_tglink.js` (every 30 s + on focus), `main.py` `/api/user/usage` (5–6 DB calls each: auth, merge
   check, usage read/write, ledger sum, cap query). Endpoint is sync `def` → uses the small default thread pool (40).
-- Fix: 10–20 s per-user server cache of the payload; poll every 120 s (the WS `end` message already pushes the balance);
-  move `_merge_duplicates_once` to login only.
+- Fix (done):
+  - Per-user cache of the `/api/user/usage` payload, 15 s (`USAGE_CACHE_TTL`). Dropped on every balance change in
+    the same process (charge, webhook, `ledger_log` = admin edits / merges / purchases).
+  - Token → user cache (60 s) shared by HTTP and WebSocket (`auth_user_cached`), thread-safe.
+  - Background polling: every 2 min (was 30 s), on focus at most once per 30 s (was 15 s).
+  - Payment and referral watchers ask `?fresh=1` (ignored if the cached value is < 2 s old), so a payment that lands on
+    another worker is still shown within ~2–3 s.
+  - Result at 100k open tabs: ~830 req/s instead of ~3,300, and most of them are served from memory.
 
 ### H5. Lost result when the connection drops at the end — **TODO**
 - Files: `main.py` (charges when `client_gone`), `js/04_websocket_stream.js` (`onclose`).
@@ -151,6 +164,14 @@ Status legend: **FIXED** = done in this branch with tests. **TODO** = proposed, 
 | `MAX_DEBT_PAGES` | 10 | Max pages a user can go below zero in one oversized turn |
 | `MAX_AI_INFLIGHT_PER_USER` | 1 | Parallel AI turns per user (per worker) |
 | `WS_MAX_SIZE` | 4194304 | Max WebSocket message size (bytes) |
+| `USAGE_CACHE_TTL` | 15 | Seconds the balance payload is cached per user |
+
+## Database migration (run once in Supabase → SQL Editor)
+
+Copy **section 13** from the end of `SUPABASE_SCHEMA.sql` (from the line `-- 13) Audit H2: ATOMIC AI charge`
+to the end of the file) and run it. It only adds a nullable column, a partial unique index and a function.
+It does not drop or change any data and is safe to run more than once. Until you run it, the app keeps working
+on the old path.
 
 ## How to test (QA)
 
@@ -161,3 +182,7 @@ Status legend: **FIXED** = done in this branch with tests. **TODO** = proposed, 
 4. C3: start a long deck, close the tab → DeepSeek usage stops (check provider dashboard / server logs).
 5. C4: check Render logs — no `token=` in URLs.
 6. C5: send a 5 MB WebSocket message → connection is closed (code 1009), server RAM stays flat.
+7. H2: after running the SQL, generate 2 slides → `usage_ledger` has 1 new row with `charge_id`; in logs there is
+   no `[CHARGE] ⚠️ ... yo'q` warning. Run two charges at the same time → the balance is correct.
+8. H4: open DevTools → Network: `/api/user/usage` every ~2 min, not every 30 s; after a test payment the balance
+   updates in a few seconds.

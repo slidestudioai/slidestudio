@@ -150,7 +150,7 @@
       }
       if (r.data && r.data.ok) {
         toast('Do\'stingiz taklifi orqali kirdingiz — rahmat! 🎉');
-        try { if (typeof loadUserStats === 'function') loadUserStats(); } catch (e) {}
+        try { if (typeof loadUserStats === 'function') loadUserStats(true); } catch (e) {}
       }
     } catch (e) {  }
     claiming = false;

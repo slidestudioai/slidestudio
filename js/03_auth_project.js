@@ -509,10 +509,11 @@
       showToast("Tizimdan chiqdingiz");
     }
     window.handleLogout = handleLogout;
-    async function loadUserStats() {
+    // Audit H4: the server caches the balance for ~15 s. fresh=true (payment / referral watchers) asks for a new value.
+    async function loadUserStats(fresh) {
       if (!supabaseToken || supabaseToken === "dev-token") return;
       try {
-        const res = await fetch('/api/user/usage', { headers: { Authorization: 'Bearer ' + supabaseToken } });
+        const res = await fetch('/api/user/usage' + (fresh === true ? '?fresh=1' : ''), { headers: { Authorization: 'Bearer ' + supabaseToken } });
         const data = await res.json();
         if (data.error) return;
         try {

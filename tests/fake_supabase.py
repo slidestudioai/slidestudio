@@ -175,6 +175,7 @@ class FakeSupabase:
         self.calls: list = []
         self.fail_tables: set = set()
         self.missing_rpc: set = set()
+        self.fail_rpc: set = set()
         self.missing_columns: Dict[str, set] = {}
         self.lock = threading.RLock()
         self.auth = _Auth(self)
@@ -198,6 +199,10 @@ class FakeSupabase:
             return _Rpc(lambda: self._apply_payment(**params))
         if name == "transfer_paid_credits":
             return _Rpc(lambda: self._transfer(**params))
+        if name == "charge_units":
+            if "charge_units" in self.fail_rpc:
+                raise FakeAPIError("connection reset (simulated outage)")
+            return _Rpc(lambda: self._charge_units(**params))
         raise FakeAPIError(f"Could not find the function public.{name} (PGRST202)")
 
     # --- SUPABASE_SCHEMA.sql dagi funksiyalar nusxasi ---
@@ -213,6 +218,63 @@ class FakeSupabase:
             u["paid_credits"] = max(0, int(u.get("paid_credits") or 0) + p_sign * p_units)
             u["slide_credits"] = int(u.get("free_credits") or 0) + u["paid_credits"]
             return {"duplicate": False, "paid_credits": u["paid_credits"], "free_credits": u["free_credits"]}
+
+    def _charge_units(self, p_user_id, p_units, p_reason, p_daily_units, p_max_debt, p_tokens=0, p_searches=0,
+                      p_details=None, p_charge_id=None):
+        """Copy of public.charge_units (SUPABASE_SCHEMA.sql, section 13)."""
+        from datetime import datetime, timedelta, timezone
+        with self.lock:
+            u = self.usage(p_user_id)
+            if not u:
+                raise FakeAPIError("user_not_found")
+            led = self.tables.setdefault("usage_ledger", [])
+            if p_charge_id and any(r.get("charge_id") == p_charge_id for r in led):
+                return {"duplicate": True, "charged": 0, "reason": "duplicate", "free_credits": u["free_credits"],
+                        "paid_credits": u["paid_credits"], "last_reset_time": u.get("last_reset_time")}
+            now = datetime.now(timezone.utc)
+            free, paid = int(u.get("free_credits") or 0), int(u.get("paid_credits") or 0)
+            lr = u.get("last_reset_time")
+            last = datetime.fromisoformat(str(lr).replace("Z", "+00:00")) if lr else None
+            day = timedelta(hours=24)
+            susp = p_daily_units > 0 and paid >= p_daily_units
+            if susp:
+                free = min(free, p_daily_units)
+                if free <= 0 and (last is None or now - last < day):
+                    last = now - day
+            elif last is None or now - last >= day:
+                free, last = p_daily_units, now
+            else:
+                free = min(free, p_daily_units)
+            take, reason = 0, (p_reason or "chat")
+            if p_units > 0:
+                if not susp and free >= p_daily_units:
+                    last = now
+                total0 = max(0, free + paid)
+                take = max(0, min(p_units, free + paid + p_max_debt))
+                if take > 0:
+                    tf = min(max(0, free), take)
+                    free -= tf
+                    paid -= take - tf
+                    if take > total0:
+                        reason += "+debt"
+                else:
+                    reason = "no_credits"
+                if susp and free <= 0:
+                    last = now - day
+            else:
+                reason = "tokens_only"
+            u.update({"free_credits": free, "paid_credits": paid, "slide_credits": free + paid,
+                      "last_reset_time": last.isoformat(),
+                      "total_tokens": int(u.get("total_tokens") or 0) + max(0, int(p_tokens or 0)),
+                      "daily_tokens": int(u.get("daily_tokens") or 0) + max(0, int(p_tokens or 0))})
+            if take > 0:
+                led.append({"user_id": p_user_id, "kind": reason, "amount": -take, "free_after": free, "paid_after": paid,
+                            "searches": int(p_searches or 0), "details": p_details or {}, "charge_id": p_charge_id,
+                            "created_at": now.isoformat()})
+            spent = sum(-int(r["amount"]) for r in led if r["user_id"] == p_user_id and int(r["amount"]) < 0
+                        and datetime.fromisoformat(str(r.get("created_at") or now.isoformat()).replace("Z", "+00:00")) >= last)
+            return {"duplicate": False, "charged": take, "reason": reason, "free_credits": free, "paid_credits": paid,
+                    "last_reset_time": last.isoformat(), "spent_units": spent}
 
     def _transfer(self, p_from, p_to):
         with self.lock:
