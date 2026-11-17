@@ -525,7 +525,11 @@ window.SS_I18N = {
     "Qayta urinish": ["Повторить", "Retry"],
     "Varaq olish": ["Купить страницы", "Get pages"],
     "Ulanish tiklandi — javob to'liq olindi.": ["Соединение восстановлено — ответ получен полностью.", "Connection restored — the full answer was received."],
-    "Ulanish uzildi. Qayta ulanib, javobni tiklashga urinyapman…": ["Соединение прервано. Переподключаюсь и восстанавливаю ответ…", "Connection lost. Reconnecting and restoring the answer…"]
+    "Ulanish uzildi. Qayta ulanib, javobni tiklashga urinyapman…": ["Соединение прервано. Переподключаюсь и восстанавливаю ответ…", "Connection lost. Reconnecting and restoring the answer…"],
+    /* ---------- chiqishni tasdiqlash / ish tiklanishi ---------- */
+    "Haqiqatan ham akkauntdan chiqmoqchimisiz?": ["Вы действительно хотите выйти из аккаунта?", "Do you really want to sign out?"],
+    "Bu qurilmada saqlangan slaydlaringiz ham o'chiriladi.": ["Слайды, сохранённые на этом устройстве, тоже будут удалены.", "The slides saved on this device will be deleted too."],
+    "Oldingi ishingiz tiklandi ✅": ["Ваша прошлая работа восстановлена ✅", "Your previous work was restored ✅"]
   },
   patterns: [
     ["^Juda tez-tez so'rov yuboryapsiz\\. (\\d+) soniyadan keyin qayta urinib ko'ring\\.$", "Слишком частые запросы. Попробуйте через $1 с.", "Too many requests. Try again in $1 s."],

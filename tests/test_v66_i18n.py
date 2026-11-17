@@ -155,9 +155,12 @@ def test_off_topic_refusal_is_multilingual_without_professional():
     assert "professional taqdimot" not in p and "refuse with exactly:\n" not in p
 
 
-def test_browser_translation_allowed_but_icons_protected(client):
+def test_browser_translation_blocked_and_icons_protected(client):
+    # Earlier (v66) the page was open to the browser translator. It garbled slide texts and button names, so the
+    # page, the canvas and the presentation now say translate="no"; the site's own uz/ru/en switcher translates the UI.
     html = client.get("/").text
-    assert 'translate="no"' not in html.split("<head>")[0]          # sahifa tarjimonga ochiq
+    assert 'translate="no"' in html.split("<head>")[0]
+    assert '<meta name="google" content="notranslate">' in html
     js = open(os.path.join(ROOT, "js", "i18n.js"), encoding="utf-8").read()
     assert "protectIcons" in js and "setAttribute('translate', 'no')" in js
 

@@ -23,14 +23,14 @@ const layout = (page) => page.evaluate(() => {
 test.describe('phone', () => {
   test.use({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
 
-  test('top-up: 85dvh sheet, inner scroll; with the keyboard open (Android: page shrinks) the amount input stays visible and nothing covers it', async ({ page }) => {
+  test('top-up: 92dvh sheet (opens full size), inner scroll if needed; with the keyboard open (Android: page shrinks) the amount input stays visible and nothing covers it', async ({ page }) => {
     await openEditor(page);
     await openTopUp(page);
     const card = await page.evaluate(() => {
       const c = document.querySelector('.tu-card'); const cs = getComputedStyle(c);
       return { h: c.getBoundingClientRect().height, max: parseFloat(cs.maxHeight), body: getComputedStyle(document.querySelector('.tu-body')).overflowY };
     });
-    expect(card.max).toBeLessThanOrEqual(812 * 0.85 + 1);
+    expect(card.max).toBeLessThanOrEqual(812 * 0.92 + 1);          // U1: was 85dvh, which cut the sheet's bottom off
     expect(card.body).toBe('auto');
     expect((await layout(page)).checked).toBe(1);                       // «Popular» preselected
     await page.tap('#tuCustomInput');

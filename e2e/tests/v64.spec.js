@@ -22,7 +22,7 @@ test('mehmon slaydlari redirect (sahifa qayta yuklanishi)dan keyin tiklanadi, va
 test('chiqishda vaqtincha nusxa va kanvas tozalanadi', async ({ page }) => {
   await openEditor(page);
   await page.evaluate(() => { window.ssStashGuestDeck(); });
-  await page.evaluate(() => { window.location.reload = () => {}; return handleLogout(); });
+  await page.evaluate(() => { window.location.reload = () => {}; return handleLogout({ confirmed: true }); });
   expect(await page.evaluate(() => window.__ssAuthStorage.getItem('ss-auth-v39-guest'))).toBeNull();
   expect(await page.evaluate(() => canvas.getObjects().length)).toBe(0);
 });

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="uz">
+<html lang="uz" translate="no" class="notranslate">
 <head>
   <script>
     /* v66: alohida to'lov oynasi Dodo Payments'dan /?payment=success ga qaytsa — asosiy oynaga xabar beradi va o'zini yopadi.
@@ -66,6 +66,9 @@
   })();
   </script>
   <meta charset="UTF-8">
+  <!-- brauzer tarjimoni (Google Translate) slayd matnlarini va tugmalarni o'zboshimchalik bilan o'girmasin:
+       sayt tili — o'zimizning uz / ru / en almashtirgichi (js/i18n.js) -->
+  <meta name="google" content="notranslate">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Slide Studio — AI</title>
   <meta name="description" content="AI yordamida professional slayd va taqdimotlar yarating. Slide Studio AI — ko'p tilli slayd muharriri.">
@@ -109,7 +112,7 @@
   <link rel="stylesheet" href="v39.css?v=1">
   <link rel="stylesheet" href="v40.css?v=55">
   <link rel="stylesheet" href="v54.css?v=8">
-  <link rel="stylesheet" href="topup.css?v=3">
+  <link rel="stylesheet" href="topup.css?v=4">
   <link rel="stylesheet" href="v68.css?v=2">
 </head>
 <body>
@@ -307,7 +310,7 @@
   <div class="workspace">
     <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebarMenu()"></div>
 
-    <div class="sidebar" id="sidebar"></div>
+    <div class="sidebar notranslate" id="sidebar" translate="no"></div>
 
     <div class="editor-container" id="editorContainer">
       <div class="pending-images-bar" id="pendingImagesBar">
@@ -327,7 +330,7 @@
         <span id="slideCounterText">1 / 1</span>
       </div>
 
-      <div class="canvas-wrapper" id="canvasWrapper">
+      <div class="canvas-wrapper notranslate" id="canvasWrapper" translate="no">
         <div class="canvas-card" id="canvasCard">
           <div id="gifBgOverlay" class="gif-bg-overlay"></div>
           <canvas id="mainCanvas" width="960" height="540"></canvas>
@@ -376,7 +379,7 @@
         <button class="tb-btn" onclick="startNewChat()" title="Yangi suhbat (tarixni tozalash)"><span class="material-symbols-outlined">add_comment</span></button>
         <button class="tb-btn" onclick="toggleAISidebar()"><span class="material-symbols-outlined">close</span></button>
   </div>
-  <div class="ai-chat-body" id="aiChatBody">
+  <div class="ai-chat-body notranslate" id="aiChatBody" translate="no">
         <div class="ai-msg bot ss-welcome">Salom! Men Slide Studio AI assistentiman. Istalgan tilda yozing — shu tilda javob beraman. Menga istalgan mavzuda slayd yaratishni yoki tahrirlashni buyurishingiz mumkin.</div>
       </div>
       <div class="ai-sidebar-footer">
@@ -606,7 +609,7 @@
     </div>
   </div>
 
-  <div id="presentationOverlay" class="presentation-overlay">
+  <div id="presentationOverlay" class="presentation-overlay notranslate" translate="no">
     <button class="close-pres-btn" onclick="closePresentation()"><span class="material-symbols-outlined">close</span></button>
     <div class="pres-canvas-container">
       <div class="pres-stage" id="presStage">
@@ -692,6 +695,7 @@
   <script src="js/51_design_themes.js?v=1"></script>
   <script src="js/52_touch_text_edit.js?v=1"></script>
   <script src="js/53_lazy_media.js?v=1"></script>
+  <script src="js/54_back_nav.js?v=1"></script>
   <script src="js/46_topup.js?v=6" defer></script>
   <script src="js/47_resize_fix.js" defer></script>
   <script src="js/voice.js?v=1" defer></script>

@@ -52,3 +52,21 @@
 .ss-mic-btn .ss-mic-lang { position: absolute; right: -2px; bottom: -2px; font: 700 8px/1 system-ui, sans-serif; font-style: normal;
   background: #ede9fe; color: #6d28d9; border-radius: 4px; padding: 2px 3px; pointer-events: none; }
 .ai-sidebar-input-box textarea { min-width: 0; }
+
+/* ---------- «Akkauntdan chiqish» tasdiqlash oynasi ---------- */
+.ss-confirm-ov { position: fixed; inset: 0; z-index: 2147483100; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(15, 23, 42, .45); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); opacity: 0; transition: opacity .18s ease; }
+.ss-confirm-ov.open { opacity: 1; }
+.ss-confirm-card { width: 100%; max-width: 360px; background: #fff; border-radius: 18px; padding: 22px 20px 16px; text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .25); transform: translateY(8px) scale(.98); transition: transform .18s ease; font-family: Roboto, system-ui, sans-serif; }
+.ss-confirm-ov.open .ss-confirm-card { transform: none; }
+.ss-confirm-icon { width: 48px; height: 48px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; background: #fee2e2; color: #dc2626; }
+.ss-confirm-title { margin: 0 0 6px; font-size: 17px; font-weight: 700; color: #111827; line-height: 1.35; }
+.ss-confirm-text { margin: 0 0 18px; font-size: 13.5px; color: #6b7280; }
+.ss-confirm-actions { display: flex; gap: 10px; }
+.ss-confirm-actions button { flex: 1; min-height: 44px; border: 0; border-radius: 12px; font: 600 15px/1 Roboto, system-ui, sans-serif; cursor: pointer;
+  touch-action: manipulation; }
+.ss-confirm-cancel { background: #e5e7eb; color: #374151; }
+.ss-confirm-cancel:hover { background: #d1d5db; }
+.ss-confirm-ok { background: #dc2626; color: #fff; }
+.ss-confirm-ok:hover { background: #b91c1c; }
