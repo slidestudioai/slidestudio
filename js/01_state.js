@@ -1,3 +1,7 @@
+// v68: Fabric toJSON() raqamlarni standart bo'yicha 2 xonagacha yaxlitlaydi (scaleX 0.4667 -> 0.47). Natijada katta
+// rasm har saqlash / slayd almashtirish / eksport-importda kattalashib-kichrayib borardi (4000px rasmda ~20px).
+// 6 xona — 1:1 saqlanadi, JSON hajmi deyarli o'zgarmaydi.
+try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRACTION_DIGITS = 6; } catch (e) {}
 (function () {  // v24: fabric 5.3 'alphabetical' xatosi — har renderda ogohlantirish chiqarib UI ni sekinlashtirardi
   try {
     var d = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'textBaseline');

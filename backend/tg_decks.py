@@ -493,8 +493,9 @@ def normalize_deck(raw: Any, n: int, topic: str = "") -> Optional[dict]:
 # ---------------------------------------------------------------------------------------------
 # Rasm tayyorlash (Pillow)
 # ---------------------------------------------------------------------------------------------
-def cover_jpeg(data: bytes, w: int, h: int, scale: float = 1.6, quality: int = 80) -> Optional[bytes]:
-    """Rasmni (w:h) nisbatga 'cover' usulida kesib, JPEG qiladi. Buzuq rasm bo'lsa None."""
+def cover_jpeg(data: bytes, w: int, h: int, scale: float = 2.0, quality: int = 85) -> Optional[bytes]:
+    """Rasmni (w:h) nisbatga 'cover' usulida kesib, JPEG qiladi. Buzuq rasm bo'lsa None.
+    v68: x2 / 85% — saytdagi eksport bilan bir xil sifat (Full HD ekranda tiniq; avval x1.6 / 80% edi)."""
     try:
         from PIL import Image, ImageOps
         im = Image.open(io.BytesIO(data))
@@ -1538,7 +1539,12 @@ def _html_embed(it: dict, style: str) -> str:
     """HTML namoyishda YouTube / video haqiqiy pleer bo'lib ochiladi (PPTX/PDF da — muqova + havola)."""
     emb = it.get("embed") or {}
     if emb.get("kind") == "youtube" and re.fullmatch(r"[A-Za-z0-9_-]{11}", emb.get("id") or ""):
-        return (f'<iframe src="https://www.youtube.com/embed/{emb["id"]}?rel=0" style="{style}border:0" '
+        # v68: fayl telefonda (file://) ochiladi — YouTube u yerda «xato 153» beradi. Sayt manzili bo'lsa, pleyer
+        # o'z saytimizdagi /embed-player orqali ochiladi (Referer = sayt), video slayd ichida o'ynaydi.
+        base = (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+        src = (f'{_html.escape(base, quote=True)}/embed-player?k=youtube&id={emb["id"]}&au=0&mu=0&lp=0'
+               if base.startswith(("https://", "http://")) else f'https://www.youtube.com/embed/{emb["id"]}?rel=0')
+        return (f'<iframe src="{src}" style="{style}border:0" referrerpolicy="strict-origin-when-cross-origin" '
                 'allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>')
     if emb.get("kind") == "video" and norm_url(emb.get("url")):
         return f'<video src="{_html.escape(emb["url"], quote=True)}" style="{style}object-fit:cover;background:#000" controls playsinline preload="metadata"></video>'

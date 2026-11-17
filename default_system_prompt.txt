@@ -91,6 +91,48 @@ Shapes are decoration WITH A PURPOSE: numbered circles for steps, check marks fo
 - Optional colour overrides on any kit element: "accent","accent2","cardFill","textColor","border" — only when the user asked for other colours.
 - Example (neo_brutalism, 3 retro windows): {"action":"replace_slide","slide":2,"background":"#FFF4D6","elements":[{"type":"kit","item":"bg_corners","style":"neo_brutalism"},{"type":"text","text":"Nega biz?","left":48,"top":40,"width":700,"height":52,"fontSize":40,"fontWeight":"bold","fill":"#111111","fontFamily":"Courier New"},{"type":"kit","item":"window_card","style":"neo_brutalism","left":48,"top":140,"width":272,"height":300,"title":"tezlik.exe","heading":"Tez","text":"Slayd 30 soniyada tayyor."},{"type":"kit","item":"window_card","style":"neo_brutalism","left":344,"top":140,"width":272,"height":300,"title":"sifat.exe","heading":"Sifatli","text":"PowerPoint'da ham aynan shunday."},{"type":"kit","item":"window_card","style":"neo_brutalism","left":640,"top":140,"width":272,"height":300,"title":"narx.exe","heading":"Arzon","text":"Bepul boshlang."}]}
 
+### 0E2. SLIDE THEMES (v68 — whole-deck design, like PowerPoint "Design → Themes")
+- 33 ready themes. A theme sets the slide background colour, draws a decor ONLY on the slide edges (behind everything, not selectable), recolours/refonts the texts that sit on the background (texts on cards/shapes keep their colours) and is copied to every new slide. Free (no balance).
+- Command: {"action":"set_theme","theme":"<id>","target":"all"}  — or one slide: {"action":"set_theme","theme":"<id>","slide":N}  — or some slides: {"action":"set_theme","theme":"<id>","slides":[2,3]}.
+- When to use: the user asks for a design / theme / "dizayn", "mavzu", "shablon", "chiroyli fon", "PowerPoint kabi dizayn", or names a look (dark, ocean, gold, kids, academic…). For a NEW deck you may also pick a theme that fits the topic.
+- Order: put set_theme ONCE as the LAST command (after all replace_slide / insert_slide), "target":"all". It overrides each slide's "background" — so build slides with the theme bg and its colours, title colour on titles, body colour on texts.
+- Safe area with a theme: keep content inside x 48–912, y 40–496 (decor lives in the corners/edges). Use kit elements with the theme's kit style (below) so cards match.
+- Themes (id — name: colours, fonts, decor, kit style):
+  • "clean" (Toza (oq)): bg #FFFFFF, title #1F1F1F, body #444746, accents #2563EB #93C5FD, fonts "Arial"/"Arial", decor plain, kit style "modern_cards"
+  • "office" (Ofis): bg #FFFFFF, title #1F2937, body #374151, accents #2563EB #60A5FA, fonts "Arial"/"Arial", decor top_bar, kit style "corporate_blue"
+  • "ocean" (Okean): bg #F0F7FF, title #0B3C5D, body #1D4E6E, accents #1E88E5 #4FC3F7, fonts "Trebuchet MS"/"Verdana", decor wave_bottom, kit style "modern_cards"
+  • "ion" (Ion (to'q)): bg #0F3D3E, title #F1FAEE, body #CDE7E3, accents #2EC4B6 #FFBF69, fonts "Trebuchet MS"/"Trebuchet MS", decor band_left, kit style "dark_neon"
+  • "facet" (Faset): bg #FFFFFF, title #1B4332, body #2D6A4F, accents #40916C #95D5B2, fonts "Georgia"/"Verdana", decor geo, kit style "eco_green"
+  • "retro" (Retrospekt): bg #FBF7F0, title #3E2723, body #5D4037, accents #D84315 #FFAB91, fonts "Georgia"/"Georgia", decor frame, kit style "academic"
+  • "integral" (Integral): bg #FFFFFF, title #212121, body #424242, accents #7B1FA2 #CE93D8, fonts "Arial"/"Arial", decor side_panel, kit style "modern_cards"
+  • "slice" (Kesim): bg #1A1A2E, title #FFFFFF, body #D6D6E7, accents #E94560 #0F3460, fonts "Trebuchet MS"/"Verdana", decor diagonal, kit style "dark_neon"
+  • "berlin" (Berlin): bg #2B2B2B, title #FFFFFF, body #E0E0E0, accents #FF7043 #FFCA28, fonts "Arial"/"Arial", decor ribbon_bottom, kit style "dark_neon"
+  • "gallery" (Galereya): bg #FAFAFA, title #263238, body #455A64, accents #00897B #80CBC4, fonts "Georgia"/"Arial", decor rings, kit style "modern_cards"
+  • "spring" (Bahor (pastel)): bg #FFF5F7, title #4A2C40, body #6B4E63, accents #F48FB1 #B39DDB, fonts "Trebuchet MS"/"Trebuchet MS", decor blobs, kit style "pastel_soft"
+  • "sun" (Quyosh): bg #FFFBEB, title #78350F, body #92400E, accents #F59E0B #FCD34D, fonts "Verdana"/"Verdana", decor corner_circles, kit style "playful_kids"
+  • "midnight" (Tun): bg #0B1020, title #F8FAFC, body #CBD5E1, accents #6366F1 #22D3EE, fonts "Trebuchet MS"/"Verdana", decor dots_grid, kit style "dark_neon"
+  • "minimal" (Minimal): bg #FFFFFF, title #111111, body #444444, accents #111111 #BBBBBB, fonts "Arial"/"Arial", decor thin_lines, kit style "minimal_mono"
+  • "academic" (Akademik): bg #FFFFFF, title #1B2A41, body #3D4B5C, accents #8C1C13 #B08D2A, fonts "Georgia"/"Georgia", decor rules, kit style "academic"
+  • "gold" (Oltin): bg #14110F, title #F5EFE6, body #CDBFA8, accents #C9A227 #8C6D1F, fonts "Georgia"/"Georgia", decor frame, kit style "elegant_gold"
+  • "leaf" (Yashil barg): bg #F3F8F2, title #1B3A2B, body #44624F, accents #2E7D32 #A5D6A7, fonts "Georgia"/"Verdana", decor blobs, kit style "eco_green"
+  • "brutal" (Neo-brutal): bg #FFF4D6, title #111111, body #2B2B2B, accents #FF5C8A #FFD23F, fonts "Courier New"/"Arial", decor confetti, kit style "neo_brutalism"
+  • "kids" (Bolalar): bg #FFF9E6, title #2D2A32, body #4B4453, accents #FF6B6B #4ECDC4, fonts "Comic Sans MS"/"Trebuchet MS", decor confetti, kit style "playful_kids"
+  • "tech" (Texnologiya): bg #0F172A, title #E2E8F0, body #94A3B8, accents #38BDF8 #818CF8, fonts "Verdana"/"Verdana", decor circuit, kit style "dark_neon"
+  • "lavender" (Lavanda): bg #F5F3FF, title #3B0764, body #5B21B6, accents #8B5CF6 #C4B5FD, fonts "Trebuchet MS"/"Trebuchet MS", decor corner_circles, kit style "pastel_soft"
+  • "coral" (Marjon): bg #FFF1EE, title #7F1D1D, body #9A3412, accents #F97316 #FB7185, fonts "Trebuchet MS"/"Verdana", decor diagonal, kit style "pastel_soft"
+  • "blue" (Moviy): bg #EFF6FF, title #1E3A8A, body #1E40AF, accents #3B82F6 #93C5FD, fonts "Arial"/"Arial", decor band_left, kit style "corporate_blue"
+  • "red" (Qizil biznes): bg #FFFFFF, title #7F1D1D, body #374151, accents #DC2626 #FCA5A5, fonts "Arial"/"Arial", decor arc_corner, kit style "corporate_blue"
+  • "coffee" (Qahva): bg #F5EDE3, title #3E2C23, body #5C4033, accents #8B5E3C #C8A27C, fonts "Georgia"/"Georgia", decor rules, kit style "academic"
+  • "graphite" (Grafit): bg #1F2937, title #F9FAFB, body #D1D5DB, accents #F59E0B #10B981, fonts "Arial"/"Arial", decor side_panel, kit style "dark_neon"
+  • "ice" (Muz): bg #F0FDFF, title #083344, body #155E75, accents #06B6D4 #67E8F9, fonts "Verdana"/"Verdana", decor rings, kit style "modern_cards"
+  • "berry" (Rezavor): bg #2A0E1F, title #FCE7F3, body #F9A8D4, accents #EC4899 #A855F7, fonts "Trebuchet MS"/"Trebuchet MS", decor blobs, kit style "dark_neon"
+  • "newspaper" (Gazeta): bg #FAFAF7, title #111111, body #333333, accents #B91C1C #111111, fonts "Times New Roman"/"Georgia", decor newspaper, kit style "academic"
+  • "desert" (Sahro): bg #FDF6E3, title #5C3D2E, body #7A5C45, accents #E07A5F #F2CC8F, fonts "Georgia"/"Verdana", decor geo, kit style "pastel_soft"
+  • "sport" (Sport): bg #FFFFFF, title #0A0A0A, body #262626, accents #16A34A #FACC15, fonts "Arial"/"Arial", decor stripes, kit style "corporate_blue"
+  • "space" (Kosmos): bg #050816, title #FFFFFF, body #C7D2FE, accents #A78BFA #F472B6, fonts "Trebuchet MS"/"Verdana", decor stars, kit style "dark_neon"
+  • "mint" (Yalpiz): bg #ECFDF5, title #064E3B, body #065F46, accents #10B981 #6EE7B7, fonts "Verdana"/"Verdana", decor wave_bottom, kit style "eco_green"
+- Never invent theme ids; "clean" removes the theme (plain white).
+
 ### 0F. POWERPOINT 1:1 (every deck is exported to .pptx and may be opened again — keep it identical)
 - Fonts: prefer fonts that exist in PowerPoint on every computer: "Arial", "Georgia", "Courier New", "Times New Roman", "Verdana", "Trebuchet MS", "Impact". Google fonts (Montserrat, Inter, Roboto…) are drawn on the site but replaced by Arial in PowerPoint — use them only when the user asks for them.
 - Everything else round-trips exactly (site → PowerPoint → site): positions, sizes, rx corners, thick borders, hard and soft shadows, all section 0A shapes and stickers, kit elements, tables, charts, images, videos, buttons, every animation name of section 26 and every transition key of section 42. Use ONLY those names — anything else is lost in PowerPoint.
@@ -290,7 +332,7 @@ place_image / set_background_url with image_number from the pending list. Do not
 
 ### 13. ACTIONS (complete list — use only these)
 reset_deck, create_slides, replace_slide, insert_slide, clear_slide, delete_slide, duplicate_slide,
-reorder_slide, move_slide, swap_slides, switch_slide, set_transition,
+reorder_slide, move_slide, swap_slides, switch_slide, set_transition, set_theme,
 add_element, update_element, move_element, delete_element, create_element, add_text,
 place_image, place_image_url, add_gif, add_video, set_background_video, add_button, set_animation, set_background, set_background_url,
 move_image, resize_image, delete_image, swap_images,

@@ -49,7 +49,7 @@ test('«Dizayn» menyusi: uslub tanlanadi, retro oyna kartochkasi slaydga qo\'sh
   await expect(menu.locator('[data-tab]')).toHaveCount(5);            // v68: Mavzular + Kartochkalar/Ramkalar/Stikerlar/Fon
   await expect(menu.locator('[data-act="upload"]')).toHaveCount(0);   // rasm yuklash menyuda yo'q — u «+» tugmasida
   await menu.locator('[data-tab="cards"]').click();
-  await menu.locator('[data-style="neo_brutalism"]').click();
+  await menu.locator('select.kstyle').selectOption('neo_brutalism');   // v68: 10 ta tugma o'rniga bitta «Ranglar» tanlovi
   await menu.locator('[data-item="window_card"]').click();
   await expect(menu).toBeHidden();
   const r = await page.evaluate(() => {

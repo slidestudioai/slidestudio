@@ -571,6 +571,23 @@
     '#ssKitMenu .ksw{display:flex;gap:6px;flex-wrap:wrap;padding:0 12px 12px}',
     '#ssKitMenu .ksw button{width:30px;height:30px;border-radius:8px;border:1px solid #cbd5e1;cursor:pointer}',
     '#ssKitMenu .kcap{padding:2px 12px 0;color:#6b7280;font-size:11px}',
+    // v68: soddaroq menyu — sarlavha + ✕, ikonkali bo'limlar, har bo'limga bitta izoh, ranglar — bitta tanlov
+    '#ssKitMenu .khead{display:flex;align-items:center;justify-content:space-between;padding:10px 10px 4px 14px}',
+    '#ssKitMenu .khead b{font-size:15px;color:#111827}',
+    '#ssKitMenu .kx{width:32px;height:32px;border:0;border-radius:50%;background:#f3f4f6;color:#374151;font-size:18px;line-height:1;cursor:pointer}',
+    '#ssKitMenu .kx:hover{background:#e5e7eb}',
+    '#ssKitMenu .ktb{display:flex;gap:4px;padding:4px 10px 0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}',
+    '#ssKitMenu .ktb::-webkit-scrollbar{display:none}',
+    '#ssKitMenu .ktb button{flex:1 0 auto;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 8px;border:1px solid transparent;background:#f8fafc;border-radius:10px;font:600 11px inherit;font-family:inherit;color:#4b5563;cursor:pointer;min-width:62px}',
+    '#ssKitMenu .ktb button .material-symbols-outlined{font-size:20px}',
+    '#ssKitMenu .ktb button.on{background:#eef2ff;border-color:#6366f1;color:#3730a3}',
+    '#ssKitMenu .khint{margin:8px 12px 0;padding:8px 10px;border-radius:10px;background:#f8fafc;color:#475569;font-size:12px;line-height:1.4}',
+    '#ssKitMenu .krow{display:flex;align-items:center;gap:8px;padding:8px 12px 0;font-size:12px;color:#374151;font-weight:600}',
+    '#ssKitMenu .krow select{flex:1;min-width:0;height:32px;border:1px solid #d1d5db;border-radius:8px;padding:0 8px;font:13px inherit;font-family:inherit;background:#fff;color:#111827}',
+    '#ssKitMenu .khead,#ssKitMenu .ktb,#ssKitMenu .khint{flex-shrink:0}',
+    '#ssKitMenu .kbody{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column}',
+    '#ssKitMenu .kbody .kgrid{overflow:visible}',
+    '@media (max-width:600px){#ssKitMenu{left:0!important;right:0!important;top:auto!important;bottom:0!important;width:100%!important;max-height:76vh;border-radius:18px 18px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.25)}}',
     // v67: toolbar boshidagi alohida «Dizayn» tugmasi (rasm yuklovchi «+» o'z holicha qoldi)
     '.toolbar-container #ssKitBtn.ss-kit-btn{width:auto!important;min-width:0;padding:0 12px 0 9px!important;border-radius:999px!important}',
     '#ssKitBtn.ss-kit-btn{gap:5px;display:inline-flex;align-items:center;color:#fff;',
@@ -585,7 +602,15 @@
   document.head.appendChild(css);
 
   // v68: birinchi bo'lim — «Mavzular» (51_design_themes.js): butun slayd(lar) dizayni, PowerPoint'dagi kabi
-  var TABS = [['themes', 'Mavzular'], ['cards', 'Kartochkalar'], ['frames', 'Ramkalar'], ['stickers', 'Stikerlar'], ['backgrounds', 'Fon']];
+  // v68: birinchi bo'lim — «Mavzular» (51_design_themes.js): butun slayd(lar) dizayni, PowerPoint'dagi kabi.
+  // [id, nomi, ikonka, bitta jumlali izoh — foydalanuvchi nima bo'lishini darhol tushunsin]
+  var TABS = [
+    ['themes', 'Mavzular', 'palette', "Butun taqdimot ko'rinishi: fon, ranglar va shrift. Bosing — darhol qo'llanadi."],
+    ['cards', 'Kartochkalar', 'dashboard', "Tayyor matn bloklari. Bosing — slaydga qo'shiladi, keyin matnini o'zgartiring."],
+    ['frames', 'Ramkalar', 'crop_free', "Rasm yoki muhim fikr uchun ramka va bloklar."],
+    ['stickers', 'Stikerlar', 'star', "Bezak shakllari: yulduz, yurak, strelka va boshqalar."],
+    ['backgrounds', 'Fon', 'wallpaper', "Faqat shu slayd foni: rang yoki chetdagi bezak."]
+  ];
   var tab = 'themes', menu = null, previewCache = {};
 
   async function preview(key, styleK) {
@@ -629,32 +654,47 @@
     // rasm yuklash bu yerda yo'q — u uchun slayd burchagidagi «+» tugmasi bor
     var TH = window.SS_THEMES;
     if (tab === 'themes' && !TH) tab = 'cards';
-    var h = tab === 'themes' ? '' : '<div class="kh"><div class="kcap" style="padding:0 0 6px">Uslub (ranglar)</div><div class="kst">' + Object.keys(STYLES).map(function (k) { return '<button type="button" data-style="' + k + '" class="' + (k === current ? 'on' : '') + '" title="' + STYLES[k].hint + '">' + STYLES[k].label + '</button>'; }).join('') + '</div></div>';
-    h += '<div class="ktb">' + TABS.filter(function (t) { return t[0] !== 'themes' || TH; }).map(function (t) { return '<button type="button" data-tab="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div>';
-    if (tab === 'backgrounds') {
-      h += '<div class="kcap">Fon rangi</div><div class="ksw" style="padding-top:6px">' + STYLES[current].bgs.map(function (c) { return '<button type="button" data-bg="' + c + '" title="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>';
+    var tabs = TABS.filter(function (t) { return t[0] !== 'themes' || TH; }), cur = tabs.filter(function (t) { return t[0] === tab; })[0] || tabs[0];
+    var h = '<div class="khead"><b>Dizayn</b><button type="button" class="kx" data-close="1" aria-label="Yopish" title="Yopish">✕</button></div>';
+    h += '<div class="ktb" role="tablist">' + tabs.map(function (t) {
+      return '<button type="button" role="tab" aria-selected="' + (t[0] === tab) + '" data-tab="' + t[0] + '" class="' + (t[0] === tab ? 'on' : '') + '"><span class="material-symbols-outlined" aria-hidden="true">' + t[2] + '</span><span>' + t[1] + '</span></button>';
+    }).join('') + '</div>';
+    h += '<div class="khint">' + cur[3] + '</div>';
+    h += '<div class="kbody">';
+    if (tab !== 'themes') {
+      h += '<label class="krow">Ranglar:<select class="kstyle" aria-label="Ranglar">' + Object.keys(STYLES).map(function (k) {
+        return '<option value="' + k + '"' + (k === current ? ' selected' : '') + '>' + STYLES[k].label + ' — ' + STYLES[k].hint + '</option>';
+      }).join('') + '</select></label>';
     }
+    if (tab === 'backgrounds') {
+      h += '<div class="kcap" style="padding-top:10px">Fon rangi</div><div class="ksw" style="padding-top:6px">' + STYLES[current].bgs.map(function (c) { return '<button type="button" data-bg="' + c + '" title="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>';
+      h += '<div class="kcap">Chetdagi bezak</div>';
+    }
+    var common = function (e) {
+      e.stopPropagation();
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return null;
+      if (b.dataset.close) { close(); return null; }
+      if (b.dataset.tab) { tab = b.dataset.tab; render(); return null; }
+      return b;
+    };
+    m.onchange = function (e) {
+      var sel = e.target && e.target.closest ? e.target.closest('select.kstyle') : null;
+      if (sel) { setStyle(sel.value); render(); }
+    };
     if (tab === 'themes') {
-      m.innerHTML = h + TH.html();
-      m.onclick = function (e) {
-        e.stopPropagation();
-        var b = e.target.closest ? e.target.closest('button') : null;
-        if (!b) return;
-        if (b.dataset.tab) { tab = b.dataset.tab; render(); return; }
-        TH.onClick(b, render, close);
-      };
+      m.innerHTML = h + TH.html() + '</div>';
+      m.onclick = function (e) { var b = common(e); if (b) TH.onClick(b, render, close); };
       TH.bind(m, close);
       return;
     }
     var keys = Object.keys(ITEMS).filter(function (k) { return ITEMS[k].cat === tab; });
     h += '<div class="kgrid">' + keys.map(function (k) { return '<button type="button" class="kit" data-item="' + k + '" title="' + ITEMS[k].label + '"><img alt="" data-prev="' + k + '"><span>' + ITEMS[k].label + '</span></button>'; }).join('') + '</div>';
-    m.innerHTML = h;
+    m.innerHTML = h + '</div>';
     m.onclick = function (e) {
-      e.stopPropagation();
-      var b = e.target.closest ? e.target.closest('button') : null;
+      var b = common(e);
       if (!b) return;
       if (b.dataset.style) { setStyle(b.dataset.style); render(); return; }
-      if (b.dataset.tab) { tab = b.dataset.tab; render(); return; }
       if (b.dataset.bg) { applyBackground('bg_plain', b.dataset.bg); return; }
       if (b.dataset.item) { insert(b.dataset.item).then(function (objs) { if (objs && objs.length) toast(ITEMS[b.dataset.item].label + " qo'shildi"); }); if (ITEMS[b.dataset.item].cat !== 'backgrounds') close(); }
     };
@@ -666,6 +706,7 @@
         if (u) imgs[i].src = u;
       }
     })();
+    try { if (window.SSI18n && SSI18n.apply) SSI18n.apply(m); } catch (e) {}
   }
   function place(anchor) {
     if (!menu) return;
