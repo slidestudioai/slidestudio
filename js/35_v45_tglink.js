@@ -132,7 +132,7 @@
     if (now - last < 15000) return;
     last = now;
     try {
-      var r = await fetch('/api/user/usage?token=' + encodeURIComponent(token()));
+      var r = await fetch('/api/user/usage', { headers: { Authorization: 'Bearer ' + token() } });
       if (!r.ok) throw new Error('http');
       var d = await r.json();
       if (d && !d.error && window.Monitoring && typeof window.Monitoring.applyServerUsage === 'function') window.Monitoring.applyServerUsage(d);

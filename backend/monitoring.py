@@ -42,6 +42,11 @@ PAGES_PER_PACK = _env_num("PAGES_PER_PACK", 100, int)        # Tez-varaq hisobid
 CHECKOUT_PRICE_USD = _env_num("PACK_PRICE_USD", 1.49, float)   # 100 varaq = $1.00 netto + Dodo komissiyasi (5.5% + $0.40)
 FREE_DAILY_UNITS = FREE_DAILY_PAGES * UNIT
 PACK_UNITS = PAGES_PER_PACK * UNIT
+# Audit C1: AI actions are streamed to the browser and applied there, so the server cannot "take back" slides
+# after the fact. Old code charged min(cost, balance): a user with 0.25 page could get 30 slides for 0.25 page.
+# Now the FULL cost is charged; anything above the balance becomes a small debt (negative paid_credits),
+# repaid from the next free reset or purchase. MAX_DEBT_PAGES bounds the damage of one abusive turn.
+MAX_DEBT_PAGES = max(0, _env_num("MAX_DEBT_PAGES", 10, int))     # Tez-varaq hisobida
 
 # ---- VIP / cheksiz + admin paneldan o'zgartiriladigan limitlar (Pro rejasi olib tashlangan) ----
 _RT: Dict[str, Any] = {"free_daily_pages": FREE_DAILY_PAGES, "pack_pages": PAGES_PER_PACK}
@@ -507,16 +512,27 @@ def pages_left(user: dict, mode: str = "fast") -> int:
         return 999999
     return total_credits(user) // MODES.get(mode, MODES["fast"])["page"]
 
-def deduct_credits(user: dict, amount: int) -> dict:
-    """Avval free, keyin paid (BIRLIK)."""
+def max_debt_units() -> int:
+    return MAX_DEBT_PAGES * UNIT
+
+def raw_balance(user: dict) -> int:
+    """free + paid WITHOUT clamping to 0 (negative = debt)."""
+    user = normalize_user_row(user)
+    return int(user["free_credits"]) + int(user["paid_credits"])
+
+def deduct_credits(user: dict, amount: int, allow_debt: bool = False) -> dict:
+    """Avval free, keyin paid (BIRLIK). allow_debt=True: the rest goes into paid_credits as debt (negative)."""
     user = normalize_user_row(user)
     left = max(0, int(amount))
     if left > 0:
-        take_free = min(user["free_credits"], left)
+        take_free = min(max(0, user["free_credits"]), left)
         user["free_credits"] -= take_free
         left -= take_free
         if left > 0:
-            user["paid_credits"] -= min(user["paid_credits"], left)
+            if allow_debt:
+                user["paid_credits"] -= left
+            else:
+                user["paid_credits"] -= min(max(0, user["paid_credits"]), left)
     user["slide_credits"] = user["free_credits"] + user["paid_credits"]
     return user
 
@@ -526,7 +542,8 @@ def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, m
       pages_from_actions > 0 -> slaydlar * page
       aks holda (faqat chat)  -> chat
       searches * search
-    Balansdan oshmaydi. Returns: (user, charged_units, reason)
+    Audit C1: the full cost is charged even if it is above the balance (the user already received the slides);
+    the part above the balance becomes debt, at most max_debt_units(). Returns: (user, charged_units, reason)
     """
     c = MODES.get(mode if mode in MODES else "fast")
     user = apply_24h_reset(user)
@@ -537,6 +554,7 @@ def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, m
         user["last_reset_time"] = _now().isoformat()
     pages_from_actions = max(0, int(pages_from_actions or 0))
     searches = max(0, int(searches or 0))
+    total_credits_before = total_credits(user)
     if pages_from_actions > 0:
         wanted, reason = pages_from_actions * c["page"], "slide_actions"
     else:
@@ -544,9 +562,11 @@ def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, m
     if searches:
         wanted += searches * c["search"]
         reason += "+search"
-    take = min(wanted, total_credits(user))
+    take = max(0, min(wanted, raw_balance(user) + max_debt_units()))
     if take > 0:
-        user = deduct_credits(user, take)
+        user = deduct_credits(user, take, allow_debt=True)
+        if take > total_credits_before:
+            reason += "+debt"
     else:
         reason = "no_credits"
     if was_suspended and int(user.get("free_credits") or 0) <= 0:
@@ -560,6 +580,9 @@ def usage_payload(user: dict) -> dict:
     """Har API/WS javobiga qo'shiladigan balans. Brauzer faqat KO'RSATADI — hisob-kitob serverda."""
     user = apply_24h_reset(user)
     free, paid = int(user["free_credits"]), int(user["paid_credits"])
+    debt = max(0, -paid)
+    if paid < 0:                               # Audit C1: debt is shown as a smaller free balance, never "-3 paid pages"
+        free, paid = max(0, free + paid), 0
     total = free + paid
     unl = is_unlimited(user)
     plan = plan_active(user)
@@ -580,6 +603,7 @@ def usage_payload(user: dict) -> dict:
         "free_credits": free,                 # BIRLIK
         "paid_credits": paid,                 # BIRLIK
         "units_total": total,
+        "debt_units": debt,                   # BIRLIK: kelajakdagi balansdan ushlanadigan qarz
         "free_daily_units": fdu,
         "pack_units": pack_units(),
         "modes": modes,

@@ -20,8 +20,16 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+
+def _bearer_token(request: "Request", fallback: str = "") -> str:
+    """Audit C4: token from the Authorization header (query strings end up in access logs)."""
+    h = (request.headers.get("authorization") or "").strip()
+    if h.lower().startswith("bearer "):
+        return h[7:].strip()
+    return (fallback or "").strip()
 
 REFERRAL_BONUS_PAGES = 15
 MAX_REWARDED_REFERRALS = 100
@@ -191,7 +199,8 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
     api["stats"] = stats
 
     @app.get("/api/referral/me")
-    async def referral_me(token: str = ""):
+    async def referral_me(request: Request, token: str = ""):
+        token = _bearer_token(request, token)
         if not get_sb():
             return no_db()
         user = await asyncio.to_thread(auth, token)
@@ -237,7 +246,8 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             return base().order("created_at", desc=True).range(offset, offset + limit - 1).execute()
 
     @app.get("/api/feedback/list")
-    async def feedback_list(limit: int = 15, offset: int = 0, token: str = ""):
+    async def feedback_list(request: Request, limit: int = 15, offset: int = 0, token: str = ""):
+        token = _bearer_token(request, token)
         sb = get_sb()
         if not sb:
             return no_db()

@@ -112,12 +112,9 @@
     let _manualSocketClose = false;
     function initWebSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      // Audit C4: token is NOT put in the URL (URLs are written to server/proxy access logs).
+      // The server reads the token from each message body.
       let wsUrl = `${protocol}//${window.location.host}/ws/chat`;
-      try {
-        if (supabaseToken && supabaseToken !== "dev-token") {
-          wsUrl += `?token=${encodeURIComponent(supabaseToken)}`;
-        }
-      } catch (e) {  }
       socket = new WebSocket(wsUrl);
       socket.onmessage = async (event) => {
         try {
