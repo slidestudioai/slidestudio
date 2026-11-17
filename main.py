@@ -52,6 +52,7 @@ try:
         charge_for_ai_turn,
         turn_cost,
         max_debt_units,
+        raw_balance,
         usage_payload,
         add_paid_credits,
         remove_paid_credits,
@@ -220,9 +221,7 @@ MAX_SEARCHES_PER_TURN = 10
 
 import re as _re
 _DSML_RE = _re.compile(r"DSML|invoke\s+name|tool_call|function_calls", _re.I)
-_NO_TOOLS_NOTE = ("\n\n[MUHIM — BU REJIMDA TOOL YO'Q]\nSizda hech qanday tool/funksiya yo'q: search_images, DSML, invoke, function_calls, tool_call YOZMANG va "
-                  "«rasm qidiraman» deb va'da bermang. Rasmlar serverda oldindan topiladi: foydalanuvchi xabari oxiridagi [TAYYOR RASMLAR] bo'limidagi URL'lardan foydalaning. "
-                  "U bo'lim bo'lmasa — rasm elementi qo'shmang. Javobni darhol yozing: qisqa PART A matn + bitta ```json blok.")
+from backend.services.prompt_builder import _NO_TOOLS_NOTE  # noqa: E402  (Audit M5: moved)
 _NO_IMG_RE = _re.compile(r"rasmsiz|rasm\s*(?:kerak\s*emas|qo'?yma|siz)|without\s+images?|no\s+images?|без\s+(?:картин|изображ|фото)", _re.I)
 _IMG_CTX_RE = _re.compile(r"slayd|slide|taqdimot|rasm|image|photo|foto|fon\b|banner|презент|слайд|изображ|картин", _re.I)
 _IMG_INTENT_RE = _re.compile(r"rasm|surat|image|photo|picture|foto|fon\b|banner|illyustr|gif|video|изображ|картин|фото|"
@@ -494,6 +493,8 @@ def init_supabase():
 init_supabase()
 
 from backend import jwt_auth          # Audit H3: local JWT verification
+from backend.services import resume as _resume   # Audit H5
+_resume.configure(lambda: supabase)
 jwt_auth.configure(config.get("supabase_url") or "", os.environ.get("SUPABASE_JWT_SECRET", ""))
 
 def _stable_hmac_secret() -> str:
@@ -878,13 +879,29 @@ def _charge_rpc_call(job: dict) -> dict:
     return data
 
 
+def _charge_units_py(u: dict, units: int, reason: str) -> Tuple[dict, int, str]:
+    """Charge an exact number of units (same debt rules as charge_for_ai_turn)."""
+    u = apply_24h_reset(u)
+    if is_unlimited(u):
+        return u, 0, "unlimited"
+    total0 = total_credits(u)
+    take = max(0, min(int(units), raw_balance(u) + max_debt_units()))
+    if take <= 0:
+        return u, 0, "no_credits"
+    u = deduct_credits(u, take, allow_debt=True)
+    return u, take, reason + ("+debt" if take > total0 else "")
+
+
 def _charge_legacy(uid: str, email: str, pages: int, searches: int, mode: str, tokens: int,
-                   details: dict, kind_prefix: str) -> Tuple[dict, int, str]:
+                   details: dict, kind_prefix: str, units_override: Optional[int] = None) -> Tuple[dict, int, str]:
     """Old path (CAS in Python) — used only until the SQL function is installed."""
     def _fn(u):
         u["total_tokens"] = (u.get("total_tokens") or 0) + max(0, tokens)
         u["daily_tokens"] = (u.get("daily_tokens") or 0) + max(0, tokens)
-        u, ch, rs = charge_for_ai_turn(u, pages, searches, mode)
+        if units_override is not None:
+            u, ch, rs = _charge_units_py(u, units_override, "resume")
+        else:
+            u, ch, rs = charge_for_ai_turn(u, pages, searches, mode)
         return u, (ch, rs)
     usage, (charged, reason) = update_usage_atomic(uid, email, _fn)
     if int(charged) > 0:
@@ -895,7 +912,7 @@ def _charge_legacy(uid: str, email: str, pages: int, searches: int, mode: str, t
 
 def charge_turn_atomic(uid: str, email: str, usage: Optional[dict], pages: int, searches: int, mode: str,
                        tokens: int = 0, details: Optional[dict] = None, kind_prefix: str = "",
-                       charge_id: Optional[str] = None) -> Tuple[dict, int, str]:
+                       charge_id: Optional[str] = None, units_override: Optional[int] = None) -> Tuple[dict, int, str]:
     """Charge one AI turn. Returns (usage_after, charged_units, reason). Sync — run it with asyncio.to_thread.
     `usage` = row read earlier (for VIP/daily-limit info); None -> it is read here."""
     import uuid as _uuid
@@ -903,18 +920,28 @@ def charge_turn_atomic(uid: str, email: str, usage: Optional[dict], pages: int, 
     if usage is None:
         usage = get_or_create_user_usage(uid, email)
     if not supabase or not uid or str(uid).startswith(("dev-", "anon-", "guest-")):
-        u, ch, rs = charge_for_ai_turn(dict(usage), pages, searches, mode)          # dev / guest: memory only
+        if units_override is not None:                                              # dev / guest: memory only
+            return _charge_units_py(dict(usage), units_override, "resume")
+        u, ch, rs = charge_for_ai_turn(dict(usage), pages, searches, mode)
         return u, ch, rs
     unlimited = is_unlimited(usage)
-    units, reason = (0, "unlimited") if unlimited else turn_cost(pages, searches, mode)
+    if unlimited:
+        units, reason = 0, "unlimited"
+    elif units_override is not None:
+        units, reason = max(0, int(units_override)), "resume"
+    else:
+        units, reason = turn_cost(pages, searches, mode)
     job = {"uid": str(uid), "email": email or "", "units": units, "reason": kind_prefix + reason,
            "daily": daily_units_for(usage), "max_debt": max_debt_units(), "tokens": max(0, int(tokens or 0)),
            "searches": max(0, int(searches or 0)), "details": details,
            "charge_id": charge_id or _uuid.uuid4().hex, "pages": pages, "mode": mode, "kind_prefix": kind_prefix,
+           "units_override": units_override,
            "tries": 0, "first": time.time()}
     usage_cache_drop(uid)
+    if units_override is not None and units <= 0 and not unlimited:
+        return dict(usage), 0, "none"
     if not _CHARGE_RPC["ok"] and time.time() - _CHARGE_RPC["checked"] < 600:
-        return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix)
+        return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix, units_override)
     last_err = None
     for attempt in range(3):
         try:
@@ -941,14 +968,17 @@ def charge_turn_atomic(uid: str, email: str, usage: Optional[dict], pages: int, 
                     print("[CHARGE] ⚠️ SQL funksiya public.charge_units yo'q — eski (CAS) yo'l ishlatiladi. "
                           "SUPABASE_SCHEMA.sql 13-bo'limini Supabase SQL Editor'da ishga tushiring.")
                 _CHARGE_RPC.update(ok=False, checked=time.time())
-                return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix)
+                return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix, units_override)
             if "user_not_found" in str(e).lower():
                 raise
             last_err = e
             time.sleep(0.2 * (attempt + 1))
     # DB is unreachable: do NOT give the turn away for free — queue it and retry in the background
     _queue_pending_charge(job, last_err)
-    u, ch, _ = charge_for_ai_turn(dict(usage), pages, searches, mode)               # best estimate for the UI
+    if units_override is not None:
+        u, ch, _ = _charge_units_py(dict(usage), units_override, "resume")
+    else:
+        u, ch, _ = charge_for_ai_turn(dict(usage), pages, searches, mode)           # best estimate for the UI
     return u, ch, "charge_deferred"
 
 
@@ -974,7 +1004,7 @@ def retry_pending_charges() -> int:
                 _charge_rpc_call(job)
             else:
                 _charge_legacy(job["uid"], job["email"], job["pages"], job["searches"], job["mode"],
-                               job["tokens"], job["details"], job["kind_prefix"])
+                               job["tokens"], job["details"], job["kind_prefix"], job.get("units_override"))
             usage_cache_drop(job["uid"])
         except Exception as e:
             if _is_missing_rpc(e):
@@ -1016,129 +1046,23 @@ def count_accounts() -> int:
     except Exception:
         return 0
 
-def _extract_imgs(objects, slide_num):
-    out = []
-    if not isinstance(objects, list):
-        return out
-    for z, el in enumerate(objects):
-        if not isinstance(el, dict):
-            continue
-        etype = el.get("type")
-        is_gif = bool(el.get("isGif") or el.get("gifUrl") or etype == "gifImage" or el.get("kind") == "gif")
-        if etype != "image" and etype != "gifImage" and not is_gif:
-            continue
-        num = el.get("imageNumber")
-        if num is None:
-            continue
-        out.append({
-            "number": num, "id": el.get("id"), "slide": slide_num,
-            "left": el.get("left"), "top": el.get("top"),
-            "width": el.get("width"), "height": el.get("height"),
-            "angle": el.get("angle", 0), "z": z,
-            "kind": "gif" if is_gif else "image",
-        })
-    return out
+# Audit M5: prompt helpers live in backend/services/prompt_builder.py (names re-exported for old imports/tests)
+from backend.services import prompt_builder as _pb
+from backend.services.prompt_builder import (  # noqa: E402,F401
+    _extract_imgs, extract_images_from_deck_state, _OLD_ACTIONS_NOTE, _FENCE_RE, _strip_old_actions, ai_balance_rules,
+)
 
-def extract_images_from_deck_state(deck_state) -> Dict:
-    result = {"pending": [], "placed": []}
-    if not deck_state:
-        return result
+
+def _max_ctx_cfg() -> int:
     try:
-        deck = json.loads(deck_state) if isinstance(deck_state, str) else deck_state
+        return max(2, int(config.get("max_context_messages", 10) or 10))
     except Exception:
-        return result
-    if not isinstance(deck, dict):
-        return result
-    for p in deck.get("slide_images_pending") or []:
-        if isinstance(p, dict):
-            num = p.get("number") or p.get("globalNum")
-            if num is not None:
-                result["pending"].append({"number": num, "width": p.get("width"), "height": p.get("height")})
-    slide_data = deck.get("slide_data") or {}
-    if isinstance(slide_data, dict):
-        sn = deck.get("active_slide", 1)
-        objs = slide_data.get("objects") or slide_data.get("elements") or []
-        result["placed"].extend(_extract_imgs(objs, sn))
-    for s in deck.get("presentation") or []:
-        if isinstance(s, dict):
-            sn = s.get("slide") or s.get("slide_index") or 0
-            objs = s.get("objects") or s.get("elements") or []
-            result["placed"].extend(_extract_imgs(objs, sn))
-    for el in deck.get("placed_images") or []:
-        if isinstance(el, dict):
-            num = el.get("number") or el.get("imageNumber")
-            if num is not None:
-                result["placed"].append({
-                    "number": num, "id": el.get("id"), "slide": el.get("slide"),
-                    "left": el.get("left"), "top": el.get("top"),
-                    "width": el.get("width"), "height": el.get("height"),
-                    "angle": el.get("angle", 0), "z": el.get("z"),
-                })
-    return result
+        return 10
 
-_OLD_ACTIONS_NOTE = "[oldingi amallar bajarilgan — joriy mazmun faqat LIVE DECK STATE da]"
-_FENCE_RE = _re.compile(r"```[a-zA-Z]*\s*[\s\S]*?(?:```|$)")
-
-def _strip_old_actions(text: str) -> str:
-    """v33: AI ning ESKI javobidagi JSON amallari (eski slayd mazmuni) tarixga qaytarilmaydi —
-    aks holda model eski kontentni 'eslab' qayta yozib yuboradi. Joriy holat faqat LIVE DECK STATE."""
-    if not text:
-        return text
-    t = _FENCE_RE.sub(_OLD_ACTIONS_NOTE, text)
-    # qavs-balansli, fence'siz {"actions": ...} bloklari
-    dec = json.JSONDecoder()
-    out, i = [], 0
-    while True:
-        j = t.find('{"actions"', i)
-        if j < 0:
-            out.append(t[i:])
-            break
-        out.append(t[i:j])
-        try:
-            _, end = dec.raw_decode(t, j)
-        except ValueError:
-            end = len(t)
-        out.append(_OLD_ACTIONS_NOTE)
-        i = end
-    t = "".join(out)
-    t = _re.sub(r"(?:" + _re.escape(_OLD_ACTIONS_NOTE) + r"\s*){2,}", _OLD_ACTIONS_NOTE + " ", t)
-    return t.strip()
 
 def build_history(chat_history) -> List[dict]:
-    if not isinstance(chat_history, list):
-        return []
-    try:
-        _max_ctx = max(2, int(config.get("max_context_messages", 10) or 10))
-    except Exception:
-        _max_ctx = 10
-    chat_history = chat_history[-_max_ctx:]
-    items = []
-    for m in chat_history:
-        if not isinstance(m, dict):
-            continue
-        role = m.get("role")
-        text = (m.get("text") or "").strip()
-        if not text:
-            continue
-        if role in ("assistant", "bot", "model"):
-            role = "assistant"
-            text = _strip_old_actions(text)
-            if not text:
-                continue
-        else:
-            role = "user"
-        items.append({"role": role, "content": text})
-    norm = []
-    for it in items:
-        if norm and norm[-1]["role"] == it["role"]:
-            norm[-1]["content"] += "\n" + it["content"]
-        else:
-            norm.append(dict(it))
-    while norm and norm[0]["role"] == "assistant":
-        norm.pop(0)
-    while norm and norm[-1]["role"] == "user":
-        norm.pop()
-    return norm
+    return _pb.build_history(chat_history, _max_ctx_cfg())
+
 
 app = FastAPI(title="Slide Studio", version="37.0", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -1641,42 +1565,6 @@ def balance_cap_units(user_id: str, u: dict) -> int:
         except Exception:
             top = None
     return max(total, top or total)
-
-
-def ai_balance_rules(usage: dict, bill_mode: str) -> str:
-    """AI'ga beriladigan balans qoidalari. v66: CHEKSIZ (VIP/admin) akkauntda avval «Joriy balans: 0 varaq.
-    Balans 0 bo'lsa hech qanday action yozmang» deyilardi (pullik/bepul varaq 0) — AI slayd yasashni rad etardi."""
-    _c = MODES[bill_mode]
-    _rejim = "CHUQUR AI" if bill_mode == "deep" else "TEZ AI"
-    if is_unlimited(usage):
-        return (
-            f"\n\n[BALANS VA VARAQ QOIDALARI — MAJBURIY]\n"
-            f"Rejim: {_rejim}. Bu foydalanuvchining balansi CHEKSIZ (VIP). Varaq cheklovi YO'Q: so'ralgan barcha slaydlarni "
-            f"yarating va tahrirlang. Balans, limit yoki varaq soni haqida GAPIRMANG, hech narsani rad etmang.\n"
-            f"  • Yangi slayd qo'shish: har slayd uchun alohida \"insert_slide\" (mazmun bilan). \"create_slides\" faqat foydalanuvchi BO'SH varaq so'raganda.\n"
-        )
-    bal_units = total_credits(usage)
-    bal = bal_units // _c["page"]       # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
-    out = (
-        f"\n\n[BALANS VA VARAQ QOIDALARI — MAJBURIY]\n"
-        f"Rejim: {_rejim}. Joriy balans: {bal} varaq (aniq: {bal_units / _c['page']:.2f}).\n"
-        f"Oddiy chat: {_c['chat_per_page']} ta savol-javob = 1 varaq. Qidiruv: {_c['search_per_page']} ta rasm/GIF/video qidiruvi = 1 varaq.\n"
-        f"NARX:\n"
-        f"  • 1 ta yangi/tahrirlangan/o'chirilgan slayd = 1 varaq\n"
-        f"  • create_slides count=N → N varaq\n"
-        f"  • insert_slide / replace_slide / clear_slide / add_gif / place_image = 1 varaq (har bir tegilgan slayd)\n"
-        f"  • Faqat chat (actions bo'sh): har {_c['chat_per_page']} ta oddiy xabar = 1 varaq\n"
-        f"LIMIT QOIDASI:\n"
-        f"  • Foydalanuvchi {bal} tadan KO'P slayd so'rasa (masalan {bal + 10} ta so'rasa, balans esa {bal}) — "
-        f"FAQAT {bal} tasini yarating, PART A da aniq ayting: "
-        f"\"Balansingizda {bal} varaq qoldi, shuning uchun {bal} ta slayd yaratdim. "
-        f"Qolganini sotib olgach davom ettirish mumkin.\"\n"
-        f"  • Balans 0 bo'lsa hech qanday action yozmang.\n"
-        f"  • Yangi slayd qo'shish: har slayd uchun alohida \"insert_slide\" (mazmun bilan). \"create_slides\" faqat foydalanuvchi BO'SH varaq so'raganda.\n"
-    )
-    if bal <= 3:
-        out += f"⚠️ BALANS PAST ({bal}). Minimal o'zgarishlar qiling; katta deck yasashdan saqlaning.\n"
-    return out
 
 
 _merge_checked: "OrderedDict[str, float]" = OrderedDict()
@@ -3385,9 +3273,109 @@ _TOK_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
 _TOK_LOCK = threading.Lock()          # accessed from the thread pool (HTTP) and the event loop (WS)
 TOK_TTL = 60.0
 
+# ---- Audit H5: a WebSocket that can "detach" (client gone -> the AI turn finishes in the background) ----
+RESUME_DETACH_SEC = float(_env_int("RESUME_DETACH_SEC", 120)) if os.environ.get("RESUME_DETACH_SEC", "") != "0" else 0.0
+
+
+class _DetachableWS:
+    """Wraps the real WebSocket. During an AI turn that has a request_id, a failed send does not stop the turn:
+    the socket becomes `detached`, further sends are dropped, and the turn may run RESUME_DETACH_SEC more seconds
+    (then a send raises WebSocketDisconnect = the old Audit C3 behaviour). Everything else is delegated."""
+
+    def __init__(self, ws):
+        self._ws = ws
+        self.allow_detach = False
+        self.detached = False
+        self.detached_at = 0.0
+        self.delivered_chars = 0          # length of streamed text that really reached the client
+        self.on_detach = None
+
+    def __getattr__(self, name):
+        return getattr(self._ws, name)
+
+    def begin_turn(self, allow: bool, on_detach=None) -> None:
+        self.allow_detach = bool(allow) and RESUME_DETACH_SEC > 0
+        self.detached = False
+        self.detached_at = 0.0
+        self.delivered_chars = 0
+        self.on_detach = on_detach
+
+    async def send_json(self, data, *a, **k):
+        if self.detached:
+            if time.monotonic() - self.detached_at > RESUME_DETACH_SEC:
+                raise WebSocketDisconnect()
+            return
+        try:
+            await self._ws.send_json(data, *a, **k)
+        except (TypeError, ValueError):
+            raise
+        except Exception:
+            if not self.allow_detach:
+                raise WebSocketDisconnect()
+            self.detached = True
+            self.detached_at = time.monotonic()
+            if self.on_detach:
+                try:
+                    self.on_detach()
+                except Exception:
+                    pass
+            return
+        if isinstance(data, dict) and data.get("type") == "chunk":
+            self.delivered_chars += len(data.get("text") or "")
+
+    async def receive_text(self):
+        if self.detached:
+            raise WebSocketDisconnect()
+        return await self._ws.receive_text()
+
+
+async def _handle_resume(websocket, data: dict) -> None:
+    """Audit H5: {"type": "resume", "token", "request_id"} -> resume_pending | resume_result | resume_none."""
+    rid = _resume.valid_request_id(data.get("request_id"))
+    token = str(data.get("token") or "")
+    if not rid:
+        await websocket.send_json({"type": "resume_none", "request_id": None})
+        return
+    who = None
+    if supabase and token:
+        try:
+            who = await asyncio.to_thread(auth_user_cached, token)
+        except Exception:
+            who = None
+    elif os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() == "1" and token and token == os.environ.get("SLIDE_STUDIO_DEV_TOKEN", ""):
+        who = ("dev-user", "dev@local")
+    if not who:
+        await websocket.send_json({"type": "resume_none", "request_id": rid, "code": "invalid_token"})
+        return
+    uid, email = who
+    e = await asyncio.to_thread(_resume.lookup, rid, uid)
+    if not e or e.get("status") == "aborted":
+        await websocket.send_json({"type": "resume_none", "request_id": rid})
+        return
+    if e.get("status") != "done":
+        await websocket.send_json({"type": "resume_pending", "request_id": rid})
+        return
+    end = dict(e.get("end") or {})
+    extra = int(e.get("extra_units") or 0)
+    if extra > 0:                         # the part the client did NOT get before the break — charged now, once
+        try:
+            async with _user_lock(uid):
+                usage, ch, _rs = await asyncio.to_thread(
+                    charge_turn_atomic, uid, email, None, 0, 0, e.get("mode") or "fast", 0,
+                    {"resume": rid, "units": extra}, "", f"resume:{rid}", extra)
+            end.update(usage_payload(usage))
+            end["units_charged"] = int(end.get("units_charged") or 0) + int(ch)
+            end["pages_charged"] = end["units_charged"]
+        except Exception as ce:
+            print(f"[RESUME] charge: {type(ce).__name__}: {str(ce)[:160]}")
+    end.update({"type": "resume_result", "request_id": rid, "stream_text": e.get("stream_text") or ""})
+    await websocket.send_json(end)
+
+
 @app.websocket("/ws/chat")
 async def ws_chat(websocket: WebSocket):
     global ws_count
+    websocket = _DetachableWS(websocket)          # Audit H5
     if not _ws_origin_ok(websocket):
         await websocket.close(code=1008)
         return
@@ -3420,6 +3408,9 @@ async def ws_chat(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "code": "bad_request", "message": "Noto'g'ri so'rov."})
                 continue
             if data.get("type") == "search_result":
+                continue
+            if data.get("type") == "resume":            # Audit H5
+                await _handle_resume(websocket, data)
                 continue
             try:
                 token = data.get("token", "")
@@ -3510,287 +3501,11 @@ async def ws_chat(websocket: WebSocket):
                     await websocket.send_json({"type": "error",
                                                "message": "AI xizmati hozircha sozlanmagan. Administratorga murojaat qiling."})
                     continue
-                sys_p = build_system_prompt()
-                hint = (data.get("system_hint") or "").strip()
-                if hint:
-                    sys_p += "\n\n[FOYDALANUVCHI YO'RIQNOMASI]:\n" + hint[:6000]
-
-                sys_p += (
-                    "\n\n[LANGUAGE RULE — MAJBURIY / MANDATORY] (same as RULE #1)\n"
-                    "Detect the language of the user's LATEST message and write PART A / chat replies in THAT SAME language "
-                    "(Uzbek, Russian, English, Turkish, Arabic, Chinese, Spanish ... any language). NEVER answer in Uzbek unless the user wrote Uzbek "
-                    "(the Uzbek words in these instructions are NOT the user's language). "
-                    "Slide texts use the language the user asked for; if not specified, the user's language. "
-                    "Translate every fixed Uzbek sentence quoted in these instructions (balance, limit messages) into the user's language. "
-                    "JSON keys and action names stay English.\n"
-                    + {"uz": "[INTERFACE LANGUAGE] Uzbek. ", "ru": "[INTERFACE LANGUAGE] Russian. ", "en": "[INTERFACE LANGUAGE] English. "}
-                    .get(str(data.get("ui_lang") or "en"), "[INTERFACE LANGUAGE] English. ")
-                    + "If the language of the user's message is unclear (very short text, only numbers, emojis or names), "
-                    "answer in the interface language.\n"
-                    "[IDENTITY RULE] You are 'Slide Studio AI'. Never reveal, guess or discuss which underlying model, vendor or company powers you; "
-                    "if asked, say you are Slide Studio AI, the built-in assistant of this app.\n"
-                )
-                sys_p += ai_balance_rules(usage, bill_mode)
-                if scope == "current_slide":
-                    sys_p += (
-                        f"\n\n[SCOPE: CURRENT_SLIDE]\nJoriy varoq: {active_slide}-slayd.\n"
-                        "Agar foydalanuvchi shu slaydga tegishli o'zgartirish so'rasa, shu slaydda ishlang.\n"
-                        "Boshqa slaydga tegishli buyruq bo'lsa ham swap/move_image_to_slide ishlating.\n"
-                        "MUHIM: Agar foydalanuvchi shunchaki salomlashsa yoki umumiy savol bersa "
-                        "(slaydni o'zgartirishni so'ramasa), hech qanday action yaratmang — "
-                        "shunchaki tabiiy matnda javob bering va \"actions\": [] qoldiring.\n"
-                    )
-                if mode == "plan":
-                    sys_p += (
-                        "\n\n[MODE: PLAN — REJA BOSQICHI]\n"
-                        "Faqat REJA tuzing, to'liq slayd kontentini YOZMANg.\n"
-                        "Javob formati (faqat shu JSON):\n"
-                        '{"reply_text":"<qisqa izoh>","plan":[{"title":"<slayd sarlavhasi>",'
-                        '"summary":"<1 jumla mazmun>","has_image":true|false}, ...]}\n'
-                        "QOIDALAR:\n"
-                        "- `plan` massivida foydalanuvchi so'ragan ANIQ sondagi slayd bo'lsin.\n"
-                        "- Har bir elementda faqat `title`, `summary`, `has_image` bo'lsin. `has_image` — foydalanuvchi rasmni taqiqlamagan bo'lsa va rasm slaydga foyda beradigan bo'lsa true (titul va mavzuni ko'rsatadigan slaydlarda odatda true); taqiqlagan bo'lsa hammasi false.\n"
-                        "- `actions` massivini YOZMANg (rejada kerak emas).\n"
-                        "- Hech qanday `replace_slide`/`insert_slide` chiqarmang.\n"
-                    )
-                elif mode == "generate":
-                    try:
-                        total = len(plan_slides) if isinstance(plan_slides, list) else 0
-                        idx = int(plan_index) if plan_index is not None else 0
-                    except Exception:
-                        total, idx = 0, 0
-                    cur = plan_slides[idx] if (isinstance(plan_slides, list) and 0 <= idx < len(plan_slides)) else {}
-                    slide_no = idx + 1
-                    action_name = "replace_slide" if slide_no == 1 else "insert_slide"
-                    after_no = slide_no - 1
-                    sys_p += (
-                        f"\n\n[MODE: GENERATE — {slide_no}/{total or '?'} SLAYDNI YARATISH]\n"
-                        f"Faqat {slide_no}-slaydni to'liq yarating. Boshqa slaydlarni YOZMANg.\n"
-                        f"Reja ma'lumoti: {json.dumps(cur, ensure_ascii=False)}\n"
-                        "QOIDALAR:\n"
-                        f"- Faqat BITTA asosiy action chiqaring: `{action_name}`"
-                        + (f' bilan `"slide": 1`' if slide_no == 1 else f' bilan `"after": {after_no}`') + ".\n"
-                        "- `elements` massivida sarlavha + matn/kartalar bo'lsin (reja mazmuniga mos).\n"
-                        "- RASM: foydalanuvchi rasm/GIF'ni TAQIQLAMAGAN bo'lsa va reja `has_image` true bo'lsa — AVVAL search_images tool bilan mavzuga 100% mos rasm toping va {\"type\":\"image\",\"src\":URL,...} element qiling. Rasm taqiqlangan bo'lsa — rasm QO'SHMANG.\n"
-                        "- Rang mavzusi barcha slaydlarda BIR XIL: 1-slayddagi `background` va ranglarni (deck state'dan) takrorlang.\n"
-                        "- Professional ko'rinish uchun maqsadli shakllardan foydalaning: sarlavha ostida chiziq/aksent, raqamli doira, galochka (check), strelka/chevron, pill. Tasodifiy shakl sochmang.\n"
-                        "- Jami actionlar soni 4 tadan OSHMASIN. Tool (search_images) chaqiruvlari bu hisobga kirmaydi.\n"
-                        "- JSON toza va to'liq bo'lsin (trailing comma yo'q, qo'shtirnoqlar yopilgan).\n"
-                    )
-                imgs = extract_images_from_deck_state(deck_state)
-                meta_desc = {}
-                for m in images_meta:
-                    if isinstance(m, dict) and m.get("number") is not None and m.get("description"):
-                        meta_desc[m["number"]] = m["description"]
-                if imgs["pending"]:
-                    lines = []
-                    for p in imgs["pending"]:
-                        n = p.get("number")
-                        if n is None:
-                            continue
-                        d = meta_desc.get(n, "")
-                        dim = ""
-                        if p.get("width") and p.get("height"):
-                            dim = f" [{p['width']}x{p['height']}]"
-                        lines.append(f"  • Rasm #{n}: {d}{dim}")
-                    sys_p += "\n\n[FOYDALANUVCHI YUKLAGAN RASMLAR — PENDING]\n" + "\n".join(lines) + "\n"
-                    sys_p += (
-                        "Bu rasmlar hali slaydda EMAS — faqat metadata (raqam, o'lcham) berilgan.\n"
-                        "Ularni ishlatish uchun ANIQ action chiqaring:\n"
-                        "  • place_image (slide, image_number, image_index, left, top, width, height) — slaydga qo'yish.\n"
-                        "  • set_background_url (slide, image_number) — to'liq fon qilish (url SHART EMAS).\n"
-                        "  • duplicate_image (to_slide, image_number, left, top, width, height) — bir rasmni 2+ slaydga nusxalash.\n"
-                        "Rasm ishlatilgach panel'dan AVTOMATIK o'chiriladi — qayta ishlatmang.\n"
-                    )
-                if imgs["placed"]:
-                    lines = []
-                    gif_lines = []
-                    for img in imgs["placed"]:
-                        is_gif = (img.get("kind") == "gif")
-                        label = "GIF" if is_gif else "Rasm"
-                        line = f"  • {label} #{img.get('number')}"
-                        if img.get("slide") is not None:
-                            line += f" — {img['slide']}-VAROQDA"
-                        if img.get("left") is not None:
-                            line += f", joy=({img['left']},{img['top']})"
-                        if img.get("width"):
-                            line += f", {img['width']}×{img['height']}"
-                        if is_gif:
-                            gif_lines.append(line)
-                        else:
-                            lines.append(line)
-                    if lines:
-                        sys_p += "\n\n[ALLAQACHON JOYLASHTIRILGAN RASMLAR]\n" + "\n".join(lines) + "\n"
-                    if gif_lines:
-                        sys_p += "\n\n[JONLI GIF'LAR — ALLAQACHON SLAYDLARDA]\n" + "\n".join(gif_lines) + "\n"
-                        sys_p += (
-                            "Bu elementlar JONLI GIF (animatsiyali). Ular #raqam-GIF bilan belgilangan.\n"
-                            "GIF'lar oddiy rasmlardan farq qiladi — ular animatsiyali va o'lchamga ega.\n"
-                            "GIF'ni ko'chirish/almashtirish uchun move_image_to_slide yoki swap_images ishlating.\n"
-                            "GIF'ni fon qilish uchun set_background_url (image_number bilan) ishlating.\n"
-                        )
-
-                sys_p += (
-                    "\n\n[RASM/GIF ALMASHTIRISH — swap_images]\n"
-                    "Ikki xil rasmni (yoki GIFni) almashtirish uchun `swap_images` action ishlating.\n"
-                    "SXEMA: {\"action\":\"swap_images\",\"image_a\":<1-rasm raqami>,\"slide_a\":<a slayd>,\n"
-                    "        \"image_b\":<2-rasm raqami>,\"slide_b\":<b slayd>,\"swap_position\":true|false}\n"
-                    "QOIDALAR:\n"
-                    "- `image_a` va `image_b` — global rasm/GIF raqamlari (yuqoridagi ro'yxatdan).\n"
-                    "- `slide_a`/`slide_b` — o'sha rasmlar joylashgan slayd raqamlari (1-based).\n"
-                    "- `swap_position: true` (standart) — rasm TARKIBI almashtiriladi, joyi/o'lchami o'zgarmaydi.\n"
-                    "- `swap_position: false` — rasm JOYI/o'lchami almashtiriladi, tarkibi o'zgarmaydi.\n"
-                    "- Ikkala rasm ham mavjud va turli obyekt bo'lishi SHART.\n"
-                    "- GIF'lar ham xuddi rasm kabi almashtiriladi (raqami bo'yicha).\n"
-                )
-
-                sys_p += (
-                    "\n\n[AMALLAR HISOBOTI VA HALOLLIK]\n"
-                    "Sizga har safar oldingi javobingizdagi amallarning HAQIQIY bajarilish natijasi "
-                    "(✅ bajarilgan / ❌ bajarilmagan) berilishi mumkin.\n"
-                    "QOIDALAR:\n"
-                    "- Agar amal ✅ bo'lsa — u TUGALLANGAN. Uni QAYTA bajarmang va qayta so'ramang.\n"
-                    "- Agar amal ❌ bo'lsa — u BAJARILMAGAN. Foydalanuvchiga bajarildi deb AYTMANG; "
-                    "sababini tushuntiring yoki to'g'rilab qayta urinib ko'ring.\n"
-                    "- `reply_text` da faqat HAQIQATDA bajarilgan ishni tasvirlang. Yolg'on da'vo qilmang.\n"
-                    "- Foydalanuvchi \"bajarilmadi\" desa va hisobotda ✅ bo'lsa — ish aslida bajarilgan; "
-                    "muloyimlik bilan tasdiqlang va nima o'zgarganini tushuntiring.\n"
-                )
-                if deck_state:
-                    try:
-                        d = json.loads(deck_state) if isinstance(deck_state, str) else deck_state
-                        if isinstance(d, dict):
-                            def _obj_brief(o, z_index=0):
-                                if not isinstance(o, dict):
-                                    return None
-                                is_gif = bool(o.get("isGif") or o.get("gifUrl") or o.get("type") in ("gif", "gifImage") or o.get("kind") == "gif")
-                                is_img = is_gif or o.get("type") in ("image", "videoImage", "video", "embedVideo") or o.get("kind") == "image" or o.get("isVideo")
-                                is_text = o.get("type") in ("textbox", "i-text", "text") or o.get("kind") == "text"
-                                brief = {
-                                    "type": "gif" if is_gif else (o.get("type") or o.get("kind")),
-                                    "id": o.get("id") or o.get("_oid"),
-                                    "left": o.get("left"), "top": o.get("top"),
-                                    "width": o.get("width"), "height": o.get("height"),
-                                    "angle": o.get("angle") or 0,
-                                    "zIndex": z_index,
-                                }
-                                if o.get("fill") is not None:
-                                    brief["fill"] = o.get("fill")
-                                if o.get("stroke") is not None:
-                                    brief["stroke"] = o.get("stroke")
-                                if o.get("strokeWidth") is not None:
-                                    brief["strokeWidth"] = o.get("strokeWidth")
-                                if o.get("opacity") is not None:
-                                    brief["opacity"] = o.get("opacity")
-                                # v59: AI slaydni odamdan ham yaxshi «ko'rsin» — shakl, burchak, soya, chiziq, animatsiya vaqti ham beriladi
-                                for _k in ("shape", "rx", "ry", "radius", "strokeDashArray", "shadow", "flipX", "flipY",
-                                           "lineHeight", "charSpacing", "fontColor", "textBackgroundColor",
-                                           "animDur", "animDelay", "animLoop", "src", "url", "locked", "linethrough"):
-                                    _v = o.get(_k)
-                                    if isinstance(_v, str) and _v.startswith("data:"):
-                                        continue
-                                    if _v not in (None, "", False, 0) or (_k in ("rx", "ry") and _v == 0 and o.get("type") == "rect"):
-                                        brief[_k] = _v[:160] if isinstance(_v, str) else _v
-                                if is_text:
-                                    brief["text"] = (o.get("text") or "")[:600]
-                                    if o.get("fontSize") is not None:
-                                        brief["fontSize"] = o.get("fontSize")
-                                    if o.get("fontFamily"):
-                                        brief["fontFamily"] = o.get("fontFamily")
-                                    if o.get("fontWeight") is not None:
-                                        brief["fontWeight"] = o.get("fontWeight")
-                                    if o.get("fontStyle") is not None:
-                                        brief["fontStyle"] = o.get("fontStyle")
-                                    if o.get("textAlign") is not None:
-                                        brief["textAlign"] = o.get("textAlign")
-                                    if o.get("underline"):
-                                        brief["underline"] = True
-                                if is_img and o.get("imageNumber") is not None:
-                                    brief["imageNumber"] = o.get("imageNumber")
-                                if o.get("animation") or o.get("animName"):
-                                    brief["animation"] = o.get("animation") or o.get("animName")
-                                if o.get("type") == "video" or o.get("type") == "embedVideo":
-                                    brief["type"] = "video"
-                                    brief["url"] = (o.get("url") or o.get("embedUrl") or "")[:160]
-                                if o.get("type") in ("button", "slideButton"):
-                                    brief["type"] = "button"
-                                    brief["text"] = (o.get("buttonText") or o.get("text") or o.get("btnLabel") or "")[:60]
-                                    brief["click"] = o.get("click") or o.get("btnAction")
-                                if is_gif:
-                                    brief["kind"] = "gif"
-                                    if o.get("gifUrl"):
-                                        brief["gifUrl"] = (o.get("gifUrl") or "")[:120]
-                                return brief
-
-                            full = {
-                                "active_slide": d.get("active_slide") or d.get("active_slide_index"),   # v59: yon AI panel active_slide_index yuboradi
-                                "total_slides": d.get("total_slides") or len(d.get("presentation") or []) or 1,
-                                "title": d.get("title"),
-                                "pending_images": d.get("slide_images_pending") or [],
-                            }
-
-                            pres = d.get("presentation") or []
-                            slides_out = []
-                            if isinstance(pres, list) and pres:
-                                for s in pres[:30]:
-                                    if not isinstance(s, dict):
-                                        continue
-                                    entry = {
-                                        "slide": s.get("slide") or s.get("slide_index"),
-                                        "background": s.get("background") or "#ffffff",
-                                        "objects": [],
-                                    }
-                                    for _k in ("transition", "backgroundImageUrl", "backgroundVideo"):
-                                        if s.get(_k):
-                                            entry[_k] = s.get(_k)
-                                    if s.get("backgroundGif"):
-                                        entry["backgroundGif"] = True
-                                    if s.get("backgroundImage"):
-                                        entry["backgroundImage"] = True
-                                    for zi, o in enumerate((s.get("objects") or s.get("elements") or [])[:50]):
-                                        b = _obj_brief(o, z_index=zi)
-                                        if b:
-                                            entry["objects"].append(b)
-                                    slides_out.append(entry)
-                            else:
-
-                                sd = d.get("slide_data") or {}
-                                if isinstance(sd, dict):
-                                    entry = {
-                                        "slide": d.get("active_slide") or 1,
-                                        "background": sd.get("background") or "#ffffff",
-                                        "objects": [],
-                                    }
-                                    if sd.get("backgroundGif"):
-                                        entry["backgroundGif"] = True
-                                    for zi, o in enumerate((sd.get("objects") or sd.get("elements") or [])[:50]):
-                                        b = _obj_brief(o, z_index=zi)
-                                        if b:
-                                            entry["objects"].append(b)
-                                    slides_out.append(entry)
-                            full["slides"] = slides_out
-                            sys_p += (
-                                "\n\n[LIVE DECK STATE — GROUND TRUTH]\n"
-                                "Use ONLY this data. Do not invent objects/images.\n"
-                                + json.dumps(full, ensure_ascii=False)
-                            )
-                    except Exception:
-                        sys_p += f"\n\n[LIVE DECK STATE]:\n{str(deck_state)[:6000]}"
-                if model == "deepseek-reasoner":
-                    sys_p = sys_p.replace("search_images tool bilan", "tayyor rasm ro'yxatidan").replace("search_images", "(rasm qidirish)") + _NO_TOOLS_NOTE
-                messages = [{"role": "system", "content": sys_p}]
-                messages.extend(build_history(chat_history))
-                user_content = prompt or "Buyruqni bajaring."
-                if images_meta:
-                    tags = []
-                    for m in images_meta:
-                        if isinstance(m, dict):
-                            n = m.get("number") or m.get("globalNum")
-                            if n is not None:
-                                tags.append(f"[User Image #{n}]")
-                    if tags:
-                        user_content = " ".join(tags) + "\n" + user_content
-                messages.append({"role": "user", "content": user_content})
+                messages, user_content = _pb.build_turn_messages(      # Audit M5/M1: backend/services/prompt_builder.py
+                    base_prompt=build_system_prompt(), data=data, usage=usage, bill_mode=bill_mode, model=model, mode=mode,
+                    plan_slides=plan_slides, plan_index=plan_index, scope=scope, active_slide=active_slide,
+                    images_meta=images_meta, deck_state=deck_state, chat_history=chat_history, prompt=prompt,
+                    max_ctx=_max_ctx_cfg())
                 full_reply = ""
                 usage_meta = None
                 stream_err = None
@@ -3802,6 +3517,17 @@ async def ws_chat(websocket: WebSocket):
                                                "message": "Oldingi so'rovingiz hali bajarilmoqda (boshqa oynada ham bo'lishi mumkin). Tugashini kuting."})
                     continue
                 _held_uid = str(uid)
+                _rid = _resume.valid_request_id(data.get("request_id"))       # Audit H5
+                if _rid:
+                    _resume.start(_rid, str(uid))
+                    _rid_uid = str(uid)
+                    def _on_detach(_r=_rid, _u=_rid_uid):
+                        _t = asyncio.get_running_loop().create_task(asyncio.to_thread(_resume.detached, _r, _u))
+                        _bg_tasks.add(_t)
+                        _t.add_done_callback(_bg_tasks.discard)
+                    websocket.begin_turn(True, _on_detach)
+                else:
+                    websocket.begin_turn(False)
                 try:
 
                     client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
@@ -4020,8 +3746,12 @@ async def ws_chat(websocket: WebSocket):
                 except Exception as e:
                     stream_err = stream_err or e
                 if client_gone and not full_reply.strip():
+                    if _rid:
+                        _resume.abort(_rid, str(uid), websocket.detached)
                     raise WebSocketDisconnect()
                 if stream_err and not full_reply.strip():
+                    if _rid:
+                        _resume.abort(_rid, str(uid), websocket.detached)
                     err = str(stream_err).lower()
                     if isinstance(stream_err, TimeoutError):
                         msg = "AI javobi juda uzoq davom etdi va to'xtatildi. Varaq yechilmadi — so'rovni qisqaroq qilib qayta yuboring."
@@ -4038,6 +3768,7 @@ async def ws_chat(websocket: WebSocket):
                     await websocket.send_json({"type": "error", "message": msg})
                     continue
 
+                _stream_text = full_reply                    # Audit H5: exactly what was streamed (before the GIF fix)
                 try:
                     if _extract_bad_gif_urls(full_reply):
                         fixed = await _fix_gif_urls_in_reply(model, full_reply)
@@ -4053,10 +3784,20 @@ async def ws_chat(websocket: WebSocket):
                 add_tokens(session_key, tot)
 
                 pages_from_actions, pages_breakdown = 0, []
+                _extra_units = 0
                 try:
                     pages_from_actions, pages_breakdown = calculate_page_cost_from_reply(
                         full_reply or "", _deck_slide_count(deck_state), active_slide
                     )
+                    if websocket.detached:
+                        # Audit H5: charge now only what reached the client; the rest (in UNITS, so the total equals
+                        # a turn without a break) is charged when a resume really delivers it
+                        _delivered, _ = calculate_page_cost_from_reply(
+                            _stream_text[:websocket.delivered_chars], _deck_slide_count(deck_state), active_slide)
+                        _m = mode_for_model(model)
+                        _ns = int(n_searches or 0)
+                        _extra_units = max(0, turn_cost(int(pages_from_actions), _ns, _m)[0] - turn_cost(int(_delivered), _ns, _m)[0])
+                        pages_from_actions = int(_delivered)
                 except Exception as _me:
                     print(f"[MONITORING] cost calc: {_me}")
                 pages_charged, charge_reason = 0, "none"
@@ -4079,6 +3820,8 @@ async def ws_chat(websocket: WebSocket):
                 if _held_uid:
                     _ai_inflight_release(_held_uid); _held_uid = None
                 if client_gone:
+                    if _rid:
+                        _resume.abort(_rid, str(uid), websocket.detached)
                     raise WebSocketDisconnect()
                 bal_payload = usage_payload(usage)
                 if isinstance(stream_err, TimeoutError):
@@ -4088,7 +3831,7 @@ async def ws_chat(websocket: WebSocket):
                     finish_reason = "error"
                 elif finish_reason in (None, "", "stop"):
                     finish_reason = "stop"
-                await websocket.send_json({
+                _end = {
                     "type": "end",
                     "finish_reason": finish_reason,
                     "interrupted": finish_reason != "stop",
@@ -4105,8 +3848,17 @@ async def ws_chat(websocket: WebSocket):
                     "billing_mode": mode_for_model(model),
                     "pages_breakdown": pages_breakdown[:40],
                     "charge_reason": charge_reason,
+                    "request_id": _rid,
                     **bal_payload,
-                })
+                }
+                if _rid:
+                    await asyncio.to_thread(_resume.finish, _rid, str(uid), stream_text=_stream_text, end_payload=_end,
+                                            extra_units=_extra_units, mode=mode_for_model(model),
+                                            was_detached=websocket.detached)
+                if websocket.detached:
+                    print(f"[RESUME] fonda tugadi user={str(uid)[:8]} id={_rid} extra_units={_extra_units}")
+                    raise WebSocketDisconnect()
+                await websocket.send_json(_end)
             except WebSocketDisconnect:
                 raise
             except Exception as e:

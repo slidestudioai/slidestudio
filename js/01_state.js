@@ -65,6 +65,13 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
     }
     function sendOverSocket(payload) {
       try { if (payload && typeof payload === 'object' && payload.type !== 'search_result') payload.client_search = true; } catch (e) {}
+      // Audit H5: every AI turn gets an id, so a turn cut by a network drop can be resumed after reconnect
+      try {
+        if (payload && typeof payload === 'object' && !payload.type && 'prompt' in payload) {
+          payload.request_id = payload.request_id || ('r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
+          window._ssAiReq = { id: payload.request_id, at: Date.now() };
+        }
+      } catch (e) {}
       if (isSocketReady()) {
         try { socket.send(JSON.stringify(payload)); return true; }
         catch (e) { console.warn("socket.send xatolik:", e); }

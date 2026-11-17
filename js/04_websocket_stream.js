@@ -109,6 +109,89 @@
       };
     })();
     window.AiSearchUI = AiSearchUI;
+    // Audit H5: the 'end' handling is shared by a normal end and by a resumed (reconnected) turn
+    async function _ssHandleEnd(data) {
+      try { AiSearchUI.thinkingDone(); AiSearchUI.thinkingFinal(); } catch (e) {}
+      try {
+        if (typeof applyServerUsage === 'function') applyServerUsage(data);
+        else if (window.Monitoring && typeof window.Monitoring.applyServerUsage === 'function') {
+          window.Monitoring.applyServerUsage(data);
+        }
+      } catch (_) {}
+      if (typeof data.user_total_tokens === 'number') {
+        userStats.total_tokens = data.user_total_tokens;
+        const st = document.getElementById('statTokens');
+        if (st) st.innerText = data.user_total_tokens.toLocaleString();
+        const bar = document.getElementById('tokenStatusBar');
+        if (bar) bar.style.display = 'flex';
+      }
+      if (typeof data.slide_credits_left === 'number') {
+        userStats.slide_credits = data.slide_credits_left;
+      }
+      currentChatId = data.chat_id || currentChatId;
+
+      const _fr = data.finish_reason || 'stop';
+      if (_fr !== 'stop') {
+        try { markStreamInterrupted(_fr === 'length' ? 'length' : (_fr === 'timeout' ? 'timeout' : 'error')); } catch (e) {}
+      } else if (_streamCtx) {
+        try { clearInterrupted(_streamCtx.id); } catch (e) {}
+        _streamCtx = null;
+      }
+      if (twoPassState && twoPassState.active && twoPassState.plan.length) {
+        try { await aiProcessingQueue; } catch (e) {}
+        isAiStreaming = false;
+        clearAiWatchdog();
+        sendNextTwoPassSlide();
+      } else if (twoPassState && twoPassState.active) {
+        twoPassState = null;
+        finishAiStream();
+      } else {
+        finishAiStream();
+      }
+    }
+
+    // ---------------- Audit H5: resume a turn after the connection dropped ----------------
+    // The server finishes the turn in the background and keeps the streamed text. After reconnect we ask for it
+    // and feed ONLY the part we did not receive into the normal stream handler (JSON blocks already applied are
+    // skipped by processedJsonBlocks) — so nothing is applied twice.
+    let _ssResume = null;
+    function _ssCaptureResume() {
+      const req = window._ssAiReq;
+      if (!req || !req.id || !_streamCtx) return;
+      _ssResume = { id: req.id, ctx: _streamCtx, botId: currentBotMsgId, tries: 0, at: Date.now() };
+    }
+    function _ssSendResume() {
+      const r = _ssResume;
+      if (!r) return;
+      if (isAiStreaming || Date.now() - r.at > 10 * 60 * 1000 || r.tries > 60) { _ssResume = null; return; }
+      if (!isSocketReady()) return;
+      r.tries++;
+      try { socket.send(JSON.stringify({ type: 'resume', request_id: r.id, token: supabaseToken })); } catch (e) {}
+    }
+    async function _ssOnResumeMessage(data) {
+      const r = _ssResume;
+      if (!r || data.request_id !== r.id) return;
+      if (data.type === 'resume_pending') { setTimeout(_ssSendResume, 2500); return; }
+      if (data.type === 'resume_none' || isAiStreaming) { _ssResume = null; return; }
+      const full = String(data.stream_text || '');
+      const got = String(currentAiStreamBuffer || '');
+      _ssResume = null;
+      window._ssAiReq = null;
+      if (!full.startsWith(got)) { console.warn('[resume] buffer mos emas — tiklanmadi'); return; }
+      _streamCtx = r.ctx;
+      currentBotMsgId = r.botId;
+      isAiStreaming = true;
+      aiSessionActive = true;
+      try { updateSendButtons(true); } catch (e) {}
+      const rest = full.slice(got.length);
+      if (rest) handleAiResponseStream(rest);
+      try { clearInterrupted(r.ctx.id); } catch (e) {}
+      showToast("Ulanish tiklandi — javob to'liq olindi.", 'info');
+      data.type = 'end';
+      await _ssHandleEnd(data);
+    }
+    window._ssResumeState = function () { return _ssResume; };   // for tests
+
     let _manualSocketClose = false;
     function initWebSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -116,6 +199,7 @@
       // The server reads the token from each message body.
       let wsUrl = `${protocol}//${window.location.host}/ws/chat`;
       socket = new WebSocket(wsUrl);
+      socket.onopen = () => { try { _ssSendResume(); } catch (e) {} };   // Audit H5
       socket.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -173,43 +257,10 @@
 
             console.log("[gif_fix] etiborsiz — qayta bajarish ochirilgan");
           } else if (data.type === 'end') {
-            try { AiSearchUI.thinkingDone(); AiSearchUI.thinkingFinal(); } catch (e) {}
-            try {
-              if (typeof applyServerUsage === 'function') applyServerUsage(data);
-              else if (window.Monitoring && typeof window.Monitoring.applyServerUsage === 'function') {
-                window.Monitoring.applyServerUsage(data);
-              }
-            } catch (_) {}
-            if (typeof data.user_total_tokens === 'number') {
-              userStats.total_tokens = data.user_total_tokens;
-              const st = document.getElementById('statTokens');
-              if (st) st.innerText = data.user_total_tokens.toLocaleString();
-              const bar = document.getElementById('tokenStatusBar');
-              if (bar) bar.style.display = 'flex';
-            }
-            if (typeof data.slide_credits_left === 'number') {
-              userStats.slide_credits = data.slide_credits_left;
-            }
-            currentChatId = data.chat_id || currentChatId;
-
-            const _fr = data.finish_reason || 'stop';
-            if (_fr !== 'stop') {
-              try { markStreamInterrupted(_fr === 'length' ? 'length' : (_fr === 'timeout' ? 'timeout' : 'error')); } catch (e) {}
-            } else if (_streamCtx) {
-              try { clearInterrupted(_streamCtx.id); } catch (e) {}
-              _streamCtx = null;
-            }
-            if (twoPassState && twoPassState.active && twoPassState.plan.length) {
-              try { await aiProcessingQueue; } catch (e) {}
-              isAiStreaming = false;
-              clearAiWatchdog();
-              sendNextTwoPassSlide();
-            } else if (twoPassState && twoPassState.active) {
-              twoPassState = null;
-              finishAiStream();
-            } else {
-              finishAiStream();
-            }
+            window._ssAiReq = null; _ssResume = null;
+            await _ssHandleEnd(data);
+          } else if (data.type === 'resume_pending' || data.type === 'resume_result' || data.type === 'resume_none') {
+            await _ssOnResumeMessage(data);
           } else if (data.type === 'error') {
             try { AiSearchUI.thinkingFinal(); } catch (e) {}
             showToast("Xatolik: " + data.message, 'error');
@@ -240,11 +291,13 @@
             }
             showToast("Ulanish uzildi, lekin slaydlar qo'llangan. Kerak bo'lsa qayta ulang.", 'info');
           } else {
+            try { _ssCaptureResume(); } catch (e) {}
             try { markStreamInterrupted('connection_lost'); } catch (e) {}
             isAiStreaming = false;
             aiSessionActive = false;
             updateSendButtons(false);
-            showToast("Ulanish uzildi. Qayta ulanmoqda. Kerak bo'lsa «Davom ettirish»ni bosing (avtomatik davom yo'q).", 'error');
+            showToast(_ssResume ? "Ulanish uzildi. Qayta ulanib, javobni tiklashga urinyapman…"
+              : "Ulanish uzildi. Qayta ulanmoqda. Kerak bo'lsa «Davom ettirish»ni bosing (avtomatik davom yo'q).", 'error');
           }
         }
         const _delay = _manualSocketClose ? 150 : 3000;
