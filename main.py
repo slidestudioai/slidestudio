@@ -102,6 +102,11 @@ def _load_dotenv():
 
 _load_dotenv()
 
+from backend.services import obs                    # Audit M4: request id, JSON logs, metrics, Sentry
+from backend.services.obs import metrics as _metrics
+obs.install_json_logs()
+obs.install_sentry()
+
 def _env(*names, default=""):
     for n in names:
         v = os.environ.get(n)
@@ -814,222 +819,29 @@ def update_user_tokens(user_id: str, tokens: int, credits_delta: int = 0):
     except Exception as e:
         print(f"[TOKEN UPD] {e}")
 
-# =============================================================================================
-# Audit H4: short per-user cache of /api/user/usage (5-6 DB calls each) and of token -> user lookups.
-# =============================================================================================
-USAGE_CACHE_TTL = float(_env_int("USAGE_CACHE_TTL", 15))
-USAGE_CACHE_FRESH_MIN = 2.0          # ?fresh=1 (payment watchers) is honoured only if the entry is older than this
-_USAGE_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
-_USAGE_CACHE_LOCK = threading.Lock()
+# Audit M5: billing lives in backend/services/billing.py (names re-exported for old imports/tests)
+from backend.services import billing as _billing      # noqa: E402
+from backend.services import auth as _auth            # noqa: E402
+from backend.services.billing import (                 # noqa: E402,F401
+    USAGE_CACHE_TTL, USAGE_CACHE_FRESH_MIN, _USAGE_CACHE, _USAGE_CACHE_LOCK, usage_cache_get, usage_cache_put,
+    usage_cache_drop, _CHARGE_RPC, _PENDING_CHARGES, _PENDING_LOCK, PENDING_CHARGES_MAX, _is_missing_rpc,
+    _charge_rpc_call, _charge_units_py, _charge_legacy, charge_turn_atomic, _queue_pending_charge,
+    retry_pending_charges, _pending_charges_loop,
+)
+from backend.services.auth import (                    # noqa: E402,F401
+    _TOK_CACHE, _TOK_LOCK, TOK_TTL, AUTH_REVALIDATE_SEC, _SESSION_OK, _TOK_BAD, _AUTH_DEGRADED,
+    _auth_error_is_invalid, _server_get_user, _mark_token_bad, auth_user_cached,
+)
 
-
-def usage_cache_get(uid: str, fresh: bool = False):
-    with _USAGE_CACHE_LOCK:
-        hit = _USAGE_CACHE.get(str(uid))
-    if not hit:
-        return None
-    age = time.time() - hit[0]
-    if age >= USAGE_CACHE_TTL or (fresh and age >= USAGE_CACHE_FRESH_MIN):
-        return None
-    return hit[1]
-
-
-def usage_cache_put(uid: str, payload: dict) -> None:
-    with _USAGE_CACHE_LOCK:
-        _USAGE_CACHE[str(uid)] = (time.time(), payload)
-        _USAGE_CACHE.move_to_end(str(uid))
-        while len(_USAGE_CACHE) > 20000:
-            _USAGE_CACHE.popitem(last=False)
-
-
-def usage_cache_drop(uid: str) -> None:
-    """Call after ANY balance change in this process (charge, payment, referral)."""
-    with _USAGE_CACHE_LOCK:
-        _USAGE_CACHE.pop(str(uid), None)
-
-
-# =============================================================================================
-# Audit H2: ATOMIC charge — SQL function public.charge_units (SUPABASE_SCHEMA.sql, section 13).
-#   1 HTTP call instead of 4-8, row lock instead of CAS retries, ledger row in the same transaction,
-#   idempotent by charge_id (safe to retry). If the function is not installed yet -> old CAS path.
-#   If the DB is down -> the charge is queued in memory and retried (not given away for free).
-# =============================================================================================
-_CHARGE_RPC = {"ok": True, "checked": 0.0}
-_PENDING_CHARGES: List[dict] = []
-_PENDING_LOCK = threading.Lock()
-PENDING_CHARGES_MAX = 10000
-
-
-def _is_missing_rpc(err: Exception) -> bool:
-    m = str(err).lower()
-    return "pgrst202" in m or "could not find the function" in m or ("charge_units" in m and "does not exist" in m)
-
-
-def _charge_rpc_call(job: dict) -> dict:
-    r = supabase.rpc("charge_units", {
-        "p_user_id": job["uid"], "p_units": int(job["units"]), "p_reason": job["reason"],
-        "p_daily_units": int(job["daily"]), "p_max_debt": int(job["max_debt"]),
-        "p_tokens": int(job["tokens"]), "p_searches": int(job["searches"]),
-        "p_details": job["details"] or {}, "p_charge_id": job["charge_id"],
-    }).execute()
-    data = r.data
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    if not isinstance(data, dict):
-        raise RuntimeError("charge_units: bad response")
-    return data
-
-
-def _charge_units_py(u: dict, units: int, reason: str) -> Tuple[dict, int, str]:
-    """Charge an exact number of units (same debt rules as charge_for_ai_turn)."""
-    u = apply_24h_reset(u)
-    if is_unlimited(u):
-        return u, 0, "unlimited"
-    total0 = total_credits(u)
-    take = max(0, min(int(units), raw_balance(u) + max_debt_units()))
-    if take <= 0:
-        return u, 0, "no_credits"
-    u = deduct_credits(u, take, allow_debt=True)
-    return u, take, reason + ("+debt" if take > total0 else "")
-
-
-def _charge_legacy(uid: str, email: str, pages: int, searches: int, mode: str, tokens: int,
-                   details: dict, kind_prefix: str, units_override: Optional[int] = None) -> Tuple[dict, int, str]:
-    """Old path (CAS in Python) — used only until the SQL function is installed."""
-    def _fn(u):
-        u["total_tokens"] = (u.get("total_tokens") or 0) + max(0, tokens)
-        u["daily_tokens"] = (u.get("daily_tokens") or 0) + max(0, tokens)
-        if units_override is not None:
-            u, ch, rs = _charge_units_py(u, units_override, "resume")
-        else:
-            u, ch, rs = charge_for_ai_turn(u, pages, searches, mode)
-        return u, (ch, rs)
-    usage, (charged, reason) = update_usage_atomic(uid, email, _fn)
-    if int(charged) > 0:
-        ledger_log(uid, kind_prefix + str(reason), -int(charged), usage, searches, details)
-    usage["spent_24h"] = ledger_spent(uid, usage.get("last_reset_time"))
-    return usage, int(charged), str(reason)
-
-
-def charge_turn_atomic(uid: str, email: str, usage: Optional[dict], pages: int, searches: int, mode: str,
-                       tokens: int = 0, details: Optional[dict] = None, kind_prefix: str = "",
-                       charge_id: Optional[str] = None, units_override: Optional[int] = None) -> Tuple[dict, int, str]:
-    """Charge one AI turn. Returns (usage_after, charged_units, reason). Sync — run it with asyncio.to_thread.
-    `usage` = row read earlier (for VIP/daily-limit info); None -> it is read here."""
-    import uuid as _uuid
-    details = details or {}
-    if usage is None:
-        usage = get_or_create_user_usage(uid, email)
-    if not supabase or not uid or str(uid).startswith(("dev-", "anon-", "guest-")):
-        if units_override is not None:                                              # dev / guest: memory only
-            return _charge_units_py(dict(usage), units_override, "resume")
-        u, ch, rs = charge_for_ai_turn(dict(usage), pages, searches, mode)
-        return u, ch, rs
-    unlimited = is_unlimited(usage)
-    if unlimited:
-        units, reason = 0, "unlimited"
-    elif units_override is not None:
-        units, reason = max(0, int(units_override)), "resume"
-    else:
-        units, reason = turn_cost(pages, searches, mode)
-    job = {"uid": str(uid), "email": email or "", "units": units, "reason": kind_prefix + reason,
-           "daily": daily_units_for(usage), "max_debt": max_debt_units(), "tokens": max(0, int(tokens or 0)),
-           "searches": max(0, int(searches or 0)), "details": details,
-           "charge_id": charge_id or _uuid.uuid4().hex, "pages": pages, "mode": mode, "kind_prefix": kind_prefix,
-           "units_override": units_override,
-           "tries": 0, "first": time.time()}
-    usage_cache_drop(uid)
-    if units_override is not None and units <= 0 and not unlimited:
-        return dict(usage), 0, "none"
-    if not _CHARGE_RPC["ok"] and time.time() - _CHARGE_RPC["checked"] < 600:
-        return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix, units_override)
-    last_err = None
-    for attempt in range(3):
-        try:
-            res = _charge_rpc_call(job)
-            _CHARGE_RPC["ok"] = True
-            out = dict(usage)
-            for k in ("free_credits", "paid_credits", "last_reset_time"):
-                if k in res:
-                    out[k] = res[k]
-            out["slide_credits"] = int(out.get("free_credits") or 0) + int(out.get("paid_credits") or 0)
-            out["total_tokens"] = int(out.get("total_tokens") or 0) + job["tokens"]
-            out["daily_tokens"] = int(out.get("daily_tokens") or 0) + job["tokens"]
-            if "spent_units" in res:
-                out["spent_24h"] = int(res["spent_units"] or 0)
-            _cas_version(out, out.get("free_credits"), out.get("paid_credits"))
-            charged = int(res.get("charged") or 0)
-            rs = "unlimited" if unlimited else str(res.get("reason") or reason)
-            if rs.startswith(kind_prefix) and kind_prefix:
-                rs = rs[len(kind_prefix):]
-            return out, charged, rs
-        except Exception as e:
-            if _is_missing_rpc(e):
-                if _CHARGE_RPC["ok"]:
-                    print("[CHARGE] ⚠️ SQL funksiya public.charge_units yo'q — eski (CAS) yo'l ishlatiladi. "
-                          "SUPABASE_SCHEMA.sql 13-bo'limini Supabase SQL Editor'da ishga tushiring.")
-                _CHARGE_RPC.update(ok=False, checked=time.time())
-                return _charge_legacy(uid, email, pages, searches, mode, tokens, details, kind_prefix, units_override)
-            if "user_not_found" in str(e).lower():
-                raise
-            last_err = e
-            time.sleep(0.2 * (attempt + 1))
-    # DB is unreachable: do NOT give the turn away for free — queue it and retry in the background
-    _queue_pending_charge(job, last_err)
-    if units_override is not None:
-        u, ch, _ = _charge_units_py(dict(usage), units_override, "resume")
-    else:
-        u, ch, _ = charge_for_ai_turn(dict(usage), pages, searches, mode)           # best estimate for the UI
-    return u, ch, "charge_deferred"
-
-
-def _queue_pending_charge(job: dict, err: Optional[Exception]) -> None:
-    with _PENDING_LOCK:
-        if len(_PENDING_CHARGES) >= PENDING_CHARGES_MAX:
-            print(f"[CHARGE] ❌ navbat to'la — yechim yo'qoldi user={job['uid'][:8]} units={job['units']}")
-            return
-        _PENDING_CHARGES.append(job)
-    print(f"[CHARGE] ⚠️ baza javob bermadi, yechim navbatga qo'yildi user={job['uid'][:8]} "
-          f"units={job['units']} id={job['charge_id']} err={str(err)[:120]}")
-
-
-def retry_pending_charges() -> int:
-    """Retries queued charges (same charge_id -> never charged twice). Returns how many are still waiting."""
-    with _PENDING_LOCK:
-        jobs = list(_PENDING_CHARGES)
-        _PENDING_CHARGES.clear()
-    keep = []
-    for job in jobs:
-        try:
-            if _CHARGE_RPC["ok"]:
-                _charge_rpc_call(job)
-            else:
-                _charge_legacy(job["uid"], job["email"], job["pages"], job["searches"], job["mode"],
-                               job["tokens"], job["details"], job["kind_prefix"], job.get("units_override"))
-            usage_cache_drop(job["uid"])
-        except Exception as e:
-            if _is_missing_rpc(e):
-                _CHARGE_RPC.update(ok=False, checked=time.time())
-            job["tries"] += 1
-            if job["tries"] < 60 and time.time() - job["first"] < 86400:
-                keep.append(job)
-            else:
-                print(f"[CHARGE] ❌ yechim bekor qilindi (60 urinish) user={job['uid'][:8]} units={job['units']}")
-    with _PENDING_LOCK:
-        _PENDING_CHARGES[:0] = keep
-        return len(_PENDING_CHARGES)
-
-
-async def _pending_charges_loop():
-    while True:
-        await asyncio.sleep(60)
-        try:
-            if _PENDING_CHARGES:
-                left = await asyncio.to_thread(retry_pending_charges)
-                if left:
-                    print(f"[CHARGE] navbatda hali {left} ta yechim")
-        except Exception as e:
-            print(f"[CHARGE] retry loop: {str(e)[:120]}")
+_billing.configure(
+    supabase=lambda: supabase,
+    get_usage=lambda uid, email: get_or_create_user_usage(uid, email),
+    update_atomic=lambda *a, **k: update_usage_atomic(*a, **k),
+    ledger_log=lambda *a, **k: ledger_log(*a, **k),
+    ledger_spent=lambda *a, **k: ledger_spent(*a, **k),
+    cas_version=lambda *a, **k: _cas_version(*a, **k),
+)
+_auth.configure(supabase=lambda: supabase, hash_user_id=lambda v: hash_user_id(v))
 
 
 def calc_cost(model: str, inp: int, out: int) -> float:
@@ -1145,10 +957,23 @@ def _rate_limited(ip: str, path: str) -> bool:
 async def _security_middleware(request: Request, call_next):
     path = request.url.path
     ip = _client_ip(request)
+    rid = obs.new_request_id(request.headers.get("x-request-id"))       # Audit M4
+    obs.request_id_var.set(rid)
     if path.startswith("/api/") and _rate_limited(ip, path):
-        return JSONResponse({"error": "Juda ko'p so'rov. Biroz kuting."}, status_code=429, headers={"Retry-After": "30"})
-    resp = await call_next(request)
+        _metrics.inc("http_rate_limited_total", help="HTTP requests refused by the IP rate limit")
+        return JSONResponse({"error": "Juda ko'p so'rov. Biroz kuting.", "code": "RATE_LIMITED"}, status_code=429,
+                            headers={"Retry-After": "30", "X-Request-ID": rid})
+    _t0 = time.perf_counter()
+    try:
+        resp = await call_next(request)
+    except Exception as e:
+        obs.capture(e)
+        _metrics.inc("http_requests_total", {"status": "5xx"})
+        raise
+    _metrics.inc("http_requests_total", {"status": f"{resp.status_code // 100}xx"}, help="HTTP requests by status class")
+    _metrics.inc("http_request_seconds_sum", value=time.perf_counter() - _t0, help="Total HTTP handling time")
     h = resp.headers
+    h["X-Request-ID"] = rid
     h.setdefault("X-Content-Type-Options", "nosniff")
     # v43: Telegram Web/Desktop Mini App'ni iframe ichida ochadi -> faqat o'z domen va telegram ruxsat etiladi
     h.setdefault("Content-Security-Policy", "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://telegram.org")
@@ -1171,6 +996,17 @@ async def _security_middleware(request: Request, call_next):
     elif path in ("/", "/index.html"):
         h.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
     return resp
+
+@app.get("/metrics")
+def metrics_endpoint(request: Request):
+    """Audit M4: Prometheus metrics. Needs METRICS_TOKEN (Authorization: Bearer ...); without it -> 404."""
+    import hmac as _h
+    tok = os.environ.get("METRICS_TOKEN", "").strip()
+    got = (request.headers.get("authorization") or "")[7:].strip()
+    if not tok or not _h.compare_digest(tok, got):
+        raise HTTPException(404, "Not Found")
+    return Response(_metrics.render(), media_type="text/plain; version=0.0.4")
+
 
 @app.get("/healthz")
 def healthz():
@@ -1627,106 +1463,7 @@ def _merge_duplicates_once(uid: str, email: str) -> None:
         print(f"[MERGE] {email}: {str(e)[:160]}")
 
 
-AUTH_REVALIDATE_SEC = float(_env_int("AUTH_REVALIDATE_SEC", 600))
-_SESSION_OK: "OrderedDict[str, float]" = OrderedDict()   # "uid|session_id" -> last time Supabase Auth confirmed it
-_TOK_BAD: "OrderedDict[str, float]" = OrderedDict()      # token hash -> time it was found invalid (negative cache)
-_AUTH_DEGRADED = {"last_log": 0.0}
-
-
-def _auth_error_is_invalid(e: Exception) -> bool:
-    """Supabase Auth said "this token is bad" (vs. network error / rate limit / outage)."""
-    st = getattr(e, "status", None) or getattr(e, "status_code", None)
-    try:
-        st = int(st) if st is not None else None
-    except (TypeError, ValueError):
-        st = None
-    if st is not None:
-        return st in (400, 401, 403, 404, 422)
-    m = str(e).lower()
-    return any(w in m for w in ("invalid jwt", "jwt expired", "token is expired", "session_not_found",
-                                "session from session_id", "user_not_found", "user from sub claim"))
-
-
-def _server_get_user(token: str):
-    """(uid, email) | None (invalid). Raises on network errors."""
-    try:
-        r = supabase.auth.get_user(token)
-    except Exception as e:
-        if _auth_error_is_invalid(e):
-            return None
-        raise
-    if not r or not r.user:
-        return None
-    return str(r.user.id), r.user.email or ""
-
-
-def _mark_token_bad(tk: str) -> None:
-    with _TOK_LOCK:
-        _TOK_CACHE.pop(tk, None)
-        _TOK_BAD[tk] = time.time()
-        while len(_TOK_BAD) > 5000:
-            _TOK_BAD.popitem(last=False)
-
-
-def auth_user_cached(token: str):
-    """Audit H3/H4: token -> (uid, email), or None for an invalid token. Raises only if it cannot decide.
-    1) 60 s cache. 2) Signature/exp/aud/iss checked LOCALLY (backend/jwt_auth.py) — junk and expired tokens are
-    rejected with no network call. 3) Supabase Auth is still asked once per session every AUTH_REVALIDATE_SEC
-    (catches logout / ban / deleted user). If Supabase Auth is down, a token with a valid signature is accepted.
-    Without SUPABASE_URL / keys (or JWT_LOCAL_VERIFY=0) it works like before: one Supabase Auth call per 60 s."""
-    tk = hash_user_id(token)
-    now = time.time()
-    with _TOK_LOCK:
-        hit = _TOK_CACHE.get(tk)
-        bad = _TOK_BAD.get(tk)
-    if bad and now - bad < TOK_TTL:
-        return None
-    if hit and now - hit[2] < TOK_TTL:
-        return hit[0], hit[1]
-    try:
-        claims = jwt_auth.verify(token)
-        local = True
-    except jwt_auth.Unavailable:
-        claims, local = None, False
-    if local and claims is None:
-        _mark_token_bad(tk)
-        return None
-    if local:
-        uid, email = str(claims["sub"]), str(claims.get("email") or "")
-        sk = f"{uid}|{claims.get('session_id') or tk}"
-        with _TOK_LOCK:
-            last_ok = _SESSION_OK.get(sk, 0.0)
-        if now - last_ok >= AUTH_REVALIDATE_SEC:
-            try:
-                who = _server_get_user(token)
-            except Exception as e:
-                who = (uid, email)                              # Auth outage: trust the valid signature
-                if now - _AUTH_DEGRADED["last_log"] > 60:
-                    _AUTH_DEGRADED["last_log"] = now
-                    print(f"[AUTH] ⚠️ Supabase Auth javob bermadi, lokal JWT tekshiruvi ishlatildi: {str(e)[:120]}")
-            else:
-                if not who or who[0] != uid:
-                    with _TOK_LOCK:
-                        _SESSION_OK.pop(sk, None)
-                    _mark_token_bad(tk)
-                    return None
-                with _TOK_LOCK:
-                    _SESSION_OK[sk] = now
-                    _SESSION_OK.move_to_end(sk)
-                    while len(_SESSION_OK) > 50000:
-                        _SESSION_OK.popitem(last=False)
-    else:
-        who = _server_get_user(token)
-        if not who:
-            _mark_token_bad(tk)
-            return None
-        uid, email = who
-    with _TOK_LOCK:
-        _TOK_CACHE[tk] = (uid, email, now)
-        while len(_TOK_CACHE) > 5000:
-            _TOK_CACHE.popitem(last=False)
-    return uid, email
-
+# Audit M5: auth lives in backend/services/auth.py (names re-exported below for old imports/tests)
 
 @app.get("/api/user/usage")
 def user_usage(request: Request, token: str = "", fresh: int = 0):
@@ -1746,7 +1483,9 @@ def user_usage(request: Request, token: str = "", fresh: int = 0):
         uid, email = who
         cached = usage_cache_get(uid, fresh=bool(fresh))
         if cached is not None:
+            _metrics.inc("usage_cache_total", {"result": "hit"}, help="/api/user/usage cache")
             return cached
+        _metrics.inc("usage_cache_total", {"result": "miss"})
         _merge_duplicates_once(uid, email)
         u = get_or_create_user_usage(uid, email)
         if _abuse.check_new_account(supabase, uid, u, _safe_client_ip(request), _SCALING_HMAC_SECRET):   # Audit M2
@@ -2238,6 +1977,7 @@ async def dodo_webhook(request: Request):
     elif not _verify_standard_webhook(d["secret"], request.headers.get("webhook-id") or "",
                                       request.headers.get("webhook-timestamp") or "",
                                       request.headers.get("webhook-signature") or "", raw):
+        _metrics.inc("webhook_events_total", {"result": "bad_signature"}, help="Dodo webhook events by result")
         print("[DODO WEBHOOK] noto'g'ri imzo yoki eskirgan timestamp — rad etildi.")
         return JSONResponse({"error": "invalid signature"}, status_code=401)
     try:
@@ -2286,6 +2026,7 @@ async def dodo_webhook(request: Request):
             u = await _credit_user(user_id, email, pay_key, pages, +1, etype, payment_id)
             if u is None:
                 return {"ok": True, "duplicate": True}
+            _metrics.inc("webhook_events_total", {"result": "credited"})
             print(f"[DODO WEBHOOK] {etype}: +{pages} -> {user_id} (payment={payment_id}, mode={d['mode']})")
             return {"ok": True, "user_id": user_id, "paid_credits": u.get("paid_credits"), "pages": pages}
 
@@ -2311,10 +2052,13 @@ async def dodo_webhook(request: Request):
         u = await _credit_user(user_id, "", key, pages, -1, etype, payment_id)
         if u is None:
             return {"ok": True, "duplicate": True}
+        _metrics.inc("webhook_events_total", {"result": "refunded"})
         print(f"[DODO WEBHOOK] {etype}: -{pages} -> {user_id} (payment={payment_id})")
         return {"ok": True, "user_id": user_id, "paid_credits": u.get("paid_credits"), "pages": pages}
     except Exception as e:
         # 5xx -> Dodo webhookni qayta yuboradi (idempotent, shuning uchun xavfsiz)
+        _metrics.inc("webhook_events_total", {"result": "error"})
+        obs.capture(e)
         print(f"[DODO WEBHOOK] xato: {type(e).__name__}: {str(e)[:200]}")
         return JSONResponse({"error": "temporary_error"}, status_code=500)
 
@@ -3311,10 +3055,248 @@ def _ai_inflight_release(uid: str) -> None:
     else:
         _AI_INFLIGHT.pop(uid, None)
 
-# ---- token -> foydalanuvchi keshi (har xabarda Supabase Auth'ga HTTP so'rov ketmasin) ----
-_TOK_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
-_TOK_LOCK = threading.Lock()          # accessed from the thread pool (HTTP) and the event loop (WS)
-TOK_TTL = 60.0
+
+class _Turn:
+    """Audit M5: mutable result of one AI turn (filled by _run_ai_turn)."""
+    __slots__ = ("full_reply", "usage_meta", "stream_err", "finish_reason", "client_gone", "n_searches")
+
+    def __init__(self):
+        self.full_reply = ""
+        self.usage_meta = None
+        self.stream_err = None
+        self.finish_reason = None
+        self.client_gone = False
+        self.n_searches = 0
+
+
+async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode: str, prompt: str, user_content: str,
+                       messages: List[dict], plan_slides: Any, plan_index: Any, uid: Any, data: Dict[str, Any]) -> None:
+    """Audit M5: the AI part of one WebSocket turn, moved out of ws_chat: queue slot, deep-model presearch,
+    streaming, tool (image search) rounds, turn deadline (H6) and stream close (C3). Results go into `t`."""
+    client = None
+    try:
+
+        client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
+        async with _ds_slot(websocket):
+            # Audit H6: a hard deadline for the WHOLE turn (presearch + all tool rounds). Before, one turn could hold
+            # an AI slot for up to 600 s x 5 rounds and block everybody in the queue. On timeout the partial answer is
+            # kept (only finished actions are charged) and the client shows «Davom ettirish».
+            async with asyncio.timeout(AI_TURN_DEADLINE_DEEP if model == "deepseek-reasoner" else AI_TURN_DEADLINE_FAST):
+                _pre_stats: Dict[str, int] = {}
+                tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
+                if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
+                    try:
+                        _ctx, _want = user_content or "", _wants_images(prompt or "")
+                        if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
+                            _cur = plan_slides[int(plan_index)] or {}
+                            _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
+                            _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
+                        if _want:
+                            _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else _presearch_count(user_content or prompt or ""), websocket, _pre_stats,
+                                                           kind=_presearch_kind(prompt or ""))
+                            if _extra:
+                                messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
+                    except Exception as _pe:
+                        print(f"[DEEP-IMG] {type(_pe).__name__}: {str(_pe)[:80]}")
+                msgs = messages
+                _bad_chunk_logged = False
+                t.n_searches = int(_pre_stats.get("searches") or 0)
+                _dsml_retried = False
+                _researched = False
+                agg_in = agg_out = agg_tot = 0
+                # v29: qidiruvdan oldin yozilgan matn (PART A) O'CHIRILMAYDI va qayta yozdirilmaydi
+                shown_text = False      # foydalanuvchi allaqachon matn ko'rdi
+                _think_chars, _think_t0 = 0, time.monotonic()
+                _think_last = 0.0
+                sep_pending = False     # keyingi raundning matni oldiga bo'sh qator qo'yiladi
+                try:
+                    for _round in range(MAX_TOOL_ROUNDS + 1):
+                        kwargs = {
+                            "model": model,
+                            "messages": msgs,
+                            "stream": True,
+                            "stream_options": {"include_usage": True},
+                            "max_tokens": 16384,
+                        }
+                        if model != "deepseek-reasoner":
+                            kwargs["temperature"] = 0.7
+                        if tools_on and _round < MAX_TOOL_ROUNDS and t.n_searches < MAX_SEARCHES_PER_TURN:
+                            kwargs["tools"] = SEARCH_TOOLS
+                            kwargs["tool_choice"] = "auto"
+
+                        try:
+                            kwargs["extra_body"] = {"user_id": hash_user_id(uid)}
+                        except Exception:
+                            kwargs["extra_body"] = {"user_id": str(uid or "anon")[:32]}
+                        round_text = ""
+                        calls: Dict[int, dict] = {}
+                        stream = await client.chat.completions.create(**kwargs)
+                        # Audit C3: the stream is closed on ANY exit (user closed tab -> WebSocketDisconnect),
+                        # so DeepSeek stops generating (no tokens paid for nobody) and the pooled connection is freed at once.
+                        try:
+                            async for chunk in stream:
+                                try:
+                                    choice = chunk.choices[0] if chunk.choices else None
+                                    if choice is not None:
+                                        fr = getattr(choice, "finish_reason", None)
+                                        if fr:
+                                            t.finish_reason = fr
+                                        delta = choice.delta
+                                        _rc = getattr(delta, "reasoning_content", None) if delta else None
+                                        if _rc:
+                                            # v54: Chuqur AI avval uzoq «o'ylaydi» — Tez AI kabi jonli holat ko'rinsin (sukut bo'lmasin)
+                                            _think_chars += len(_rc)
+                                            _now_t = time.monotonic()
+                                            if _now_t - _think_last >= 1.0:
+                                                _think_last = _now_t
+                                                try:
+                                                    await websocket.send_json({"type": "thinking", "chars": _think_chars,
+                                                                               "sec": int(_now_t - _think_t0)})
+                                                except (WebSocketDisconnect, RuntimeError):
+                                                    raise WebSocketDisconnect()
+                                        txt = getattr(delta, "content", None) if delta else None
+                                        if txt:
+                                            if sep_pending and txt.strip():
+                                                sep_pending = False
+                                                t.full_reply += "\n\n"
+                                                try:
+                                                    await websocket.send_json({"type": "chunk", "text": "\n\n"})
+                                                except (WebSocketDisconnect, RuntimeError):
+                                                    raise WebSocketDisconnect()
+                                            round_text += txt
+                                            t.full_reply += txt
+                                            try:
+                                                await websocket.send_json({"type": "chunk", "text": txt})
+                                            except (WebSocketDisconnect, RuntimeError):
+                                                raise WebSocketDisconnect()
+                                        for tc in (getattr(delta, "tool_calls", None) or []):
+                                            slot = calls.setdefault(int(getattr(tc, "index", 0) or 0), {"id": "", "name": "", "args": ""})
+                                            if getattr(tc, "id", None):
+                                                slot["id"] = tc.id
+                                            fn = getattr(tc, "function", None)
+                                            if fn is not None:
+                                                if getattr(fn, "name", None):
+                                                    slot["name"] += fn.name
+                                                if getattr(fn, "arguments", None):
+                                                    slot["args"] += fn.arguments
+                                    if getattr(chunk, "usage", None):
+                                        u_ = chunk.usage
+                                        agg_in += getattr(u_, "prompt_tokens", 0) or 0
+                                        agg_out += getattr(u_, "completion_tokens", 0) or 0
+                                        agg_tot += getattr(u_, "total_tokens", 0) or ((getattr(u_, "prompt_tokens", 0) or 0) + (getattr(u_, "completion_tokens", 0) or 0))
+                                except WebSocketDisconnect:
+                                    raise
+                                except Exception as _ce:            # Audit M4: no more silent skips
+                                    _metrics.inc("ai_bad_chunks_total", help="Stream chunks that could not be parsed")
+                                    if not _bad_chunk_logged:
+                                        _bad_chunk_logged = True
+                                        print(f"[AI] ⚠️ bo'lak o'qilmadi: {type(_ce).__name__}: {str(_ce)[:120]}")
+                                    continue
+                        finally:
+                            await _close_ai_stream(stream)
+                        if not calls and model == "deepseek-reasoner" and not _dsml_retried and _DSML_RE.search(round_text or "") and "```json" not in (round_text or ""):
+                            _dsml_retried = True           # model mavjud bo'lmagan tool'ni chaqirmoqchi bo'ldi — JSON'siz to'xtab qolmasin
+                            print("[DEEP] DSML/tool matni — qayta so'raladi")
+                            msgs = list(msgs) + [
+                                {"role": "assistant", "content": _DSML_RE.split(round_text)[0].strip()[:1500] or "Rasmlar tayyor."},
+                                {"role": "user", "content": "Tool mavjud emas. Rasm kerak bo'lsa [TAYYOR RASMLAR] dagi URL'dan foydalaning, bo'lmasa rasmsiz yozing. "
+                                                            "Hozir FAQAT bitta ```json blok bilan javob bering (actions bilan), qidirishni eslatmang."}]
+                            sep_pending = True
+                            continue
+                        if not calls:
+                            break
+
+                        # v29: eski kod bu yerda matnni o'chirib ("reset") qidiruvdan keyin QAYTA yozdirardi —
+                        # javob yo'qolib, keyin sezdirmasdan ikkinchi marta chiqardi. Endi matn qoladi.
+                        if round_text.strip():
+                            shown_text = True
+                            sep_pending = True
+                        ordered = [calls[k] for k in sorted(calls)]
+                        msgs = list(msgs) + [{
+                            "role": "assistant",
+                            "content": round_text or None,
+                            "tool_calls": [{"id": c["id"] or f"call_{i}", "type": "function",
+                                            "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
+                                           for i, c in enumerate(ordered)],
+                        }]
+                        # v55: HAMMA qidiruvlar bir vaqtda (parallel), topilmaganlari ham bitta to'plamda qayta qidiriladi.
+                        # Foydalanuvchiga esa qatorlar ketma-ket (tez) paydo bo'ladi — 1 tadan qidirayotgandek.
+                        _jobs, _job_of = [], {}
+                        for i, c in enumerate(ordered):
+                            try:
+                                a = json.loads(c["args"] or "{}")
+                            except Exception:
+                                a = {}
+                            q_ = str(a.get("query") or "").strip()
+                            kind_ = _tool_search_kind(q_, a.get("kind"))
+                            if c["name"] == "search_images" and q_ and t.n_searches < MAX_SEARCHES_PER_TURN:
+                                t.n_searches += 1
+                                _job_of[i] = len(_jobs)
+                                _jobs.append((q_, kind_))
+                        _found_all = await _search_batch(websocket, _jobs, client_search=bool(data.get("client_search")),
+                                                         n0=t.n_searches - len(_jobs))
+                        for i, c in enumerate(ordered):
+                            if i not in _job_of:
+                                result = {"error": "qidiruv bajarilmadi", "results": []}
+                            else:
+                                q_, kind_ = _jobs[_job_of[i]]
+                                found = _found_all[_job_of[i]]
+                                result = {"query": q_, "kind": kind_, "results": found, "note": _search_note(kind_, bool(found))}
+                            msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
+                                         "content": json.dumps(result, ensure_ascii=False)[:6000]})
+
+                        # v59: topilmagan rasmlar bo'lsa — AI ularni BOSHQA so'z bilan yana bir marta qidiradi (keyin yasaydi)
+                        _missing = [q_ for (q_, k_), f_ in zip(_jobs, _found_all) if not f_ and k_ != "gif"]
+                        if (_missing and _round + 1 < MAX_TOOL_ROUNDS and t.n_searches < MAX_SEARCHES_PER_TURN
+                                and not _researched):
+                            _researched = True
+                            msgs.append({
+                                "role": "user",
+                                "content": (
+                                    "Bu so'rovlar bo'yicha rasm TOPILMADI: " + "; ".join(f'"{m}"' for m in _missing[:6]) + ". "
+                                    "Faqat ular uchun search_images ni BOSHQA, soddaroq va aniqroq INGLIZCHA so'rov bilan yana bir marta chaqiring "
+                                    "(2-3 so'z, aniq predmet). Topilgan rasmlarni qayta qidirmang. Hech qanday matn yozmang."
+                                ),
+                            })
+                            t.finish_reason = None
+                            continue
+                        if t.n_searches > 0:
+                            if shown_text:
+                                _text_rule = (
+                                    "Foydalanuvchi PART A matnini ALLAQACHON ko'rdi — uni va boshqa hech qanday matnni QAYTA YOZMANG. "
+                                    "Faqat bitta ```json blok chiqaring. "
+                                )
+                            else:
+                                _text_rule = (
+                                    "Avval 1–2 jumlalik PART A matn, undan keyin bitta ```json blok yozing. "
+                                )
+                            msgs.append({
+                                "role": "user",
+                                "content": (
+                                    "Qidiruv yakunlandi. Endi HECH QANDAY tool chaqirmang. "
+                                    + _text_rule +
+                                    "Topilgan rasm/GIF URL laridan FAOLIYAT bilan foydalanib, foydalanuvchi so'roviga TO'LIQ mos "
+                                    "```json\n{\"actions\":[...]}\n``` blokini yozing. "
+                                    "Majburiy actionlar: replace_slide yoki insert_slide (har bir so'ralgan slayd uchun alohida), "
+                                    "set_background_url (fon uchun), place_image_url yoki add_gif (har bir rasm/GIF uchun). "
+                                    "Har bir slaydda so'ralgan miqdorda rasm va GIF bo'lsin. "
+                                    "Kamida so'ralgan slaydlar sonicha insert/replace action bo'lsin."
+                                ),
+                            })
+                        t.finish_reason = None
+                except WebSocketDisconnect:
+                    t.client_gone = True
+                except Exception as e:
+                    t.stream_err = e
+                finally:
+                    if agg_tot or agg_in or agg_out:
+                        from types import SimpleNamespace as _NS
+                        t.usage_meta = _NS(prompt_tokens=agg_in, completion_tokens=agg_out, total_tokens=agg_tot or (agg_in + agg_out))
+    except WebSocketDisconnect:
+        t.client_gone = True
+    except Exception as e:
+        t.stream_err = t.stream_err or e
+
 
 # ---- Audit H5: a WebSocket that can "detach" (client gone -> the AI turn finishes in the background) ----
 RESUME_DETACH_SEC = float(_env_int("RESUME_DETACH_SEC", 120)) if os.environ.get("RESUME_DETACH_SEC", "") != "0" else 0.0
@@ -3392,6 +3374,7 @@ async def _handle_resume(websocket, data: dict) -> None:
         return
     uid, email = who
     e = await asyncio.to_thread(_resume.lookup, rid, uid)
+    _metrics.inc("resume_requests_total", {"status": (e or {}).get("status") or "none"}, help="Resume requests by state")
     if not e or e.get("status") == "aborted":
         await websocket.send_json({"type": "resume_none", "request_id": rid})
         return
@@ -3452,6 +3435,7 @@ async def ws_chat(websocket: WebSocket):
                 continue
             if data.get("type") == "search_result":
                 continue
+            obs.request_id_var.set(obs.new_request_id(str(data.get("request_id") or "")))   # Audit M4
             if data.get("type") == "resume":            # Audit H5
                 await _handle_resume(websocket, data)
                 continue
@@ -3492,6 +3476,7 @@ async def ws_chat(websocket: WebSocket):
                         continue
                 _wait = _user_rate_hit(str(uid), "plan" if mode == "plan" else ("generate" if mode == "generate" else "chat"))
                 if _wait:
+                    _metrics.inc("ai_turns_total", {"result": "rate_limited"})
                     await websocket.send_json({"type": "error", "code": "RATE_LIMITED", "retry_after": _wait,
                                                "message": f"Juda tez-tez so'rov yuboryapsiz. {_wait} soniyadan keyin qayta urinib ko'ring."})
                     continue
@@ -3510,6 +3495,7 @@ async def ws_chat(websocket: WebSocket):
                 bill_mode = mode_for_model(model)
                 bal_units = total_credits(usage)
                 if not can_afford(usage, bill_mode):
+                    _metrics.inc("ai_turns_total", {"result": "limit"})
                     payload = usage_payload(usage)
                     _alt = ""
                     if bill_mode == "deep" and can_afford(usage, "fast"):
@@ -3556,9 +3542,9 @@ async def ws_chat(websocket: WebSocket):
                 usage_meta = None
                 stream_err = None
                 finish_reason = None
-                client = None
                 client_gone = False
                 if not _ai_inflight_acquire(str(uid)):
+                    _metrics.inc("ai_turns_total", {"result": "busy"})
                     await websocket.send_json({"type": "error", "code": "AI_BUSY",
                                                "message": "Oldingi so'rovingiz hali bajarilmoqda (boshqa oynada ham bo'lishi mumkin). Tugashini kuting."})
                     continue
@@ -3574,223 +3560,12 @@ async def ws_chat(websocket: WebSocket):
                     websocket.begin_turn(True, _on_detach)
                 else:
                     websocket.begin_turn(False)
-                try:
-
-                    client = _deepseek_client(api_key, config.get("deepseek_base_url") or "https://api.deepseek.com")
-                    async with _ds_slot(websocket):
-                        # Audit H6: a hard deadline for the WHOLE turn (presearch + all tool rounds). Before, one turn could hold
-                        # an AI slot for up to 600 s x 5 rounds and block everybody in the queue. On timeout the partial answer is
-                        # kept (only finished actions are charged) and the client shows «Davom ettirish».
-                        async with asyncio.timeout(AI_TURN_DEADLINE_DEEP if model == "deepseek-reasoner" else AI_TURN_DEADLINE_FAST):
-                            _pre_stats: Dict[str, int] = {}
-                            tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
-                            if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
-                                try:
-                                    _ctx, _want = user_content or "", _wants_images(prompt or "")
-                                    if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
-                                        _cur = plan_slides[int(plan_index)] or {}
-                                        _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
-                                        _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
-                                    if _want:
-                                        _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else _presearch_count(user_content or prompt or ""), websocket, _pre_stats,
-                                                                       kind=_presearch_kind(prompt or ""))
-                                        if _extra:
-                                            messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
-                                except Exception as _pe:
-                                    print(f"[DEEP-IMG] {type(_pe).__name__}: {str(_pe)[:80]}")
-                            msgs = messages
-                            n_searches = int(_pre_stats.get("searches") or 0)
-                            _dsml_retried = False
-                            _researched = False
-                            agg_in = agg_out = agg_tot = 0
-                            # v29: qidiruvdan oldin yozilgan matn (PART A) O'CHIRILMAYDI va qayta yozdirilmaydi
-                            shown_text = False      # foydalanuvchi allaqachon matn ko'rdi
-                            _think_chars, _think_t0 = 0, time.monotonic()
-                            _think_last = 0.0
-                            sep_pending = False     # keyingi raundning matni oldiga bo'sh qator qo'yiladi
-                            try:
-                                for _round in range(MAX_TOOL_ROUNDS + 1):
-                                    kwargs = {
-                                        "model": model,
-                                        "messages": msgs,
-                                        "stream": True,
-                                        "stream_options": {"include_usage": True},
-                                        "max_tokens": 16384,
-                                    }
-                                    if model != "deepseek-reasoner":
-                                        kwargs["temperature"] = 0.7
-                                    if tools_on and _round < MAX_TOOL_ROUNDS and n_searches < MAX_SEARCHES_PER_TURN:
-                                        kwargs["tools"] = SEARCH_TOOLS
-                                        kwargs["tool_choice"] = "auto"
-
-                                    try:
-                                        kwargs["extra_body"] = {"user_id": hash_user_id(uid)}
-                                    except Exception:
-                                        kwargs["extra_body"] = {"user_id": str(uid or "anon")[:32]}
-                                    round_text = ""
-                                    calls: Dict[int, dict] = {}
-                                    stream = await client.chat.completions.create(**kwargs)
-                                    # Audit C3: the stream is closed on ANY exit (user closed tab -> WebSocketDisconnect),
-                                    # so DeepSeek stops generating (no tokens paid for nobody) and the pooled connection is freed at once.
-                                    try:
-                                        async for chunk in stream:
-                                            try:
-                                                choice = chunk.choices[0] if chunk.choices else None
-                                                if choice is not None:
-                                                    fr = getattr(choice, "finish_reason", None)
-                                                    if fr:
-                                                        finish_reason = fr
-                                                    delta = choice.delta
-                                                    _rc = getattr(delta, "reasoning_content", None) if delta else None
-                                                    if _rc:
-                                                        # v54: Chuqur AI avval uzoq «o'ylaydi» — Tez AI kabi jonli holat ko'rinsin (sukut bo'lmasin)
-                                                        _think_chars += len(_rc)
-                                                        _now_t = time.monotonic()
-                                                        if _now_t - _think_last >= 1.0:
-                                                            _think_last = _now_t
-                                                            try:
-                                                                await websocket.send_json({"type": "thinking", "chars": _think_chars,
-                                                                                           "sec": int(_now_t - _think_t0)})
-                                                            except (WebSocketDisconnect, RuntimeError):
-                                                                raise WebSocketDisconnect()
-                                                    txt = getattr(delta, "content", None) if delta else None
-                                                    if txt:
-                                                        if sep_pending and txt.strip():
-                                                            sep_pending = False
-                                                            full_reply += "\n\n"
-                                                            try:
-                                                                await websocket.send_json({"type": "chunk", "text": "\n\n"})
-                                                            except (WebSocketDisconnect, RuntimeError):
-                                                                raise WebSocketDisconnect()
-                                                        round_text += txt
-                                                        full_reply += txt
-                                                        try:
-                                                            await websocket.send_json({"type": "chunk", "text": txt})
-                                                        except (WebSocketDisconnect, RuntimeError):
-                                                            raise WebSocketDisconnect()
-                                                    for tc in (getattr(delta, "tool_calls", None) or []):
-                                                        slot = calls.setdefault(int(getattr(tc, "index", 0) or 0), {"id": "", "name": "", "args": ""})
-                                                        if getattr(tc, "id", None):
-                                                            slot["id"] = tc.id
-                                                        fn = getattr(tc, "function", None)
-                                                        if fn is not None:
-                                                            if getattr(fn, "name", None):
-                                                                slot["name"] += fn.name
-                                                            if getattr(fn, "arguments", None):
-                                                                slot["args"] += fn.arguments
-                                                if getattr(chunk, "usage", None):
-                                                    u_ = chunk.usage
-                                                    agg_in += getattr(u_, "prompt_tokens", 0) or 0
-                                                    agg_out += getattr(u_, "completion_tokens", 0) or 0
-                                                    agg_tot += getattr(u_, "total_tokens", 0) or ((getattr(u_, "prompt_tokens", 0) or 0) + (getattr(u_, "completion_tokens", 0) or 0))
-                                            except WebSocketDisconnect:
-                                                raise
-                                            except Exception:
-                                                continue
-                                    finally:
-                                        await _close_ai_stream(stream)
-                                    if not calls and model == "deepseek-reasoner" and not _dsml_retried and _DSML_RE.search(round_text or "") and "```json" not in (round_text or ""):
-                                        _dsml_retried = True           # model mavjud bo'lmagan tool'ni chaqirmoqchi bo'ldi — JSON'siz to'xtab qolmasin
-                                        print("[DEEP] DSML/tool matni — qayta so'raladi")
-                                        msgs = list(msgs) + [
-                                            {"role": "assistant", "content": _DSML_RE.split(round_text)[0].strip()[:1500] or "Rasmlar tayyor."},
-                                            {"role": "user", "content": "Tool mavjud emas. Rasm kerak bo'lsa [TAYYOR RASMLAR] dagi URL'dan foydalaning, bo'lmasa rasmsiz yozing. "
-                                                                        "Hozir FAQAT bitta ```json blok bilan javob bering (actions bilan), qidirishni eslatmang."}]
-                                        sep_pending = True
-                                        continue
-                                    if not calls:
-                                        break
-
-                                    # v29: eski kod bu yerda matnni o'chirib ("reset") qidiruvdan keyin QAYTA yozdirardi —
-                                    # javob yo'qolib, keyin sezdirmasdan ikkinchi marta chiqardi. Endi matn qoladi.
-                                    if round_text.strip():
-                                        shown_text = True
-                                        sep_pending = True
-                                    ordered = [calls[k] for k in sorted(calls)]
-                                    msgs = list(msgs) + [{
-                                        "role": "assistant",
-                                        "content": round_text or None,
-                                        "tool_calls": [{"id": c["id"] or f"call_{i}", "type": "function",
-                                                        "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
-                                                       for i, c in enumerate(ordered)],
-                                    }]
-                                    # v55: HAMMA qidiruvlar bir vaqtda (parallel), topilmaganlari ham bitta to'plamda qayta qidiriladi.
-                                    # Foydalanuvchiga esa qatorlar ketma-ket (tez) paydo bo'ladi — 1 tadan qidirayotgandek.
-                                    _jobs, _job_of = [], {}
-                                    for i, c in enumerate(ordered):
-                                        try:
-                                            a = json.loads(c["args"] or "{}")
-                                        except Exception:
-                                            a = {}
-                                        q_ = str(a.get("query") or "").strip()
-                                        kind_ = _tool_search_kind(q_, a.get("kind"))
-                                        if c["name"] == "search_images" and q_ and n_searches < MAX_SEARCHES_PER_TURN:
-                                            n_searches += 1
-                                            _job_of[i] = len(_jobs)
-                                            _jobs.append((q_, kind_))
-                                    _found_all = await _search_batch(websocket, _jobs, client_search=bool(data.get("client_search")),
-                                                                     n0=n_searches - len(_jobs))
-                                    for i, c in enumerate(ordered):
-                                        if i not in _job_of:
-                                            result = {"error": "qidiruv bajarilmadi", "results": []}
-                                        else:
-                                            q_, kind_ = _jobs[_job_of[i]]
-                                            found = _found_all[_job_of[i]]
-                                            result = {"query": q_, "kind": kind_, "results": found, "note": _search_note(kind_, bool(found))}
-                                        msgs.append({"role": "tool", "tool_call_id": c["id"] or f"call_{i}",
-                                                     "content": json.dumps(result, ensure_ascii=False)[:6000]})
-
-                                    # v59: topilmagan rasmlar bo'lsa — AI ularni BOSHQA so'z bilan yana bir marta qidiradi (keyin yasaydi)
-                                    _missing = [q_ for (q_, k_), f_ in zip(_jobs, _found_all) if not f_ and k_ != "gif"]
-                                    if (_missing and _round + 1 < MAX_TOOL_ROUNDS and n_searches < MAX_SEARCHES_PER_TURN
-                                            and not _researched):
-                                        _researched = True
-                                        msgs.append({
-                                            "role": "user",
-                                            "content": (
-                                                "Bu so'rovlar bo'yicha rasm TOPILMADI: " + "; ".join(f'"{m}"' for m in _missing[:6]) + ". "
-                                                "Faqat ular uchun search_images ni BOSHQA, soddaroq va aniqroq INGLIZCHA so'rov bilan yana bir marta chaqiring "
-                                                "(2-3 so'z, aniq predmet). Topilgan rasmlarni qayta qidirmang. Hech qanday matn yozmang."
-                                            ),
-                                        })
-                                        finish_reason = None
-                                        continue
-                                    if n_searches > 0:
-                                        if shown_text:
-                                            _text_rule = (
-                                                "Foydalanuvchi PART A matnini ALLAQACHON ko'rdi — uni va boshqa hech qanday matnni QAYTA YOZMANG. "
-                                                "Faqat bitta ```json blok chiqaring. "
-                                            )
-                                        else:
-                                            _text_rule = (
-                                                "Avval 1–2 jumlalik PART A matn, undan keyin bitta ```json blok yozing. "
-                                            )
-                                        msgs.append({
-                                            "role": "user",
-                                            "content": (
-                                                "Qidiruv yakunlandi. Endi HECH QANDAY tool chaqirmang. "
-                                                + _text_rule +
-                                                "Topilgan rasm/GIF URL laridan FAOLIYAT bilan foydalanib, foydalanuvchi so'roviga TO'LIQ mos "
-                                                "```json\n{\"actions\":[...]}\n``` blokini yozing. "
-                                                "Majburiy actionlar: replace_slide yoki insert_slide (har bir so'ralgan slayd uchun alohida), "
-                                                "set_background_url (fon uchun), place_image_url yoki add_gif (har bir rasm/GIF uchun). "
-                                                "Har bir slaydda so'ralgan miqdorda rasm va GIF bo'lsin. "
-                                                "Kamida so'ralgan slaydlar sonicha insert/replace action bo'lsin."
-                                            ),
-                                        })
-                                    finish_reason = None
-                            except WebSocketDisconnect:
-                                client_gone = True
-                            except Exception as e:
-                                stream_err = e
-                            finally:
-                                if agg_tot or agg_in or agg_out:
-                                    from types import SimpleNamespace as _NS
-                                    usage_meta = _NS(prompt_tokens=agg_in, completion_tokens=agg_out, total_tokens=agg_tot or (agg_in + agg_out))
-                except WebSocketDisconnect:
-                    client_gone = True
-                except Exception as e:
-                    stream_err = stream_err or e
+                _t = _Turn()                                   # Audit M5: AI part lives in _run_ai_turn
+                await _run_ai_turn(websocket, _t, api_key=api_key, model=model, mode=mode, prompt=prompt,
+                                   user_content=user_content, messages=messages, plan_slides=plan_slides,
+                                   plan_index=plan_index, uid=uid, data=data)
+                full_reply, usage_meta, stream_err = _t.full_reply, _t.usage_meta, _t.stream_err
+                finish_reason, client_gone, n_searches = _t.finish_reason, _t.client_gone, _t.n_searches
                 if client_gone and not full_reply.strip():
                     if _rid:
                         _resume.abort(_rid, str(uid), websocket.detached)
@@ -3799,19 +3574,27 @@ async def ws_chat(websocket: WebSocket):
                     if _rid:
                         _resume.abort(_rid, str(uid), websocket.detached)
                     err = str(stream_err).lower()
+                    _err_code = "AI_ERROR"
                     if isinstance(stream_err, TimeoutError):
+                        _err_code = "AI_TIMEOUT"
                         msg = "AI javobi juda uzoq davom etdi va to'xtatildi. Varaq yechilmadi — so'rovni qisqaroq qilib qayta yuboring."
                     elif "429" in err or "rate" in err or "quota" in err:
+                        _err_code = "AI_UPSTREAM_LIMIT"
                         msg = "AI xizmati limiti tugadi. Birozdan so'ng qayta urinib ko'ring."
                     elif "401" in err or "auth" in err or "api key" in err:
                         msg = "API kalit xato. Admin panel orqali tekshiring."
                     elif "503" in err or "overloaded" in err:
+                        _err_code = "AI_BUSY_UPSTREAM"
                         msg = "AI serveri band. Keyinroq urinib ko'ring."
                     else:
                         print(f"[AI] stream xatosi: {str(stream_err)[:300]}")
                         msg = "AI xizmatida xatolik yuz berdi. Qayta urinib ko'ring."
                     _ai_inflight_release(_held_uid); _held_uid = None
-                    await websocket.send_json({"type": "error", "message": msg})
+                    _metrics.inc("ai_turns_total", {"result": "timeout" if isinstance(stream_err, TimeoutError) else "error"},
+                                 help="AI turns by result")
+                    if not isinstance(stream_err, TimeoutError):
+                        obs.capture(stream_err)
+                    await websocket.send_json({"type": "error", "code": _err_code, "message": msg})
                     continue
 
                 _stream_text = full_reply                    # Audit H5: exactly what was streamed (before the GIF fix)
@@ -3860,6 +3643,8 @@ async def ws_chat(websocket: WebSocket):
                             mode_for_model(model), tot,
                             {"pages_needed": int(pages_from_actions), "breakdown": pages_breakdown[:20]})
                 except Exception as _ce:
+                    _metrics.inc("ai_charge_failures_total", help="AI turns whose charge failed")
+                    obs.capture(_ce)
                     print(f"[MONITORING] ❌ charge: {type(_ce).__name__}: {str(_ce)[:200]}")
                     charge_reason = "charge_error"
                     usage = await asyncio.to_thread(get_or_create_user_usage, uid, email)
@@ -3901,6 +3686,7 @@ async def ws_chat(websocket: WebSocket):
                     await asyncio.to_thread(_resume.finish, _rid, str(uid), stream_text=_stream_text, end_payload=_end,
                                             extra_units=_extra_units, mode=mode_for_model(model),
                                             was_detached=websocket.detached)
+                _metrics.inc("ai_turns_total", {"result": "detached" if websocket.detached else str(finish_reason)})
                 if websocket.detached:
                     print(f"[RESUME] fonda tugadi user={str(uid)[:8]} id={_rid} extra_units={_extra_units}")
                     raise WebSocketDisconnect()
@@ -3915,6 +3701,8 @@ async def ws_chat(websocket: WebSocket):
                 if _held_uid:
                     _ai_inflight_release(_held_uid); _held_uid = None
                 _ws_errs += 1
+                _metrics.inc("ws_message_errors_total", help="Unexpected errors while handling a WS message")
+                obs.capture(e)
                 print(f"[WS] xabar xatosi ({_ws_errs}): {type(e).__name__}: {str(e)[:300]}")
                 try:
                     await websocket.send_json({"type": "error", "message": "Ichki xatolik. Qayta urinib ko'ring."})
@@ -3941,6 +3729,15 @@ async def ws_chat(websocket: WebSocket):
             _ai_inflight_release(_held_uid)
         with ws_lock:
             ws_count = max(0, ws_count - 1)
+
+# Audit M4: live gauges for /metrics
+_metrics.gauge("ws_connections", lambda: ws_count, "Open WebSocket connections (this worker)")
+_metrics.gauge("ai_queue_waiting", lambda: _ds_waiting, "AI turns waiting for a slot")
+_metrics.gauge("ai_slots_free", lambda: getattr(GEMINI_SEMAPHORE, "_value", 0), "Free AI slots")
+_metrics.gauge("ai_inflight_users", lambda: len(_AI_INFLIGHT), "Users with a running AI turn")
+_metrics.gauge("charges_pending", lambda: len(_PENDING_CHARGES), "Charges waiting for the DB")
+_metrics.gauge("usage_cache_entries", lambda: len(_USAGE_CACHE), "Entries in the balance cache")
+
 
 def admin_panel_loop():
     time.sleep(1.5)
