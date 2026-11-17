@@ -127,6 +127,15 @@ window.SS_I18N = {
     "Faqat shu slaydga": ["Только к этому слайду", "This slide only"],
     "Uslub (ranglar)": ["Стиль (цвета)", "Style (colors)"],
     "Fon rangi": ["Цвет фона", "Background color"],
+    "Dizayn": ["Дизайн", "Design"],
+    "Yopish": ["Закрыть", "Close"],
+    "Ranglar:": ["Цвета:", "Colors:"],
+    "Chetdagi bezak": ["Украшение по краям", "Edge decoration"],
+    "Butun taqdimot ko'rinishi: fon, ranglar va shrift. Bosing — darhol qo'llanadi.": ["Вид всей презентации: фон, цвета и шрифт. Нажмите — применится сразу.", "Look of the whole deck: background, colors and font. Click to apply."],
+    "Tayyor matn bloklari. Bosing — slaydga qo'shiladi, keyin matnini o'zgartiring.": ["Готовые текстовые блоки. Нажмите — блок добавится на слайд, затем измените текст.", "Ready text blocks. Click to add to the slide, then edit the text."],
+    "Rasm yoki muhim fikr uchun ramka va bloklar.": ["Рамки и блоки для фото или главной мысли.", "Frames and blocks for a photo or a key idea."],
+    "Bezak shakllari: yulduz, yurak, strelka va boshqalar.": ["Декоративные фигуры: звезда, сердце, стрелка и другие.", "Decorative shapes: star, heart, arrow and more."],
+    "Faqat shu slayd foni: rang yoki chetdagi bezak.": ["Фон только этого слайда: цвет или украшение по краям.", "Background of this slide only: a color or an edge decoration."],
 
     /* ---------- shakllar ---------- */
     "To'rtburchak": ["Прямоугольник", "Rectangle"],
