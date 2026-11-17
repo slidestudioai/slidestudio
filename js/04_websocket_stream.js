@@ -192,6 +192,21 @@
     }
     window._ssResumeState = function () { return _ssResume; };   // for tests
 
+    // Audit M6: one clear message per server error code (Uzbek text; i18n.js translates it via translations.js)
+    function _ssErrText(data) {
+      data = data || {};
+      switch (data.code) {
+        case 'AI_BUSY': return "Oldingi so'rovingiz hali bajarilmoqda. U tugagach qayta yuboring.";
+        case 'RATE_LIMITED': return "Juda tez-tez so'rov yuboryapsiz. " + (data.retry_after | 0 || 30) + " soniyadan keyin qayta urinib ko'ring.";
+        case 'AI_TIMEOUT': return "AI javobi juda uzoq davom etdi. Varaq yechilmadi — so'rovni qisqaroq qilib qayta yuboring.";
+        case 'AI_UPSTREAM_LIMIT': return "AI xizmati hozir juda band. Bir daqiqadan so'ng «Qayta urinish»ni bosing.";
+        case 'AI_BUSY_UPSTREAM': return "AI serveri band. Bir daqiqadan so'ng «Qayta urinish»ni bosing.";
+        case 'AI_ERROR': return "AI xizmatida xatolik yuz berdi. «Qayta urinish»ni bosing.";
+        case 'QUEUE': return "Navbatdasiz (" + (data.position | 0 || 1) + "). Biroz kuting…";
+        default: return String(data.message || "Xatolik yuz berdi. Qayta urinib ko'ring.");
+      }
+    }
+    window._ssErrText = _ssErrText;
     let _manualSocketClose = false;
     function initWebSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -261,18 +276,32 @@
             await _ssHandleEnd(data);
           } else if (data.type === 'resume_pending' || data.type === 'resume_result' || data.type === 'resume_none') {
             await _ssOnResumeMessage(data);
+          } else if (data.type === 'queue') {
+            // Audit M6: the server's queue message used to be ignored -> silent spinner for up to 90 s
+            try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
+            const qEl = document.getElementById(currentBotMsgId);
+            const qSpan = qEl && qEl.querySelector('.msg-text');
+            const qTxt = (qSpan && (qSpan.innerText || '').trim()) || '';
+            if (qSpan && (!qTxt || qTxt.startsWith('💭') || qTxt.startsWith('⏳'))) {
+              qSpan.innerText = '⏳ ' + _ssErrText({ code: 'QUEUE', position: data.position });
+            }
           } else if (data.type === 'error') {
             try { AiSearchUI.thinkingFinal(); } catch (e) {}
-            showToast("Xatolik: " + data.message, 'error');
+            const errText = _ssErrText(data);                 // Audit M6: clear text by error code
+            const soft = data.code === 'AI_BUSY' || data.code === 'RATE_LIMITED';
+            showToast(soft ? errText : ("Xatolik: " + errText), soft ? 'info' : 'error');
             const botEl = document.getElementById(currentBotMsgId);
             if (botEl) {
               botEl.classList.add('error');
               const span = botEl.querySelector('.msg-text');
-              if (span) span.innerText = "⚠️ " + data.message;
+              if (span) span.innerText = "⚠️ " + errText;
             }
             aiSessionActive = false;
             twoPassState = null;      // v53: xatoda reja bo'yicha yaratish to'xtaydi
-            try { markStreamInterrupted(/limit|quota|rate|tugadi/i.test(String(data.message || '')) ? 'limit' : 'error'); } catch (e) {}
+            // reason -> button: 'limit' = user's own limit (top up), 'timeout' / 'error' = retry / continue
+            const why = data.code === 'AI_TIMEOUT' ? 'timeout'
+              : (data.code ? 'error' : (/limit|tugadi/i.test(String(data.message || '')) ? 'limit' : 'error'));
+            try { markStreamInterrupted(why); } catch (e) {}
             finishAiStream();
           }
         } catch (e) { console.error("WS parsing:", e); }
@@ -1630,8 +1659,16 @@
       cont.className = 'ai-action-btn continue-btn';
       cont.type = 'button';
       cont.dataset.role = 'continue';
-      cont.innerHTML = '<span class="material-symbols-outlined">play_arrow</span> Davom ettirish';
-      cont.onclick = (e) => { e.stopPropagation(); continueInterrupted(iid); };
+      // Audit M6: the right next step — top up when out of pages, retry when nothing was written yet, else continue
+      if (entry.reason === 'limit' && typeof window.openTopUpModal === 'function') {
+        cont.innerHTML = '<span class="material-symbols-outlined">add_card</span> Varaq olish';
+        cont.onclick = (e) => { e.stopPropagation(); window.openTopUpModal(); };
+      } else {
+        const fresh = !(entry.partial || '').trim();
+        cont.innerHTML = fresh ? '<span class="material-symbols-outlined">refresh</span> Qayta urinish'
+          : '<span class="material-symbols-outlined">play_arrow</span> Davom ettirish';
+        cont.onclick = (e) => { e.stopPropagation(); continueInterrupted(iid); };
+      }
       actions.insertBefore(cont, actions.firstChild);
       const dis = document.createElement('button');
       dis.className = 'ai-action-btn';

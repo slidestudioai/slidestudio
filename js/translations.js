@@ -514,9 +514,25 @@ window.SS_I18N = {
     "Layk bosish uchun avval tizimga kiring": ["Чтобы поставить лайк, войдите в систему", "Sign in to like"],
     "Saqlab bo'lmadi": ["Не удалось сохранить", "Could not save"],
     "O'chirilsinmi?": ["Удалить?", "Delete?"],
-    "O'chirib bo'lmadi": ["Не удалось удалить", "Could not delete"]
+    "O'chirib bo'lmadi": ["Не удалось удалить", "Could not delete"],
+    /* ---------- Audit H5 / M6: xato va holat matnlari ---------- */
+    "Oldingi so'rovingiz hali bajarilmoqda. U tugagach qayta yuboring.": ["Ваш предыдущий запрос ещё выполняется. Отправьте снова, когда он завершится.", "Your previous request is still running. Send again when it finishes."],
+    "AI javobi juda uzoq davom etdi. Varaq yechilmadi — so'rovni qisqaroq qilib qayta yuboring.": ["Ответ AI занял слишком много времени. Страницы не списаны — сократите запрос и отправьте снова.", "The AI answer took too long. No pages were charged — make the request shorter and send it again."],
+    "AI xizmati hozir juda band. Bir daqiqadan so'ng «Qayta urinish»ni bosing.": ["Сервис AI сейчас перегружен. Через минуту нажмите «Повторить».", "The AI service is very busy now. Press “Retry” in a minute."],
+    "AI serveri band. Bir daqiqadan so'ng «Qayta urinish»ni bosing.": ["Сервер AI занят. Через минуту нажмите «Повторить».", "The AI server is busy. Press “Retry” in a minute."],
+    "AI xizmatida xatolik yuz berdi. «Qayta urinish»ni bosing.": ["Ошибка сервиса AI. Нажмите «Повторить».", "The AI service had an error. Press “Retry”."],
+    "Xatolik yuz berdi. Qayta urinib ko'ring.": ["Произошла ошибка. Попробуйте ещё раз.", "Something went wrong. Please try again."],
+    "Qayta urinish": ["Повторить", "Retry"],
+    "Varaq olish": ["Купить страницы", "Get pages"],
+    "Ulanish tiklandi — javob to'liq olindi.": ["Соединение восстановлено — ответ получен полностью.", "Connection restored — the full answer was received."],
+    "Ulanish uzildi. Qayta ulanib, javobni tiklashga urinyapman…": ["Соединение прервано. Переподключаюсь и восстанавливаю ответ…", "Connection lost. Reconnecting and restoring the answer…"]
   },
   patterns: [
+    ["^Juda tez-tez so'rov yuboryapsiz\\. (\\d+) soniyadan keyin qayta urinib ko'ring\\.$", "Слишком частые запросы. Попробуйте через $1 с.", "Too many requests. Try again in $1 s."],
+    ["^Navbatdasiz \\((\\d+)\\)\\. Biroz kuting…$", "Вы в очереди ($1). Подождите немного…", "You are in the queue ($1). Please wait…"],
+    ["^⏳ Navbatdasiz \\((\\d+)\\)\\. Biroz kuting…$", "⏳ Вы в очереди ($1). Подождите немного…", "⏳ You are in the queue ($1). Please wait…"],
+    ["^Xatolik: (.+)$", "Ошибка: $1", "Error: $1"],
+    ["^Qarz: ([\\d.,]+) varaq — keyingi bepul varaqlar yoki xariddan ushlanadi$", "Долг: $1 стр. — спишется из следующих бесплатных страниц или покупки", "Debt: $1 pages — taken from your next free pages or purchase"],
     ["^([\\d.,\\s]+) kredit$", "$1 кредитов", "$1 credits"],
     ["^\\+(\\d+)% bonus$", "+$1% бонус", "+$1% bonus"],
     ["^\\$([\\d.,]+) = ([\\d.,]+) kredit · komissiya bilan \\$([\\d.,]+)$", "$$$1 = $2 кредитов · с комиссией $$$3", "$$$1 = $2 credits · $$$3 with fee"],
