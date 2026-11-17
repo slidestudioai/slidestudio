@@ -1,11 +1,16 @@
 // Umumiy yordamchilar. E2E_LIBS=<papka> berilsa CDN kutubxonalari shu papkadan olinadi (internetsiz muhit uchun).
 const path = require('path');
+const fs = require('fs');
 const LIBS = process.env.E2E_LIBS;
 const MAP = {
   'fabric.min.js': 'fabric/dist/fabric.min.js',
   'sweetalert2@11': 'sweetalert2/dist/sweetalert2.all.min.js',
   'jszip.min.js': 'jszip/dist/jszip.min.js',
   'pptxgen.bundle.js': 'pptxgenjs/dist/pptxgen.bundle.js',
+  'pdf-lib.min.js': 'pdf-lib/dist/pdf-lib.min.js',           // v68: PDF eksport / import testlari uchun (ixtiyoriy)
+  'jspdf.umd.min.js': 'jspdf/dist/jspdf.umd.min.js',
+  'pdf.worker.min.js': 'pdfjs-dist/build/pdf.worker.min.js',
+  'pdf.min.js': 'pdfjs-dist/build/pdf.min.js',
 };
 
 async function openEditor(page, url = '/') {
@@ -14,7 +19,11 @@ async function openEditor(page, url = '/') {
   if (LIBS) {
     await page.route(/^https:\/\/(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|telegram\.org|fonts\.)/, (r) => {
       const u = r.request().url();
-      for (const k of Object.keys(MAP)) if (u.includes(k)) return r.fulfill({ path: path.join(LIBS, MAP[k]) });
+      for (const k of Object.keys(MAP)) {
+        if (!u.includes(k)) continue;
+        const f = path.join(LIBS, MAP[k]);
+        if (fs.existsSync(f)) return r.fulfill({ path: f });
+      }
       return r.fulfill({ status: 200, body: '', contentType: u.includes('css') ? 'text/css' : 'application/javascript' });
     });
   }

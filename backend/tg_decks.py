@@ -493,8 +493,9 @@ def normalize_deck(raw: Any, n: int, topic: str = "") -> Optional[dict]:
 # ---------------------------------------------------------------------------------------------
 # Rasm tayyorlash (Pillow)
 # ---------------------------------------------------------------------------------------------
-def cover_jpeg(data: bytes, w: int, h: int, scale: float = 1.6, quality: int = 80) -> Optional[bytes]:
-    """Rasmni (w:h) nisbatga 'cover' usulida kesib, JPEG qiladi. Buzuq rasm bo'lsa None."""
+def cover_jpeg(data: bytes, w: int, h: int, scale: float = 2.0, quality: int = 85) -> Optional[bytes]:
+    """Rasmni (w:h) nisbatga 'cover' usulida kesib, JPEG qiladi. Buzuq rasm bo'lsa None.
+    v68: x2 / 85% — saytdagi eksport bilan bir xil sifat (Full HD ekranda tiniq; avval x1.6 / 80% edi)."""
     try:
         from PIL import Image, ImageOps
         im = Image.open(io.BytesIO(data))

@@ -1544,8 +1544,10 @@
               '<Relationship Id="rIdSlideStudio1" Type="https://slidestudio.app/relationships/project" Target="slide-studio/project.json"/></Relationships>');
             zip.file('_rels/.rels', rels);
           }
+          var fps = [];
+          try { fps = await slideFps(zip); } catch (e) { fps = []; }
           var payload = {
-            version: 2, format: 'slide-studio', title: title,
+            version: 2, format: 'slide-studio', title: title, fp: fps.length === slides.length ? fps : undefined,
             slides: slides.map(function (s) { return { json: s.json, imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 }; }),
             exportedAt: new Date().toISOString()
           };
@@ -2172,6 +2174,50 @@
     return { transition: key, transDur: Math.max(0.2, Math.min(5, Math.round(dur * 10) / 10)), transAuto: auto };
   }
 
+  // v68: slayd «barmoq izi» — PowerPoint'da tahrir qilinganini bilish uchun. XML qayta yozilishiga (atribut tartibi,
+  // prefikslar) chidamli: faqat joylashuv/o'lcham raqamlari, matnlar, ranglar va shakl soni olinadi.
+  function slideFp(xml) {
+    xml = String(xml || '');
+    var parts = [], m, re;
+    re = /<a:(off|ext|chOff|chExt)\b[^>]*?\b(x|cx)="(-?\d+)"[^>]*?\b(y|cy)="(-?\d+)"/g;
+    while ((m = re.exec(xml))) parts.push(m[3] + ',' + m[5]);
+    re = /<a:t(?:\s[^>]*)?>([^<]*)<\/a:t>/g;
+    while ((m = re.exec(xml))) parts.push('t' + m[1]);
+    re = /<a:srgbClr\b[^>]*?\bval="([0-9A-Fa-f]{6})"/g;
+    while ((m = re.exec(xml))) parts.push('c' + m[1].toUpperCase());
+    parts.push('n' + (xml.match(/<p:(sp|pic|graphicFrame|cxnSp)>/g) || []).length);
+    var str = parts.join(';'), h = 2166136261;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h.toString(36) + ':' + parts.length;
+  }
+  async function slidePathsInOrder(zip) {
+    var out = [];
+    try {
+      var presF = zip.file('ppt/presentation.xml');
+      if (presF) {
+        var pres = parseXml(await presF.async('string'));
+        var presRels = await readRels(zip, 'ppt/presentation.xml');
+        var idLst = pres.getElementsByTagNameNS(NS_P, 'sldIdLst')[0];
+        if (idLst) kids(idLst, NS_P, 'sldId').forEach(function (s) {
+          var rid = s.getAttributeNS(NS_R, 'id');
+          if (rid && presRels[rid]) out.push(presRels[rid].target);
+        });
+      }
+    } catch (e) {}
+    if (!out.length) {
+      Object.keys(zip.files).filter(function (p) { return /^ppt\/slides\/slide\d+\.xml$/.test(p); })
+        .sort(function (a, b) { return parseInt(a.match(/(\d+)\.xml$/)[1], 10) - parseInt(b.match(/(\d+)\.xml$/)[1], 10); })
+        .forEach(function (p) { out.push(p); });
+    }
+    return out;
+  }
+  async function slideFps(zip) {
+    var paths = await slidePathsInOrder(zip), out = [];
+    for (var i = 0; i < paths.length; i++) { var f = zip.file(paths[i]); out.push(f ? slideFp(await f.async('string')) : ''); }
+    return out;
+  }
+  window.ssPptxSlideFp = slideFp;
+
   async function importNativePptx(zip, file) {
     var presF = zip.file('ppt/presentation.xml');
     if (!presF) throw new Error('Bu to\'g\'ri PPTX fayl emas (ppt/presentation.xml topilmadi)');
@@ -2208,7 +2254,7 @@
         if (tt) title = (tt.textContent || '').trim();
       }
     } catch (e) {  }
-    if (!title && file && file.name) title = file.name.replace(/\.pptx$/i, '');
+    if (!title && file && file.name) title = file.name.replace(/\.(pptx|ppsx|pptm|potx|potm|ppsm)$/i, '');
 
     var skipped = { table: 0, chart: 0, other: 0, media: 0 };
     var mediaCache = {};
@@ -2653,6 +2699,25 @@
         try {
           var data = JSON.parse(await projFile.async('string'));
           var list = data.slides || [];
+          // v68: fayl PowerPoint / LibreOffice'da o'zgartirilgan bo'lsa — o'zgargan slaydlar ichki nusxadan EMAS,
+          // faylning o'zidan o'qiladi (avval tahrirlar jimgina yo'qolardi). O'zgarmagan slaydlar — 1:1 nusxadan.
+          if (list.length && Array.isArray(data.fp) && data.fp.length === list.length) {
+            var now = await slideFps(zip), same = now.length === data.fp.length && now.every(function (f, i) { return f === data.fp[i]; });
+            if (!same) {
+              var nat = await importNativePptx(zip, file), used = {}, merged = [], fromFile = 0;
+              nat.slides.forEach(function (ns, i) {
+                var k = data.fp.indexOf(now[i]);
+                while (k >= 0 && used[k]) k = data.fp.indexOf(now[i], k + 1);
+                if (k >= 0) { used[k] = 1; merged.push(list[k]); }
+                else { fromFile++; merged.push(window.ssAdaptImported ? Object.assign({}, ns, { json: window.ssAdaptImported(ns.json) }) : ns); }
+              });
+              if (merged.length) {
+                await applyImportedSlides(merged, data.title || nat.title);
+                Swal.fire({ icon: 'success', title: 'PPTX ochildi', text: merged.length + ' ta slayd. ' + fromFile + " tasi boshqa dasturda o'zgartirilgan — o'zgarishlar saqlandi.", timer: 2600, showConfirmButton: false });
+                return;
+              }
+            }
+          }
           if (list.length) {
             await applyImportedSlides(list, data.title);
             Swal.fire({ icon: 'success', title: 'PPTX ochildi', text: list.length + " ta slayd (to'liq tahrirlash mumkin).", timer: 2200, showConfirmButton: false });

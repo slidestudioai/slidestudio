@@ -175,12 +175,12 @@
       const result = await Swal.fire({
         title: '📂 Fayl ochish',
         html: '<div style="text-align:left;font-size:13px;line-height:1.7;color:#3c4043;">' +
-              '<div style="margin-bottom:8px;"><b>.pptx</b> — PowerPoint (qayta tahrirlash)</div>' +
+              '<div style="margin-bottom:8px;"><b>.pptx .ppsx .potx</b> — PowerPoint, Google Slides, WPS, LibreOffice (PPTX qilib saqlangan) — qayta tahrirlash</div>' +
               '<div style="margin-bottom:8px;"><b>.pdf</b> — har sahifa alohida slayd</div>' +
               '<div><b>.html</b> — namoyish + qayta tahrirlash</div>' +
               '</div>',
         input: 'file',
-        inputAttributes: { accept: '.html,.htm,.pptx,.pdf' },
+        inputAttributes: { accept: '.html,.htm,.pptx,.ppsx,.pptm,.potx,.potm,.ppsm,.pdf' },
         showCancelButton: true,
         confirmButtonText: 'Ochish',
         cancelButtonText: 'Bekor',
@@ -335,7 +335,8 @@
         await importPdfClient(file);
         return;
       }
-      if (ext === 'pptx') {
+      // v68: .ppsx (namoyish), .potx (shablon), .pptm/.potm (makrosli) — ichi .pptx bilan bir xil (OOXML)
+      if (['pptx', 'ppsx', 'pptm', 'potx', 'potm', 'ppsm'].indexOf(ext) >= 0) {
         await importPptxClient(file);
         return;
       }
