@@ -239,13 +239,30 @@ _N_SLIDES_RE = _re.compile(r"(\d{1,2})\s*(?:ta\s*)?(?:slayd|slide|varaq|sahifa|p
 
 
 def _presearch_count(text: str) -> int:
-    """v59: Chuqur AI uchun nechta rasm oldindan qidiriladi — so'ralgan slaydlar soniga qarab (3..8)."""
+    """How many searches are planned before writing: one per requested slide / topic (3..12)."""
     m = _N_SLIDES_RE.search(text or "")
     try:
-        n = int(m.group(1)) if m else 3
+        n = int(m.group(1)) if m else 0
     except Exception:
-        n = 3
-    return max(3, min(8, n))
+        n = 0
+    topics = len([p for p in _re.split(r"[,;\n]|\bva\b|\band\b|\bи\b", text or "") if len(p.strip()) > 2])
+    return max(3, min(12, max(n, topics)))
+
+
+_DECK_CREATE_RE = _re.compile(r"(taqdimot|prezentats|presentation|deck|презентац|слайды)", _re.I)
+_CREATE_VERB_RE = _re.compile(r"(yasa|yarat|tuz|qil|tayyorla|create|make|generate|build|созда|сдела|подготов)", _re.I)
+
+
+def _is_multi_slide_request(text: str) -> bool:
+    """A new deck or 2+ slides in one message (then the pictures for all topics are searched first, in one batch)."""
+    t = text or ""
+    m = _N_SLIDES_RE.search(t)
+    try:
+        if m and int(m.group(1)) >= 2:
+            return True
+    except Exception:
+        pass
+    return bool(_DECK_CREATE_RE.search(t) and _CREATE_VERB_RE.search(t))
 
 
 def _wants_images(raw: str) -> bool:
@@ -288,6 +305,7 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
         r = await asyncio.wait_for(client.chat.completions.create(
             model="deepseek-chat", temperature=0, max_tokens=160, response_format={"type": "json_object"},
             messages=[{"role": "system", "content": f"You write {'animated GIF' if kind == 'gif' else ('short video clip' if kind == 'video' else 'photo')} search queries for slides. Return only JSON (json): {{\"queries\": [\"2-4 word ENGLISH query\", ...]}}. "
+                                                    f"Cover EVERY topic, sub-topic and slide the user mentions (one query each, in slide order) — do not skip any. "
                                                     f"At most {max_q} queries, each a concrete photographable subject. If the request needs no pictures return an empty list."},
                       {"role": "user", "content": context[:1500]}]), timeout=20)
         qs = json.loads(r.choices[0].message.content or "{}").get("queries") or []
@@ -303,9 +321,15 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     blocks = []
     for q, f in zip(qs, res):
         if isinstance(f, list):
-            urls = [str(x.get("url")) for x in f[:4] if isinstance(x, dict) and x.get("url")]
-            if urls:
-                blocks.append(f'"{q}":\n' + "\n".join("  - " + u for u in urls))
+            lines = []
+            for x in f[:4]:
+                if not (isinstance(x, dict) and x.get("url")):
+                    continue
+                size = f" {x['width']}x{x['height']}" if x.get("width") and x.get("height") else ""
+                title = _pb.sanitize_inline(x.get("title") or "", 60)      # external text = data only (Audit M1)
+                lines.append(f"  - {x['url']}" + (f'  ("{title}"{size})' if title or size else ""))
+            if lines:
+                blocks.append(f'"{q}":\n' + "\n".join(lines))
     if not blocks:
         return ""
     print(f"[DEEP-IMG] {len(blocks)} ta so'rov uchun rasm topildi")
@@ -313,7 +337,9 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
            "video": "Video uchun: add_video (yoki set_background_video) ga URL bering"}.get(kind, "{\"type\":\"image\",\"src\":URL,...}")
     return ("\n\n[TAYYOR " + {"gif": "GIFLAR", "video": "VIDEOLAR"}.get(kind, "RASMLAR") + " — server allaqachon qidirib topdi]\n"
             "Kerak bo'lsa FAQAT shu URL'lardan birini ishlating: " + how + ". URL o'ylab topmang, tool chaqirmang, "
-            "qidirishga va'da bermang — rasmlar tayyor.\n" + "\n".join(blocks))
+            "qidirishga va'da bermang — rasmlar tayyor. Bu ro'yxatda so'rovdagi BARCHA mavzular uchun rasmlar bor: "
+            "endi BUTUN taqdimotni BITTA ```json blokda TO'LIQ yozing — har bir so'ralgan slayd (sarlavha, matn/kartalar va mos rasm) "
+            "bitta javobda tugallangan bo'lsin; bitta URL'ni ikki slaydda ishlatmang.\n" + "\n".join(blocks))
 SEARCH_TOOLS = [{
     "type": "function",
     "function": {
@@ -321,6 +347,8 @@ SEARCH_TOOLS = [{
         "description": (
             "Internetdan slaydga MOS HAQIQIY rasm, GIF yoki qisqa VIDEO qidiradi va to'g'ridan-to'g'ri havolalarni qaytaradi. Foydalanuvchi GIF yoki video so'rasa kind='gif' / kind='video' bilan alohida chaqiring. "
             "Rasm kerak bo'lgan HAR BIR slayd uchun, mavzuga 100% mos rasm topish uchun chaqiring. "
+            "MUHIM: barcha kerakli qidiruvlarni BITTA qadamda (bir xabarda bir nechta tool chaqiruvi) qiling — slaydma-slayd emas; "
+            "natijalar kelgach hamma slaydlarni bitta javobda to'liq yozing. "
             "query — INGLIZ tilida, aniq va qisqa (masalan 'solar panels on roof', 'DNA double helix'). "
             "Natijadan eng mosini tanlab, shu url ni place_image_url / image element / set_background_url ga bering. "
             "URL'ni o'zingiz o'ylab topmang."
@@ -3130,18 +3158,26 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
             async with asyncio.timeout(AI_TURN_DEADLINE_DEEP if model == "deepseek-reasoner" else AI_TURN_DEADLINE_FAST):
                 _pre_stats: Dict[str, int] = {}
                 tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
-                if model == "deepseek-reasoner" and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(user_content or ""):
+                # «Search everything first, then write everything»: for a new deck / several slides the server finds the
+                # pictures for ALL topics of the message in ONE parallel batch, then the AI writes the whole deck in ONE
+                # answer (no tools, no slide-by-slide search rounds that ran out and left slides unfinished).
+                _batch_first = (tools_on and mode not in ("plan", "generate") and _is_multi_slide_request(prompt or "")
+                                and _wants_images(prompt or ""))
+                if (model == "deepseek-reasoner" or _batch_first) and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(prompt or ""):
                     try:
-                        _ctx, _want = user_content or "", _wants_images(prompt or "")
+                        # the user's OWN text (user_content also carries the browser's action report — Audit M1)
+                        _ctx, _want = prompt or "", _wants_images(prompt or "")
                         if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
                             _cur = plan_slides[int(plan_index)] or {}
                             _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
-                            _ctx = f"Deck topic: {user_content}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
+                            _ctx = f"Deck topic: {prompt}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                         if _want:
-                            _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else _presearch_count(user_content or prompt or ""), websocket, _pre_stats,
+                            _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else _presearch_count(prompt or ""), websocket, _pre_stats,
                                                            kind=_presearch_kind(prompt or ""))
                             if _extra:
                                 messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
+                                if _batch_first:
+                                    tools_on = False         # every picture is already here -> one complete answer
                     except Exception as _pe:
                         print(f"[DEEP-IMG] {type(_pe).__name__}: {str(_pe)[:80]}")
                 msgs = messages

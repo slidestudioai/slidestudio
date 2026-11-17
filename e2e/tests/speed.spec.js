@@ -134,3 +134,27 @@ test('F4: «To\'xtatish» stops the AI on the server, keeps finished slides, soc
   const errs = await page.evaluate(() => window.__msgs.filter((m) => m.type === 'error').map((m) => m.code || m.message));
   expect(errs).toEqual([]);
 });
+
+for (const blocked of [false, true]) {
+  test(`AI input bar stays compact (voice.js ${blocked ? 'blocked' : 'loaded'}): no paperclip, no loose «UZ», wide text box`, async ({ page }) => {
+    if (blocked) await page.route(/voice\.js/, (r) => r.abort());   // old cache / blocker / slow network
+    await openEditor(page);
+    await page.evaluate(() => toggleAISidebar(true));
+    const r = await page.evaluate(() => {
+      const box = document.querySelector('.ai-sidebar-input-box');
+      const ta = document.getElementById('aiSidebarInput');
+      const mic = document.getElementById('micBtnSidebar');
+      const lang = mic.querySelector('.ss-mic-lang');
+      return {
+        attach: getComputedStyle(document.getElementById('attachBtnSidebar')).display,
+        micShown: getComputedStyle(mic).display !== 'none',
+        langPos: getComputedStyle(lang).position,
+        ratio: ta.getBoundingClientRect().width / box.getBoundingClientRect().width,
+      };
+    });
+    expect(r.attach).toBe('none');
+    expect(r.langPos).toBe('absolute');                   // the language is a small badge ON the mic, never beside it
+    if (blocked) expect(r.micShown).toBe(false);          // no working voice input -> no mic button taking space
+    expect(r.ratio).toBeGreaterThan(blocked ? 0.75 : 0.6);
+  });
+}
