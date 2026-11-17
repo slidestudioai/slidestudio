@@ -104,6 +104,10 @@
     const m = MODES[curMode()];
     let h = '<div class="ss-meter-wrap">' + meterHTML('Balans', totalUnits(), capUnits(), (_state.paid_credits | 0) > 0 ? 'paid' : 'free', '');
     h += crossLine();
+    if ((_state.debt_units | 0) > 0) {        // Audit M6: say clearly why the balance is 0 after a big request
+      h += '<div class="ss-meter-foot ss-debt"><span>Qarz: ' + fmt(toPages(_state.debt_units | 0, curMode())) +
+        ' varaq — keyingi bepul varaqlar yoki xariddan ushlanadi</span></div>';
+    }
     h += '<div class="ss-meter-foot"><span>' + m.chat_per_page + ' ta savol = 1 varaq</span><span>' + m.search_per_page + ' ta qidiruv = 1 varaq</span></div>';
     return h + '</div>';
   }
@@ -207,6 +211,7 @@
     if (typeof data.free_credits === 'number') _state.free_credits = data.free_credits;
     if (typeof data.paid_credits === 'number') _state.paid_credits = data.paid_credits;
     if (typeof data.cap_units === 'number') _state.cap_units = data.cap_units;
+    if (typeof data.debt_units === 'number') _state.debt_units = data.debt_units;      // Audit M6
     if (typeof data.next_reset_in_seconds === 'number') _state.next_reset_in_seconds = data.next_reset_in_seconds;
     if (typeof data.window_started === 'boolean') _state.window_started = data.window_started;
     else _state.window_started = (_state.next_reset_in_seconds | 0) > 0;

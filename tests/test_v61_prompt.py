@@ -33,7 +33,8 @@ def test_no_conflicting_rules():
 
 
 def test_server_balance_block_example_is_logical():
-    src = open(main.__file__, encoding="utf-8").read()
+    from backend.services import prompt_builder          # Audit M5: the balance block moved here
+    src = open(main.__file__, encoding="utf-8").read() + open(prompt_builder.__file__, encoding="utf-8").read()
     assert "masalan 10 ta, balans" not in src
     assert "masalan {bal + 10} ta" in src
     assert 'action = \\"create_slides\\" count=N yoki' not in src

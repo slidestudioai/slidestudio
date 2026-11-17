@@ -14,7 +14,10 @@ module.exports = defineConfig({
     command: `python e2e/fake_ai_server.py`,        // haqiqiy main.py + soxta AI / rasm qidiruvi (kalit va internet kerak emas)
     cwd: '..',
     url: `http://127.0.0.1:${PORT}/healthz`,
-    env: { PORT: String(PORT), SLIDE_STUDIO_DEV_MODE: '1', SLIDE_STUDIO_DEV_TOKEN: 'devtok', SLIDE_STUDIO_HMAC_SECRET: 'e2e-' + 'x'.repeat(40) },
+    // MAX_AI_INFLIGHT_PER_USER: all e2e tests share ONE dev user and run in parallel workers; in production the
+    // limit is 1 AI turn per user at a time (Audit C2), which would answer AI_BUSY to the parallel test.
+    env: { PORT: String(PORT), SLIDE_STUDIO_DEV_MODE: '1', SLIDE_STUDIO_DEV_TOKEN: 'devtok', SLIDE_STUDIO_HMAC_SECRET: 'e2e-' + 'x'.repeat(40),
+           MAX_AI_INFLIGHT_PER_USER: '8' },
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },

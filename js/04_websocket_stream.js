@@ -109,6 +109,104 @@
       };
     })();
     window.AiSearchUI = AiSearchUI;
+    // Audit H5: the 'end' handling is shared by a normal end and by a resumed (reconnected) turn
+    async function _ssHandleEnd(data) {
+      try { AiSearchUI.thinkingDone(); AiSearchUI.thinkingFinal(); } catch (e) {}
+      try {
+        if (typeof applyServerUsage === 'function') applyServerUsage(data);
+        else if (window.Monitoring && typeof window.Monitoring.applyServerUsage === 'function') {
+          window.Monitoring.applyServerUsage(data);
+        }
+      } catch (_) {}
+      if (typeof data.user_total_tokens === 'number') {
+        userStats.total_tokens = data.user_total_tokens;
+        const st = document.getElementById('statTokens');
+        if (st) st.innerText = data.user_total_tokens.toLocaleString();
+        const bar = document.getElementById('tokenStatusBar');
+        if (bar) bar.style.display = 'flex';
+      }
+      if (typeof data.slide_credits_left === 'number') {
+        userStats.slide_credits = data.slide_credits_left;
+      }
+      currentChatId = data.chat_id || currentChatId;
+
+      const _fr = data.finish_reason || 'stop';
+      if (_fr !== 'stop') {
+        try { markStreamInterrupted(_fr === 'length' ? 'length' : (_fr === 'timeout' ? 'timeout' : 'error')); } catch (e) {}
+      } else if (_streamCtx) {
+        try { clearInterrupted(_streamCtx.id); } catch (e) {}
+        _streamCtx = null;
+      }
+      if (twoPassState && twoPassState.active && twoPassState.plan.length) {
+        try { await aiProcessingQueue; } catch (e) {}
+        isAiStreaming = false;
+        clearAiWatchdog();
+        sendNextTwoPassSlide();
+      } else if (twoPassState && twoPassState.active) {
+        twoPassState = null;
+        finishAiStream();
+      } else {
+        finishAiStream();
+      }
+    }
+
+    // ---------------- Audit H5: resume a turn after the connection dropped ----------------
+    // The server finishes the turn in the background and keeps the streamed text. After reconnect we ask for it
+    // and feed ONLY the part we did not receive into the normal stream handler (JSON blocks already applied are
+    // skipped by processedJsonBlocks) — so nothing is applied twice.
+    let _ssResume = null;
+    function _ssCaptureResume() {
+      const req = window._ssAiReq;
+      if (!req || !req.id || !_streamCtx) return;
+      _ssResume = { id: req.id, ctx: _streamCtx, botId: currentBotMsgId, tries: 0, at: Date.now() };
+    }
+    function _ssSendResume() {
+      const r = _ssResume;
+      if (!r) return;
+      if (isAiStreaming || Date.now() - r.at > 10 * 60 * 1000 || r.tries > 60) { _ssResume = null; return; }
+      if (!isSocketReady()) return;
+      r.tries++;
+      try { socket.send(JSON.stringify({ type: 'resume', request_id: r.id, token: supabaseToken })); } catch (e) {}
+    }
+    async function _ssOnResumeMessage(data) {
+      const r = _ssResume;
+      if (!r || data.request_id !== r.id) return;
+      if (data.type === 'resume_pending') { setTimeout(_ssSendResume, 2500); return; }
+      if (data.type === 'resume_none' || isAiStreaming) { _ssResume = null; return; }
+      const full = String(data.stream_text || '');
+      const got = String(currentAiStreamBuffer || '');
+      _ssResume = null;
+      window._ssAiReq = null;
+      if (!full.startsWith(got)) { console.warn('[resume] buffer mos emas — tiklanmadi'); return; }
+      _streamCtx = r.ctx;
+      currentBotMsgId = r.botId;
+      isAiStreaming = true;
+      aiSessionActive = true;
+      try { updateSendButtons(true); } catch (e) {}
+      const rest = full.slice(got.length);
+      if (rest) handleAiResponseStream(rest);
+      try { clearInterrupted(r.ctx.id); } catch (e) {}
+      showToast("Ulanish tiklandi — javob to'liq olindi.", 'info');
+      data.type = 'end';
+      await _ssHandleEnd(data);
+    }
+    window._ssResumeState = function () { return _ssResume; };   // for tests
+
+    // Audit M6: one clear message per server error code (Uzbek text; i18n.js translates it via translations.js)
+    function _ssErrText(data) {
+      data = data || {};
+      switch (data.code) {
+        case 'AI_BUSY': return "Oldingi so'rovingiz hali bajarilmoqda. U tugagach qayta yuboring.";
+        case 'RATE_LIMITED': return "Juda tez-tez so'rov yuboryapsiz. " + (data.retry_after | 0 || 30) + " soniyadan keyin qayta urinib ko'ring.";
+        case 'AI_TIMEOUT': return "AI javobi juda uzoq davom etdi. Varaq yechilmadi — so'rovni qisqaroq qilib qayta yuboring.";
+        case 'AI_UPSTREAM_LIMIT': return "AI xizmati hozir juda band. Bir daqiqadan so'ng «Qayta urinish»ni bosing.";
+        case 'AI_BUSY_UPSTREAM': return "AI serveri band. Bir daqiqadan so'ng «Qayta urinish»ni bosing.";
+        case 'AI_ERROR': return "AI xizmatida xatolik yuz berdi. «Qayta urinish»ni bosing.";
+        case 'QUEUE': return "Navbatdasiz (" + (data.position | 0 || 1) + "). Biroz kuting…";
+        default: return String(data.message || "Xatolik yuz berdi. Qayta urinib ko'ring.");
+      }
+    }
+    window._ssErrText = _ssErrText;
     let _manualSocketClose = false;
     function initWebSocket() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -116,6 +214,7 @@
       // The server reads the token from each message body.
       let wsUrl = `${protocol}//${window.location.host}/ws/chat`;
       socket = new WebSocket(wsUrl);
+      socket.onopen = () => { try { _ssSendResume(); } catch (e) {} };   // Audit H5
       socket.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -173,55 +272,36 @@
 
             console.log("[gif_fix] etiborsiz — qayta bajarish ochirilgan");
           } else if (data.type === 'end') {
-            try { AiSearchUI.thinkingDone(); AiSearchUI.thinkingFinal(); } catch (e) {}
-            try {
-              if (typeof applyServerUsage === 'function') applyServerUsage(data);
-              else if (window.Monitoring && typeof window.Monitoring.applyServerUsage === 'function') {
-                window.Monitoring.applyServerUsage(data);
-              }
-            } catch (_) {}
-            if (typeof data.user_total_tokens === 'number') {
-              userStats.total_tokens = data.user_total_tokens;
-              const st = document.getElementById('statTokens');
-              if (st) st.innerText = data.user_total_tokens.toLocaleString();
-              const bar = document.getElementById('tokenStatusBar');
-              if (bar) bar.style.display = 'flex';
-            }
-            if (typeof data.slide_credits_left === 'number') {
-              userStats.slide_credits = data.slide_credits_left;
-            }
-            currentChatId = data.chat_id || currentChatId;
-
-            const _fr = data.finish_reason || 'stop';
-            if (_fr !== 'stop') {
-              try { markStreamInterrupted(_fr === 'length' ? 'length' : 'error'); } catch (e) {}
-            } else if (_streamCtx) {
-              try { clearInterrupted(_streamCtx.id); } catch (e) {}
-              _streamCtx = null;
-            }
-            if (twoPassState && twoPassState.active && twoPassState.plan.length) {
-              try { await aiProcessingQueue; } catch (e) {}
-              isAiStreaming = false;
-              clearAiWatchdog();
-              sendNextTwoPassSlide();
-            } else if (twoPassState && twoPassState.active) {
-              twoPassState = null;
-              finishAiStream();
-            } else {
-              finishAiStream();
+            window._ssAiReq = null; _ssResume = null;
+            await _ssHandleEnd(data);
+          } else if (data.type === 'resume_pending' || data.type === 'resume_result' || data.type === 'resume_none') {
+            await _ssOnResumeMessage(data);
+          } else if (data.type === 'queue') {
+            // Audit M6: the server's queue message used to be ignored -> silent spinner for up to 90 s
+            try { if (typeof bumpAiWatchdog === 'function') bumpAiWatchdog(); } catch (e) {}
+            const qEl = document.getElementById(currentBotMsgId);
+            const qSpan = qEl && qEl.querySelector('.msg-text');
+            const qTxt = (qSpan && (qSpan.innerText || '').trim()) || '';
+            if (qSpan && (!qTxt || qTxt.startsWith('💭') || qTxt.startsWith('⏳'))) {
+              qSpan.innerText = '⏳ ' + _ssErrText({ code: 'QUEUE', position: data.position });
             }
           } else if (data.type === 'error') {
             try { AiSearchUI.thinkingFinal(); } catch (e) {}
-            showToast("Xatolik: " + data.message, 'error');
+            const errText = _ssErrText(data);                 // Audit M6: clear text by error code
+            const soft = data.code === 'AI_BUSY' || data.code === 'RATE_LIMITED';
+            showToast(soft ? errText : ("Xatolik: " + errText), soft ? 'info' : 'error');
             const botEl = document.getElementById(currentBotMsgId);
             if (botEl) {
               botEl.classList.add('error');
               const span = botEl.querySelector('.msg-text');
-              if (span) span.innerText = "⚠️ " + data.message;
+              if (span) span.innerText = "⚠️ " + errText;
             }
             aiSessionActive = false;
             twoPassState = null;      // v53: xatoda reja bo'yicha yaratish to'xtaydi
-            try { markStreamInterrupted(/limit|quota|rate|tugadi/i.test(String(data.message || '')) ? 'limit' : 'error'); } catch (e) {}
+            // reason -> button: 'limit' = user's own limit (top up), 'timeout' / 'error' = retry / continue
+            const why = data.code === 'AI_TIMEOUT' ? 'timeout'
+              : (data.code ? 'error' : (/limit|tugadi/i.test(String(data.message || '')) ? 'limit' : 'error'));
+            try { markStreamInterrupted(why); } catch (e) {}
             finishAiStream();
           }
         } catch (e) { console.error("WS parsing:", e); }
@@ -240,11 +320,13 @@
             }
             showToast("Ulanish uzildi, lekin slaydlar qo'llangan. Kerak bo'lsa qayta ulang.", 'info');
           } else {
+            try { _ssCaptureResume(); } catch (e) {}
             try { markStreamInterrupted('connection_lost'); } catch (e) {}
             isAiStreaming = false;
             aiSessionActive = false;
             updateSendButtons(false);
-            showToast("Ulanish uzildi. Qayta ulanmoqda. Kerak bo'lsa «Davom ettirish»ni bosing (avtomatik davom yo'q).", 'error');
+            showToast(_ssResume ? "Ulanish uzildi. Qayta ulanib, javobni tiklashga urinyapman…"
+              : "Ulanish uzildi. Qayta ulanmoqda. Kerak bo'lsa «Davom ettirish»ni bosing (avtomatik davom yo'q).", 'error');
           }
         }
         const _delay = _manualSocketClose ? 150 : 3000;
@@ -1577,8 +1659,16 @@
       cont.className = 'ai-action-btn continue-btn';
       cont.type = 'button';
       cont.dataset.role = 'continue';
-      cont.innerHTML = '<span class="material-symbols-outlined">play_arrow</span> Davom ettirish';
-      cont.onclick = (e) => { e.stopPropagation(); continueInterrupted(iid); };
+      // Audit M6: the right next step — top up when out of pages, retry when nothing was written yet, else continue
+      if (entry.reason === 'limit' && typeof window.openTopUpModal === 'function') {
+        cont.innerHTML = '<span class="material-symbols-outlined">add_card</span> Varaq olish';
+        cont.onclick = (e) => { e.stopPropagation(); window.openTopUpModal(); };
+      } else {
+        const fresh = !(entry.partial || '').trim();
+        cont.innerHTML = fresh ? '<span class="material-symbols-outlined">refresh</span> Qayta urinish'
+          : '<span class="material-symbols-outlined">play_arrow</span> Davom ettirish';
+        cont.onclick = (e) => { e.stopPropagation(); continueInterrupted(iid); };
+      }
       actions.insertBefore(cont, actions.firstChild);
       const dis = document.createElement('button');
       dis.className = 'ai-action-btn';
