@@ -2811,7 +2811,7 @@ except Exception as _cm_err:
     print(f"[COMMUNITY] yuklanmadi: {_cm_err}")
 
 PUBLIC_STATIC_FILES = {
-        "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css", "v54.css", "topup.css",
+        "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css", "v54.css", "topup.css", "v68.css",
         "favicon.ico", "logo.png", "manifest.json",
         "terms.html", "privacy.html", "refund.html",
     }

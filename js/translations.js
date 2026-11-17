@@ -117,6 +117,17 @@ window.SS_I18N = {
     "Rasmlar:": ["Изображения:", "Images:"],
     "Varoq:": ["Лист:", "Page:"],
 
+    /* ---------- v68: Dizayn menyusi (mavzular) ---------- */
+    "Mavzular": ["Темы", "Themes"],
+    "Kartochkalar": ["Карточки", "Cards"],
+    "Ramkalar": ["Рамки", "Frames"],
+    "Stikerlar": ["Стикеры", "Stickers"],
+    "Qo'llash:": ["Применить:", "Apply to:"],
+    "Hamma slaydlarga": ["Ко всем слайдам", "All slides"],
+    "Faqat shu slaydga": ["Только к этому слайду", "This slide only"],
+    "Uslub (ranglar)": ["Стиль (цвета)", "Style (colors)"],
+    "Fon rangi": ["Цвет фона", "Background color"],
+
     /* ---------- shakllar ---------- */
     "To'rtburchak": ["Прямоугольник", "Rectangle"],
     "Aylana": ["Круг", "Circle"],
