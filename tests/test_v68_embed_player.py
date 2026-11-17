@@ -61,3 +61,18 @@ def test_prompt_lists_every_theme_and_free_action():
     for i in ids:
         assert f'"{i}" (' in prompt, i
     assert "set_theme" in monitoring.FREE_ACTIONS
+
+
+def test_prompt_has_no_contradictions_or_false_claims():
+    """v68: prompt tozalandi — qarama-qarshi raqamlar, noto'g'ri da'volar va takrorlar qaytib kelmasin."""
+    p = main._read_default_system_prompt()
+    assert "use y >= 70 ALWAYS" not in p and "use y >= 100 ALWAYS" not in p      # sarlavha 40, kontent 140 (section 2)
+    assert "1008" not in p                                                        # slayd kengligi 960
+    assert "selectable text layer" not in p                                       # PDF sahifalari — rasm
+    assert "wins on any conflict" not in p and "section 2 wins" not in p          # bitta RULE PRIORITY
+    assert "RULE PRIORITY" in p
+    assert "title 36–44" not in p                                                 # o'lchamlar faqat section 2 da
+    assert 'default "Montserrat"' not in p and "Montserrat / Inter / Roboto by default" not in p   # PowerPoint-safe Arial
+    assert "100% bilgan" not in p                                                 # YouTube ID ni o'ylab topmaslik
+    assert '"height":56,"fill":"#2563eb"}' not in p                               # havola + fill qarama-qarshiligi
+    assert p.count("STRICT CARD & PADDING ALIGNMENT RULE") == 0
