@@ -268,6 +268,14 @@
     }
     // v42: file:// dan ochilganda YouTube/Vimeo iframe "Referer" bo'lmagani uchun xato beradi (153) — muqova + havola ko'rsatamiz
     var FILE_MODE = (location.protocol === 'file:');
+    // v68: file:// da video bizning saytdagi /embed-player sahifasi orqali o'ynaydi (Referer = sayt, xato 153 yo'q)
+    // — slaydning O'Z JOYIDA, avvalgidek YouTube'ga o'tib ketmasdan. Internet yo'q bo'lsa — muqova + havola.
+    var RELAY = (typeof window.__SS_RELAY === 'string' && /^https?:\/\//.test(window.__SS_RELAY)) ? window.__SS_RELAY : '';
+    function relaySrc(kind, id, au, mu, lp, st, bg, hash) {
+      if (!RELAY || !id || (typeof navigator !== 'undefined' && navigator.onLine === false)) return '';
+      return RELAY + '?k=' + encodeURIComponent(kind) + '&id=' + encodeURIComponent(id) + '&au=' + (au ? 1 : 0) + '&mu=' + (mu ? 1 : 0) +
+        '&lp=' + (lp ? 1 : 0) + '&st=' + (parseInt(st, 10) || 0) + '&bg=' + (bg ? 1 : 0) + (hash ? '&h=' + encodeURIComponent(hash) : '');
+    }
     function watchUrlOf(o) {
       var id = o.embedId;
       return o.embedKind === 'youtube' && id ? 'https://www.youtube.com/watch?v=' + id
@@ -295,7 +303,11 @@
       if (o.embedKind === 'youtube') src = 'https://www.youtube.com/embed/' + id + '?rel=0&playsinline=1&controls=1&autoplay=' + au + '&mute=' + (au ? 1 : mu) + (lp ? '&loop=1&playlist=' + id : '') + (o.embedStart ? '&start=' + o.embedStart : '');
       else if (o.embedKind === 'vimeo') src = 'https://player.vimeo.com/video/' + id + '?autoplay=' + au + '&muted=' + (au ? 1 : mu) + '&loop=' + lp + (o.embedHash ? '&h=' + o.embedHash : '');
       else if (o.embedKind === 'dailymotion') src = 'https://www.dailymotion.com/embed/video/' + id + '?autoplay=' + au + '&mute=' + mu;
-      if (FILE_MODE && (o.embedKind === 'youtube' || o.embedKind === 'vimeo' || o.embedKind === 'dailymotion')) { wrap.appendChild(posterLink(o)); return wrap; }
+      if (FILE_MODE && (o.embedKind === 'youtube' || o.embedKind === 'vimeo' || o.embedKind === 'dailymotion')) {
+        var rs = relaySrc(o.embedKind, id, au, mu, lp, o.embedStart, 0, o.embedHash);
+        if (!rs) { wrap.appendChild(posterLink(o)); return wrap; }
+        src = rs;
+      }
       var ph0 = mk('div', 'vidph'); ph0.innerHTML = '<svg viewBox="0 0 24 24" width="22%" height="22%"><circle cx="12" cy="12" r="11" fill="rgba(255,255,255,.9)"/><path d="M9.5 7.5v9l7-4.5z" fill="#111827"/></svg>';
       wrap.appendChild(ph0);
       if (src) {
@@ -421,14 +433,15 @@
         var vu = String(p.backgroundVideo.url);
         var m = vu.match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([\w-]{11})/);
         var vm = vu.match(/vimeo\.com\/(?:video\/)?(\d+)/);
-        if ((m || vm) && FILE_MODE) {
+        var bgRelay = FILE_MODE && (m || vm) ? relaySrc(m ? 'youtube' : 'vimeo', m ? m[1] : vm[1], 1, 1, 1, 0, 1) : '';
+        if ((m || vm) && FILE_MODE && !bgRelay) {
           var tu = p.backgroundVideo.thumbData || p.backgroundVideo.thumb || (m ? 'https://i.ytimg.com/vi/' + m[1] + '/hqdefault.jpg' : '');
           if (tu) bg.style.background = 'center / cover no-repeat url("' + tu + '")';
           return bg;
         }
         if (m || vm) {
           var fr = mk('iframe');
-          fr.src = m ? 'https://www.youtube.com/embed/' + m[1] + '?autoplay=1&mute=1&loop=1&playlist=' + m[1] + '&controls=0&showinfo=0&disablekb=1&fs=0&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3'
+          fr.src = bgRelay ? bgRelay : m ? 'https://www.youtube.com/embed/' + m[1] + '?autoplay=1&mute=1&loop=1&playlist=' + m[1] + '&controls=0&showinfo=0&disablekb=1&fs=0&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3'
                      : 'https://player.vimeo.com/video/' + vm[1] + '?background=1&autoplay=1&muted=1&loop=1';
           fr.setAttribute('allow', 'autoplay; encrypted-media'); fr.setAttribute('loading', 'eager'); fr.tabIndex = -1;
           fr.style.cssText = 'position:absolute;left:50%;top:50%;width:100%;height:100%;border:0;pointer-events:none;transform:translate(-50%,-50%) scale(1.4);opacity:0;transition:opacity .6s ease';
@@ -778,6 +791,14 @@
   }
 
   var _busy = false;
+  // v68: yuklab olingan HTML (file://) ichida YouTube/Vimeo videosi o'z joyida o'ynashi uchun pleyer manzili
+  function relayScript() {
+    try {
+      if (!/^https?:$/.test(location.protocol)) return '';
+      return '<script>window.__SS_RELAY=' + jsonForScript(location.origin + '/embed-player') + ';</script>\n';
+    } catch (e) { return ''; }
+  }
+  window.ssHtmlRelayScript = relayScript;
   async function exportHTMLv40() {
     if (_busy) { toast('HTML tayyorlanmoqda, biroz kuting…'); return; }
     if (window.isAiApplyingCommands || window.isAiStreaming) { toast("AI slayd yaratmoqda — tugagach qayta urinib ko'ring", 'error'); return; }
@@ -866,6 +887,7 @@
         '<noscript>Bu taqdimotni ko\u2018rish uchun JavaScript yoqilgan bo\u2018lishi kerak.</noscript>\n' +
         '<script type="application/json" id="project-data">' + jsonForScript(project) + '</script>\n' +
         '<script type="application/json" id="sprite-data">' + jsonForScript(sprites) + '</script>\n' +
+        relayScript() +
         '<script>\n' + runtime.replace(/<\/script/gi, '<\\/script') + '\n</script>\n</body>\n</html>';
 
       var blob = new Blob([html], { type: 'text/html;charset=utf-8' });

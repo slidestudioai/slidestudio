@@ -1044,6 +1044,52 @@ def healthz():
     return {"ok": True, "ai": bool((config.get("api_key") or "").strip()), "auth": bool(supabase)}
 
 # ---------------------------------------------------------------------------------------------
+# v68: yuklab olingan HTML taqdimot (file:// dan ochilgan) ichidagi YouTube / Vimeo / Dailymotion pleyeri.
+# file:// sahifada Referer bo'lmaydi va YouTube pleyeri «xato 153» beradi. HTML fayl videoni shu sahifa orqali
+# o'ynatadi: Referer = bizning sayt, video slaydning O'Z JOYIDA o'ynaydi (havolaga o'tib ketmaydi).
+# Istalgan joydan iframe ichida ochilishi kerak (file:// ham) — shuning uchun frame-ancestors qo'yilmaydi.
+# ---------------------------------------------------------------------------------------------
+_EMBED_ID_RE = {
+    "youtube": _re.compile(r"^[\w-]{11}$"),
+    "vimeo": _re.compile(r"^\d{1,12}$"),
+    "dailymotion": _re.compile(r"^[a-zA-Z0-9]{5,12}$"),
+}
+
+@app.get("/embed-player")
+def embed_player(k: str = "youtube", id: str = "", au: int = 1, mu: int = 1, lp: int = 1, st: int = 0, bg: int = 0, h: str = ""):
+    rx = _EMBED_ID_RE.get(k)
+    if not rx or not rx.match(id or ""):
+        raise HTTPException(400, "Noto'g'ri video")
+    au, mu, lp, bg = (1 if au else 0), (1 if mu else 0), (1 if lp else 0), (1 if bg else 0)
+    st = max(0, min(int(st or 0), 86400))
+    if bg:
+        au, mu, lp = 1, 1, 1
+    if k == "youtube":
+        q = f"rel=0&playsinline=1&autoplay={au}&mute={1 if au else mu}&controls={0 if bg else 1}"
+        if lp:
+            q += f"&loop=1&playlist={id}"
+        if st:
+            q += f"&start={st}"
+        if bg:
+            q += "&disablekb=1&fs=0&modestbranding=1&iv_load_policy=3"
+        src = f"https://www.youtube.com/embed/{id}?{q}"
+    elif k == "vimeo":
+        hh = h if _re.match(r"^[0-9a-f]{6,20}$", h or "") else ""
+        src = f"https://player.vimeo.com/video/{id}?autoplay={au}&muted={1 if au else mu}&loop={lp}" + ("&background=1" if bg else "") + (f"&h={hh}" if hh else "")
+    else:
+        src = f"https://www.dailymotion.com/embed/video/{id}?autoplay={au}&mute={mu}"
+    page = ("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<meta name=\"referrer\" content=\"strict-origin-when-cross-origin\"><title>Video</title>"
+            "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}iframe{position:absolute;inset:0;width:100%;height:100%;border:0}</style>"
+            f"</head><body><iframe src=\"{src}\" title=\"Video\" allow=\"autoplay; fullscreen; encrypted-media; picture-in-picture\" allowfullscreen "
+            "referrerpolicy=\"strict-origin-when-cross-origin\"></iframe></body></html>")
+    return HTMLResponse(page, headers={
+        # frame-ancestors YO'Q: yuklab olingan HTML fayl (file://) ichida ochilishi kerak
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-src https://www.youtube.com https://player.vimeo.com https://www.dailymotion.com",
+        "Cache-Control": "public, max-age=86400",
+    })
+
+# ---------------------------------------------------------------------------------------------
 # v43: Telegram bot (webhook) — backend/telegram_bot.py. TELEGRAM_BOT_TOKEN yo'q bo'lsa hech narsa qilmaydi.
 # ---------------------------------------------------------------------------------------------
 try:
