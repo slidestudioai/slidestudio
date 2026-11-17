@@ -93,3 +93,44 @@ test('F1+F3: several slides come one after another, in order, with no artificial
   // before: >= 2 s minimum per slide (+ 0.7 s hold + image wait) -> 4 slides took > 10 s
   expect(total).toBeLessThan(9000);
 });
+
+test('F4: «To\'xtatish» stops the AI on the server, keeps finished slides, socket stays open', async ({ page }) => {
+  await openEditor(page);
+  await login(page);
+  await page.evaluate(() => {
+    window.__msgs = [];
+    const om = socket.onmessage;
+    socket.onmessage = function (ev) { try { window.__msgs.push(JSON.parse(ev.data)); } catch (e) {} return om.apply(this, arguments); };
+    window.__done = 0;
+    const orig = window.ssMarkSlideDone;
+    window.ssMarkSlideDone = function () { window.__done++; return orig.apply(this, arguments); };
+  });
+  await page.fill('#aiSidebarInput', '6 ta slayd yarat sekin');
+  await page.evaluate(() => sendSidebarAiPrompt());
+  await page.waitForFunction(() => isAiStreaming && (currentAiStreamBuffer || '').length > 80, null, { timeout: 30_000 });
+  // the main button is now «To'xtatish»
+  await expect(page.locator('#btnSidebarAi.stop-mode')).toHaveCount(1);
+  const reqId = await page.evaluate(() => window._ssAiReq.id);
+  const sock = await page.evaluate(() => { window.__sock = socket; return socket.readyState; });
+  const t0 = Date.now();
+  await page.click('#btnSidebarAi');
+  // the server answers «stopped» quickly (it read the cancel during the stream)
+  await page.waitForFunction((id) => window.__msgs.some((m) => m.type === 'end' && m.request_id === id), reqId, { timeout: 5000 });
+  const tookMs = Date.now() - t0;
+  const end = await page.evaluate((id) => window.__msgs.find((m) => m.type === 'end' && m.request_id === id), reqId);
+  expect(end.finish_reason).toBe('stopped');
+  expect(tookMs).toBeLessThan(3000);
+  expect(await page.evaluate(() => socket === window.__sock && socket.readyState === 1)).toBe(true);   // not closed
+  await expect(page.locator('#btnSidebarAi.stop-mode')).toHaveCount(0);
+  // no slide is added after the stop; finished slides are still there
+  const slidesAtStop = await page.evaluate(() => slides.length);
+  await page.waitForTimeout(1500);
+  expect(await page.evaluate(() => slides.length)).toBe(slidesAtStop);
+  expect(slidesAtStop).toBeGreaterThanOrEqual(1);
+  // the next request works at once (no AI_BUSY, no stale chunks of the stopped answer)
+  await page.fill('#aiSidebarInput', '1 ta slayd yarat');
+  await page.evaluate(() => sendSidebarAiPrompt());
+  await page.waitForFunction(() => !isAiStreaming, null, { timeout: 30_000 });
+  const errs = await page.evaluate(() => window.__msgs.filter((m) => m.type === 'error').map((m) => m.code || m.message));
+  expect(errs).toEqual([]);
+});
