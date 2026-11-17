@@ -283,3 +283,26 @@
 .tu-cta:not(:disabled), .tu-cta:disabled {
   box-shadow: 0 10px 30px rgba(124, 108, 255, .4), inset 0 1px 0 rgba(255, 255, 255, .25), 0 -14px 16px -6px rgba(15, 18, 32, .95);
 }
+
+/* ---------- Mobil klaviatura: input yopilmasin, tugmalar uning ustiga chiqmasin ----------
+ * --tu-vv-h / --tu-vv-top: klaviatura ochilgandagi KO'RINADIGAN balandlik (visualViewport, js/46_topup.js).
+ * Android (interactive-widget=resizes-content) da 100dvh o'zi kichrayadi; iOS Safari da faqat visualViewport — shu uchun ikkalasi. */
+.tu-overlay {
+  inset: auto; left: 0; right: 0;
+  top: var(--tu-vv-top, 0px);
+  height: 100vh;                                /* juda eski brauzerlar uchun zaxira */
+  height: var(--tu-vv-h, 100dvh);
+}
+.tu-card { max-height: calc(var(--tu-vv-h, 100dvh) - 32px); }
+.tu-head, .tu-foot { flex: none; }
+/* skrol qilinadigan qism kichraya olsin (avval min-height yo'qligidan pastki panel uning ustiga tushardi) */
+.tu-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+@media (max-width: 560px) {
+  .tu-card { max-height: calc(var(--tu-vv-h, 100dvh) * .85); overflow-y: auto; }
+}
+/* summa yozilayotganda (klaviatura ochiq): to'lov tugmasi input ustiga yopishmaydi, karta logotiplari joy egallamaydi */
+.tu-overlay.tu-kb .tu-cta { position: static; }
+.tu-overlay.tu-kb .tu-foot { display: none; }
+.tu-overlay.tu-kb .tu-card { max-height: calc(var(--tu-vv-h, 100dvh) - 8px); }
+@media (max-width: 560px) { .tu-overlay.tu-kb .tu-card { max-height: calc(var(--tu-vv-h, 100dvh) - 8px); } }
+#tuCustomInput { scroll-margin: 24px 0; }

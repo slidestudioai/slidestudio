@@ -200,6 +200,7 @@
     refreshBalance();
     loadFee();
     els.modal.hidden = false;
+    vvStart();
     requestAnimationFrame(function () { els.modal.classList.add('tu-open'); });
     setTimeout(function () {
       var cur = els.grid.querySelector('[aria-checked="true"]') || els.grid.firstElementChild;
@@ -207,8 +208,71 @@
     }, 60);
     document.addEventListener('keydown', onKey, true);
   }
+  /* ---------------- mobil klaviatura: summa inputi ko'rinib tursin ----------------
+   * Telefonda klaviatura ochilganda (iOS Safari: faqat visualViewport qisqaradi; Android: butun sahifa) modal
+   * KO'RINADIGAN qismga joylashadi (--tu-vv-h / --tu-vv-top), to'lov tugmasi input ustiga yopishmaydi (.tu-kb) va
+   * input ekran o'rtasiga silliq suriladi. */
+  var vvOn = false, revealTimer = 0, kbOffTimer = 0;
+  var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  function revealInput() {
+    clearTimeout(revealTimer);
+    revealTimer = setTimeout(function () {          // klaviatura animatsiyasi tugagach
+      try { els.input.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+    }, 300);
+  }
+  function vvSync() {
+    if (!els.modal || els.modal.hidden) return;
+    var vv = window.visualViewport;
+    if (vv) {
+      els.modal.style.setProperty('--tu-vv-h', Math.round(vv.height) + 'px');
+      els.modal.style.setProperty('--tu-vv-top', Math.round(vv.offsetTop) + 'px');
+    }
+    var kbOpen = !!vv && (window.innerHeight - vv.height > 120);
+    var typing = document.activeElement === els.input;
+    if (typing && (kbOpen || coarse)) { clearTimeout(kbOffTimer); els.modal.classList.add('tu-kb'); }
+    if (typing) revealInput();
+  }
+  function vvStart() {
+    if (vvOn) return;
+    vvOn = true;
+    var vv = window.visualViewport;
+    if (vv) { vv.addEventListener('resize', vvSync); vv.addEventListener('scroll', vvSync); }
+    window.addEventListener('resize', vvSync);
+    vvSync();
+  }
+  function vvStop() {
+    if (!vvOn) return;
+    vvOn = false;
+    var vv = window.visualViewport;
+    if (vv) { vv.removeEventListener('resize', vvSync); vv.removeEventListener('scroll', vvSync); }
+    window.removeEventListener('resize', vvSync);
+    els.modal.classList.remove('tu-kb');
+    els.modal.style.removeProperty('--tu-vv-h');
+    els.modal.style.removeProperty('--tu-vv-top');
+  }
+  function onInputFocus() {
+    if (els.input.value) onCustomInput();
+    vvSync();
+    revealInput();
+  }
+  function onInputBlur() {
+    // kechiktirib: «To'lovga o'tish» ga tegilganda tugma joyidan siljib ketmasin (bosish o'tib bo'lgach)
+    clearTimeout(kbOffTimer);
+    kbOffTimer = setTimeout(function () {
+      if (document.activeElement !== els.input) els.modal.classList.remove('tu-kb');
+    }, 350);
+  }
+  function onInputTyping() {
+    // raqam yozila boshladi — tayyor paket (masalan «Popular») tanlovi va belgisi darhol yechiladi
+    if (els.input.value.trim()) {
+      els.grid.querySelectorAll('.tu-pkg[aria-checked="true"]').forEach(function (b) { b.setAttribute('aria-checked', 'false'); });
+    }
+    onCustomInput();
+  }
+
   function close() {
     if (!els.modal || els.modal.hidden) return;
+    vvStop();
     els.modal.classList.remove('tu-open');
     document.removeEventListener('keydown', onKey, true);
     setTimeout(function () { els.modal.hidden = true; }, 220);
@@ -405,8 +469,9 @@
       var b = e.target.closest('.tu-pkg'); if (b) selectPackage(b.getAttribute('data-pkg'));
     });
     els.grid.addEventListener('keydown', onGridKey);
-    els.input.addEventListener('input', onCustomInput);
-    els.input.addEventListener('focus', function () { if (els.input.value) onCustomInput(); });
+    els.input.addEventListener('input', onInputTyping);
+    els.input.addEventListener('focus', onInputFocus);
+    els.input.addEventListener('blur', onInputBlur);
     els.input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); checkout(); } });
     els.pay.addEventListener('click', checkout);
     document.addEventListener('ss:usage', function () { if (!m.hidden) renderBalance(false); });

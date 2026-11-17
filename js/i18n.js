@@ -156,8 +156,11 @@
       '#ssLangBtn{height:34px;min-width:44px;padding:0 10px;border-radius:17px;border:1px solid #dadce0;background:#fff;color:#1f2937;' +
       ' font:600 12.5px/1 system-ui,sans-serif;cursor:pointer;display:inline-flex;align-items:center;gap:4px}' +
       '#ssLangBtn:hover{background:#f1f3f4}' +
-      '#ssLangMenu{position:absolute;top:calc(100% + 6px);right:0;z-index:100001;min-width:150px;background:#fff;border:1px solid #e5e7eb;' +
-      ' border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.14);padding:6px;display:none}' +
+      '#ssLangBtn{touch-action:manipulation;-webkit-tap-highlight-color:transparent;pointer-events:auto;position:relative;z-index:2}' +
+      // the menu lives in <body> (not in the header): no overflow / mask / transform of the scrolling mobile header can clip it
+      '#ssLangMenu{position:fixed;top:0;left:0;z-index:2147483000;min-width:170px;background:#fff;border:1px solid #e5e7eb;' +
+      ' border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.14);padding:6px;display:none;max-height:calc(100dvh - 16px);overflow-y:auto}' +
+      '#ssLangMenu button{touch-action:manipulation;-webkit-tap-highlight-color:transparent;min-height:44px}' +
       '#ssLangMenu.open{display:block}' +
       '#ssLangMenu button{display:flex;width:100%;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;border:0;' +
       ' background:none;border-radius:8px;cursor:pointer;font:500 14px/1.2 system-ui,sans-serif;color:#1f2937;text-align:left}' +
@@ -172,13 +175,37 @@
     LANGS.forEach(function (l) {
       var b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitemradio'); b.dataset.lang = l;
       b.innerHTML = '<span>' + D.names[l] + '</span><small>' + D.short[l] + '</small>';
-      b.addEventListener('click', function () { menu.classList.remove('open'); set(l); });
+      b.addEventListener('click', function (e) { e.stopPropagation(); closeMenu(); set(l); });
       menu.appendChild(b);
     });
-    btn.addEventListener('click', function (e) { e.stopPropagation(); menu.classList.toggle('open'); });
-    document.addEventListener('click', function () { menu.classList.remove('open'); });
-    wrap.appendChild(btn); wrap.appendChild(menu);
+    function placeMenu() {
+      var r = btn.getBoundingClientRect();
+      var mw = menu.offsetWidth || 170, mh = menu.offsetHeight || 160;
+      var vw = window.innerWidth || document.documentElement.clientWidth;
+      var vh = window.innerHeight || document.documentElement.clientHeight;
+      var top = r.bottom + 6;
+      if (top + mh > vh - 8 && r.top - mh - 6 > 8) top = r.top - mh - 6;       // no room below -> open upwards
+      menu.style.top = Math.round(top) + 'px';
+      menu.style.left = Math.round(Math.max(8, Math.min(r.right - mw, vw - mw - 8))) + 'px';
+    }
+    function openMenu() { menu.classList.add('open'); btn.setAttribute('aria-expanded', 'true'); placeMenu(); }
+    function closeMenu() { menu.classList.remove('open'); btn.setAttribute('aria-expanded', 'false'); }
+    btn.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (menu.classList.contains('open')) closeMenu(); else openMenu();
+    });
+    // outside tap closes it (pointerdown: on iOS a tap on a plain element does not fire "click")
+    document.addEventListener('pointerdown', function (e) {
+      if (!menu.classList.contains('open')) return;
+      if (menu.contains(e.target) || btn.contains(e.target)) return;
+      closeMenu();
+    }, true);
+    window.addEventListener('resize', function () { if (menu.classList.contains('open')) placeMenu(); });
+    window.addEventListener('orientationchange', closeMenu);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
+    wrap.appendChild(btn);
     host.insertBefore(wrap, host.firstChild);
+    document.body.appendChild(menu);
     paintSwitcher();
   }
   function paintSwitcher() {
