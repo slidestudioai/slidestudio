@@ -74,7 +74,7 @@
       slides: parsed, sprites: sprites
     };
     var anim = ''; try { var ae = $('ssAnimStyle'); if (ae) anim = (ae.textContent || '').replace(/<\/style/gi, ''); } catch (e) {  }
-    var html = '<!DOCTYPE html><html lang="uz"><head><meta charset="UTF-8"><base href="' + location.href.split('#')[0].replace(/"/g, '') + '">' +
+    var html = '<!DOCTYPE html><html lang="uz" translate="no" class="notranslate"><head><meta charset="UTF-8"><meta name="google" content="notranslate"><base href="' + location.href.split('#')[0].replace(/"/g, '') + '">' +
       '<meta name="viewport" content="width=device-width,initial-scale=1">' + collectHeadAssets() +
       '<style>' + anim + '\n' + (window.ssViewerCss || '') + '\nhtml,body{background:#000}#app{background:#0f0f12}</style></head><body>' +
       window.ssViewerShellHtml(parsed.length, true, false) +
@@ -184,7 +184,16 @@
   // =====================================================================
   // 2) DOIMIY SAQLASH (IndexedDB) — brauzer yopilib ochilganda ham tayyor turadi
   // =====================================================================
-  var DB_NAME = 'slide-studio-v40', STORE = 'project', KEY = 'current';
+  // DRAFT (auto-save): the deck survives a reload, a phone browser restart and the trip to the payment page.
+  // One draft PER ACCOUNT (key = Supabase user id, or 'guest'), so another person on this browser never gets it.
+  // It is deleted only when the user confirms «Akkauntdan chiqish» (handleLogout -> ssClearSavedProject).
+  // IndexedDB (not localStorage): slides with images are far bigger than localStorage's ~5 MB, and the storage
+  // lock in index.html keeps localStorage for the login token only.
+  var DB_NAME = 'slide-studio-v40', STORE = 'project';
+  function draftKey(uid) {
+    var u = (uid != null) ? uid : (window._ssAuthUid || '');
+    return 'draft:' + (u ? String(u) : 'guest');
+  }
   var dbp = null;
   function openDb() {
     if (dbp) return dbp;
@@ -198,9 +207,9 @@
     });
     return dbp;
   }
-  function idbGet() { return openDb().then(function (db) { return new Promise(function (res, rej) { var r = db.transaction(STORE).objectStore(STORE).get(KEY); r.onsuccess = function () { res(r.result || null); }; r.onerror = function () { rej(r.error); }; }); }); }
-  function idbPut(v) { return openDb().then(function (db) { return new Promise(function (res, rej) { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(v, KEY); tx.oncomplete = res; tx.onerror = function () { rej(tx.error); }; }); }); }
-  function idbDel() { return openDb().then(function (db) { return new Promise(function (res) { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(KEY); tx.oncomplete = res; tx.onerror = res; }); }); }
+  function idbGet(key) { return openDb().then(function (db) { return new Promise(function (res, rej) { var r = db.transaction(STORE).objectStore(STORE).get(key); r.onsuccess = function () { res(r.result || null); }; r.onerror = function () { rej(r.error); }; }); }); }
+  function idbPut(key, v) { return openDb().then(function (db) { return new Promise(function (res, rej) { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(v, key); tx.oncomplete = res; tx.onerror = function () { rej(tx.error); }; }); }); }
+  function idbDel(key) { return openDb().then(function (db) { return new Promise(function (res) { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(key); tx.oncomplete = res; tx.onerror = res; }); }); }
 
   var blobMap = new Map();
   async function blobToData(u) {
@@ -224,24 +233,27 @@
   setTimeout(function () { window.__ssRestoreChecked = true; }, 12000);
   var armedAt = Date.now() + 8000;   // ishga tushgandan keyin 8 soniya saqlanmaydi (tiklash tugashi uchun)
   async function persistNow(force) {
-    // v48: faqat OXIRGI loyiha saqlanadi (bitta kalit 'current'); «Rasmni tozalash» bosilganda yangisi eskisini almashtiradi
-    return;                                   // v49: sayt hech narsani saqlamaydi — har safar 0 dan
     if (saving || typeof indexedDB === 'undefined') return;
-    if (!window.__ssRestoreChecked || Date.now() < armedAt) return;
+    if (window.__ssUserLogout) return;                         // logging out: nothing may be written any more
+    if (!window.__ssRestoreChecked || (!force && Date.now() < armedAt)) return;
     if (!slides || !slides.length) return;
+    if (safe(function () { return Date.now() < _canvasLoadingUntil; }, false)) return;   // half-loaded canvas: never save it
     if (!force && (aiBusy() || canvasBusy())) return;
     saving = true;
     try {
       if (!canvasBusy()) safe(function () { saveCurrentSlideState(); });
-      var list = slides, sig = slideSig() + '|' + (typeof projectTitle === 'string' ? projectTitle : '') + '|' + activeIndex;
+      var key = draftKey();
+      var list = slides, sig = key + '|' + slideSig() + '|' + (typeof projectTitle === 'string' ? projectTitle : '') + '|' + activeIndex;
       if (sig === lastSavedSig) return;
       var out = [];
       for (var i = 0; i < list.length; i++) {
         var p = {}; try { p = JSON.parse(list[i].json || '{}'); } catch (e) { p = {}; }
         await detachBlobs(p, 0);
-        out.push({ json: JSON.stringify(p), thumb: list[i].thumb || '', imageNumbers: list[i].imageNumbers || [], transition: list[i].transition || '' });
+        out.push({ json: JSON.stringify(p), thumb: list[i].thumb || '', imageNumbers: list[i].imageNumbers || [], transition: list[i].transition || '',
+                   transDur: list[i].transDur || 0, transAuto: list[i].transAuto || 0, bgType: list[i].bgType, bgVal: list[i].bgVal });
       }
-      await idbPut({ v: 1, title: projectTitle, activeIndex: activeIndex, slides: out, savedAt: Date.now() });
+      if (window.__ssUserLogout) return;
+      await idbPut(key, { v: 2, owner: key, title: projectTitle, activeIndex: activeIndex, slides: out, savedAt: Date.now() });
       lastSavedSig = sig;
     } catch (e) { console.warn('[v40] saqlash:', e); }
     finally { saving = false; }
@@ -250,14 +262,26 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') persistNow(true); });
   window.addEventListener('pagehide', function () { persistNow(true); });
   window.ssPersistNow = function () { return persistNow(true); };
-  window.ssClearSavedProject = function () { return idbDel(); };
+  /** Logout (confirmed): this account's draft + the guest draft are deleted. The old single 'current' key too. */
+  window.ssClearSavedProject = function (uid) {
+    lastSavedSig = '';
+    if (typeof indexedDB === 'undefined') return Promise.resolve();
+    return Promise.all([idbDel(draftKey(uid)), idbDel(draftKey('')), idbDel('current')]).catch(function () {});
+  };
 
-  /** 03_auth_project.js: initProjectFromUrl() ishga tushishida chaqiriladi */
+  /** 03_auth_project.js: initProjectFromUrl() calls this AFTER the account is known (appInit awaits the auth). */
   window.ssLoadSavedProject = async function () {
-    // v48: oxirgi saqlangan loyiha tiklanadi (faqat bitta). Xato bo'lsa — toza yangi loyiha.
     window.__ssRestoreChecked = true;
-    try { if (typeof indexedDB !== 'undefined') await pTimeoutP(idbDel(), 3000); } catch (e) {}   // v49: eski saqlanganini ham o'chiramiz
-    return null;
+    armedAt = Date.now() + 4000;
+    if (typeof indexedDB === 'undefined') return null;
+    // a fresh guest deck carried through the Google login wins (45_v63_guest_carry.js restores it)
+    try { if (window.__ssAuthStorage && window.__ssAuthStorage.getItem('ss-auth-v39-guest')) return null; } catch (e) {}
+    try {
+      var rec = await pTimeoutP(idbGet(draftKey()), 3000);
+      if (!rec || rec.owner !== draftKey() || !Array.isArray(rec.slides) || !rec.slides.length) return null;
+      lastSavedSig = '';
+      return rec;
+    } catch (e) { return null; }
   };
   function pTimeoutP(p, ms) { return Promise.race([p, new Promise(function (r) { setTimeout(function () { r(null); }, ms); })]); }
 

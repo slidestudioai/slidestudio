@@ -213,7 +213,6 @@
    * KO'RINADIGAN qismga joylashadi (--tu-vv-h / --tu-vv-top), to'lov tugmasi input ustiga yopishmaydi (.tu-kb) va
    * input ekran o'rtasiga silliq suriladi. */
   var vvOn = false, revealTimer = 0, kbOffTimer = 0;
-  var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   function revealInput() {
     clearTimeout(revealTimer);
     revealTimer = setTimeout(function () {          // klaviatura animatsiyasi tugagach
@@ -227,11 +226,17 @@
       els.modal.style.setProperty('--tu-vv-h', Math.round(vv.height) + 'px');
       els.modal.style.setProperty('--tu-vv-top', Math.round(vv.offsetTop) + 'px');
     }
-    var kbOpen = !!vv && (window.innerHeight - vv.height > 120);
+    // keyboard = the visible height dropped well below the tallest height seen (iOS: visualViewport shrinks;
+    // Android with interactive-widget=resizes-content: the whole window shrinks)
+    var visH = vv ? vv.height : window.innerHeight;
+    baseH = Math.max(baseH, window.innerHeight, visH);
+    var kbOpen = visH < baseH - 120;
     var typing = document.activeElement === els.input;
-    if (typing && (kbOpen || coarse)) { clearTimeout(kbOffTimer); els.modal.classList.add('tu-kb'); }
+    if (typing && kbOpen) { clearTimeout(kbOffTimer); els.modal.classList.add('tu-kb'); kbSeen = true; }
+    else if (kbSeen && !kbOpen) { kbSeen = false; els.modal.classList.remove('tu-kb'); }   // keyboard closed, input may stay focused
     if (typing) revealInput();
   }
+  var baseH = 0, kbSeen = false;
   function vvStart() {
     if (vvOn) return;
     vvOn = true;
@@ -247,6 +252,7 @@
     if (vv) { vv.removeEventListener('resize', vvSync); vv.removeEventListener('scroll', vvSync); }
     window.removeEventListener('resize', vvSync);
     els.modal.classList.remove('tu-kb');
+    kbSeen = false;
     els.modal.style.removeProperty('--tu-vv-h');
     els.modal.style.removeProperty('--tu-vv-top');
   }
@@ -427,7 +433,9 @@
         close();
         startWatch(expected, win);
       } else {
-        window.location.href = data.checkout_url;        // telefon: Dodo sahifasiga o'tish, keyin /?payment=success
+        // telefon: shu oynada Dodo sahifasiga o'tiladi — avval slaydlar saqlanadi (qaytganda tiklanadi)
+        try { if (window.ssPersistNow) await Promise.race([window.ssPersistNow(), new Promise(function (r) { setTimeout(r, 2500); })]); } catch (_) {}
+        window.location.href = data.checkout_url;        // keyin /?payment=success
       }
     } catch (err) {
       try { if (win && !win.closed) win.close(); } catch (_) {}

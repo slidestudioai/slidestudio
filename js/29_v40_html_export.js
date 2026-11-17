@@ -877,7 +877,7 @@
       var anim = '';
       try { var ae = document.getElementById('ssAnimStyle'); if (ae) anim = (ae.textContent || '').replace(/<\/style/gi, ''); } catch (e) {  }
       var runtime = '(' + ssViewerRuntime.toString() + ')();';
-      var html = '<!DOCTYPE html>\n<html lang="uz">\n<head>\n<meta charset="UTF-8">\n' +
+      var html = '<!DOCTYPE html>\n<html lang="uz" translate="no" class="notranslate">\n<head>\n<meta charset="UTF-8">\n<meta name="google" content="notranslate">\n' +
         '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n' +
         '<meta name="generator" content="Slide Studio v40">\n' +
         '<title>' + escHtml(title) + '</title>\n' + fonts.linkHtml + '\n' +

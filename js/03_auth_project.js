@@ -476,7 +476,49 @@
       }
     }
     window.handleGoogleLogin = handleGoogleLogin;
-    async function handleLogout() {
+    /** «Akkauntdan chiqish» confirmation (own modal: does not depend on the SweetAlert CDN). Resolves true/false. */
+    function ssConfirmLogout() {
+      return new Promise(function (resolve) {
+        const old = document.getElementById('ssConfirm'); if (old) old.remove();
+        const ov = document.createElement('div');
+        ov.id = 'ssConfirm'; ov.className = 'ss-confirm-ov'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+        ov.innerHTML = '<div class="ss-confirm-card" role="document">' +
+          '<div class="ss-confirm-icon"><span class="material-symbols-outlined">logout</span></div>' +
+          '<h3 class="ss-confirm-title" id="ssConfirmTitle">Haqiqatan ham akkauntdan chiqmoqchimisiz?</h3>' +
+          '<p class="ss-confirm-text">Bu qurilmada saqlangan slaydlaringiz ham o\'chiriladi.</p>' +
+          '<div class="ss-confirm-actions">' +
+          '<button type="button" class="ss-confirm-cancel" data-ss-cancel>Bekor qilish</button>' +
+          '<button type="button" class="ss-confirm-ok" data-ss-ok>Chiqish</button></div></div>';
+        ov.setAttribute('aria-labelledby', 'ssConfirmTitle');
+        let done = false;
+        const finish = function (v) {
+          if (done) return; done = true;
+          document.removeEventListener('keydown', onKey, true);
+          ov.classList.remove('open');
+          setTimeout(function () { try { ov.remove(); } catch (e) {} }, 180);
+          resolve(v);
+        };
+        const onKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); finish(false); } };
+        ov.addEventListener('click', function (e) {
+          if (e.target === ov || e.target.closest('[data-ss-cancel]')) finish(false);
+          else if (e.target.closest('[data-ss-ok]')) finish(true);
+        });
+        ov.__ssClose = function () { finish(false); };          // phone «Orqaga» (54_back_nav.js)
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(ov);
+        requestAnimationFrame(function () { ov.classList.add('open'); try { ov.querySelector('[data-ss-cancel]').focus(); } catch (e) {} });
+      });
+    }
+    window.ssConfirmLogout = ssConfirmLogout;
+
+    async function handleLogout(opts) {
+      // every «Chiqish» button asks first; {confirmed: true} = already confirmed (tests / internal)
+      if (!(opts && opts.confirmed)) {
+        const ok = await ssConfirmLogout();
+        if (!ok) return false;
+      }
+      // the draft of THIS account is deleted only here (confirmed logout) — before the user id is forgotten
+      try { if (window.ssClearSavedProject) await window.ssClearSavedProject(window._ssAuthUid || ''); } catch (e) {}
       window.__ssUserLogout = true;
       // v63: chiqishda hech narsa qolmasin — vaqtincha mehmon nusxasi, kanvas va slaydlar tozalanadi (keyin sahifa qayta yuklanadi)
       try { if (window.ssDropGuestDeck) window.ssDropGuestDeck(); } catch (e) {}
@@ -507,6 +549,7 @@
       if (tokenBar) tokenBar.style.display = 'none';
       refreshUserProfileSection();
       showToast("Tizimdan chiqdingiz");
+      return true;
     }
     window.handleLogout = handleLogout;
     // Audit H4: the server caches the balance for ~15 s. fresh=true (payment / referral watchers) asks for a new value.
@@ -556,13 +599,22 @@
           currentProjectId = generateUUID();
           projectTitle = sv.title || projectTitle;
           const te2 = document.getElementById('presentationTitle'); if (te2) te2.innerText = projectTitle;
-          slides = sv.slides.map(function (s) { return { json: s.json || '{}', thumb: s.thumb || '', imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 }; });
+          slides = sv.slides.map(function (s) {
+            const o = { json: s.json || '{}', thumb: s.thumb || '', imageNumbers: s.imageNumbers || [], transition: s.transition || '', transDur: s.transDur || 0, transAuto: s.transAuto || 0 };
+            if (s.bgType) { o.bgType = s.bgType; o.bgVal = s.bgVal; }
+            return o;
+          });
           activeIndex = Math.max(0, Math.min(slides.length - 1, sv.activeIndex || 0));
           bumpObjectIdCounterFromSlides();
           renderSidebar();
           await loadSlideCanvasAsync(activeIndex);
           updateSlideCounterUI();
           setTimeout(function () { try { slides.forEach(function (s, i) { if (!s.thumb) refreshSlideThumb(i); }); } catch (e) {} }, 400);
+          try { recalculateGlobalImageCounter(); } catch (e) {}
+          window.__ssDraftRestored = slides.length;
+          if (slides.length > 1 || (sv.slides[0] && String(sv.slides[0].json || '').length > 120)) {
+            setTimeout(function () { showToast("Oldingi ishingiz tiklandi ✅"); }, 600);
+          }
           return;
         }
       } catch (e) { console.warn('saqlangan loyiha:', e); }

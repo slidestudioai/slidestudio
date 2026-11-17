@@ -297,8 +297,28 @@
 .tu-head, .tu-foot { flex: none; }
 /* skrol qilinadigan qism kichraya olsin (avval min-height yo'qligidan pastki panel uning ustiga tushardi) */
 .tu-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+/* Telefon: birinchi ochilishdayoq to'liq va optimal o'lchamda (balandlik kontentga qarab, eng ko'pi 92dvh).
+   Avval 85dvh edi — 792 px kontent 690 px ga sig'may, pasti kesilib ochilardi. Ixchamroq joylashuv bilan
+   paketlar, summa, komissiya va «To'lovga o'tish» 812 px ekranda skrolsiz ko'rinadi. */
 @media (max-width: 560px) {
-  .tu-card { max-height: calc(var(--tu-vv-h, 100dvh) * .85); overflow-y: auto; }
+  .tu-card { height: auto; max-height: calc(var(--tu-vv-h, 100dvh) * .92); overflow-y: auto; }
+  .tu-head { padding: 12px 16px 6px; row-gap: 6px; }
+  .tu-head h3 { font-size: 17px; }
+  .tu-sub { margin-top: 2px; font-size: 12px; }
+  .tu-balance { padding: 4px 10px; font-size: 12px; }
+  .tu-close { width: 32px; height: 32px; }
+  .tu-label { margin: 4px 0 6px; font-size: 11px; }
+  .tu-grid { gap: 8px; }
+  .tu-pkg { padding: 9px 11px; }
+  .tu-pkg-price { font-size: 18px; }
+  .tu-custom { margin-top: 2px; }
+  .tu-summary { margin-top: 10px; padding: 8px 12px; }
+  .tu-row { padding: 2px 0; font-size: 13px; }
+  .tu-divider { margin: 5px 0; }
+  .tu-cta { height: 48px; margin-top: 10px; }
+  .tu-foot { padding: 8px 16px 10px; }
+  .tu-pay-badges { gap: 6px; }
+  .tu-secure { margin-top: 6px; font-size: 11px; }
 }
 /* summa yozilayotganda (klaviatura ochiq): to'lov tugmasi input ustiga yopishmaydi, karta logotiplari joy egallamaydi */
 .tu-overlay.tu-kb .tu-cta { position: static; }
