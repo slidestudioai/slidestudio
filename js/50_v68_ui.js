@@ -38,6 +38,7 @@
       var menu = document.getElementById('ssLangMenu');
       var btn = document.getElementById('ssLangBtn');
       if (!menu || !btn) return;
+      if (!bar.contains(menu)) return;     // i18n.js now keeps the menu in <body> and positions it itself
       var on = menu.classList.contains('open') && getComputedStyle(bar).overflowX !== 'visible';
       menu.classList.toggle('ss-fixed', on);
       if (!on) { menu.style.left = ''; menu.style.top = ''; return; }
