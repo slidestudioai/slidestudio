@@ -207,12 +207,68 @@
     return o;
   }
 
+  // A deck of 16 slides x 4 pictures asked for 64 pictures at once: the proxy queue overflowed (busy / timeout),
+  // a picture that failed once was dropped and its slide stayed empty. Now: max LOAD_PARALLEL loads at a time (first
+  // slides first), each picture is tried again (RETRY_DELAYS), and if it still fails an unused picture of the
+  // same kind from this presentation's pool takes its place. Only when all of that fails the slot is removed.
+  const LOAD_PARALLEL = 6;
+  const RETRY_DELAYS = [0, 1500, 4000];
+  const LOAD_WAIT_MS = 20000;               // the slide is already shown -> the picture may take its time
+  let loading = 0;
+  const waiters = [];
+  const takenAlt = new Set();
+  function acquire() {
+    if (loading < LOAD_PARALLEL) { loading++; return Promise.resolve(); }
+    return new Promise(function (r) { waiters.push(r); });
+  }
+  function release() { const w = waiters.shift(); if (w) w(); else loading = Math.max(0, loading - 1); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  async function tryLoad(id, el) {
+    for (let k = 0; k < RETRY_DELAYS.length; k++) {
+      if (cancelled.has(id)) return null;
+      if (RETRY_DELAYS[k]) await sleep(RETRY_DELAYS[k]);
+      if (k > 0) { try { if (window.ssForgetProxyFail) window.ssForgetProxyFail(elUrl(el)); } catch (e) {} }
+      await acquire();
+      let o = null;
+      try { o = await realObject(Object.assign({}, el, { _ssLoadMs: LOAD_WAIT_MS })); } catch (e) { o = null; } finally { release(); }
+      if (o) return o;
+      if (cancelled.has(id)) return null;
+    }
+    return null;
+  }
+  function altFor(el) {
+    if (!el || el.type !== 'image') return null;
+    const pool = Array.isArray(window._ssImagePool) ? window._ssImagePool : [];
+    if (!pool.length) return null;
+    const used = deckUsedUrls(-1);
+    const p = pool.find(function (x) {
+      const u = normUrl(x && x.url);
+      return isHttp(u) && !used.has(u) && !takenAlt.has(u) && x.kind !== 'gif' && x.kind !== 'video' && !looksGif(u) && !looksVideo(u);
+    });
+    if (!p) return null;
+    const u = normUrl(p.url);
+    takenAlt.add(u);
+    return Object.assign({}, el, { src: u, ssSrcUrl: u });
+  }
+  async function loadMedia(id, el) {
+    let obj = await tryLoad(id, el);
+    for (let n = 0; !obj && n < 2 && !cancelled.has(id); n++) {
+      const alt = altFor(el);
+      if (!alt) break;
+      console.info('[lazy-media] picture failed, using another one from the pool:', elUrl(el), '->', alt.src);
+      obj = await tryLoad(id, alt);
+    }
+    if (!obj && !cancelled.has(id)) console.warn('[lazy-media] picture could not be loaded, slot removed:', elUrl(el));
+    return obj;
+  }
+
   function startLoad(id, el) {
     if (slots.has(id)) return slots.get(id).promise;
     const rec = { el: el, promise: null };
     rec.promise = (async function () {
       let obj = null;
-      try { obj = await realObject(el); } catch (e) { obj = null; }
+      try { obj = await loadMedia(id, el); } catch (e) { obj = null; }
       // the slide that holds this slot may not be stored yet (the image came from the preload cache very fast):
       // keep the result and retry until the slot shows up (max ~30 s)
       for (let attempt = 0; attempt < 250; attempt++) {
