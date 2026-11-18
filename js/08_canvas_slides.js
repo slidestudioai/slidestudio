@@ -283,7 +283,7 @@
       resetBtn.className = 'btn-reset-canvas';
       resetBtn.onclick = (e) => { e.stopPropagation(); if (window.ssResetCanvas) window.ssResetCanvas(); };
       resetBtn.innerHTML = `<span class="material-symbols-outlined">delete_sweep</span> Hamma varaqni tozalash`;
-      scrollArea.appendChild(resetBtn);
+      scrollArea.insertBefore(resetBtn, scrollArea.firstChild);      // eng tepada
       const aboutBtn = document.createElement('div');
       aboutBtn.className = 'btn-about-bot';
       aboutBtn.onclick = (e) => { e.stopPropagation(); if (window.ssShowAbout) window.ssShowAbout(); };
@@ -574,6 +574,8 @@
         try { canvas.setBackgroundColor(_preBg, () => {}); } catch (_) {}
         let parsed = {};
         try { parsed = JSON.parse(target.json || '{}'); } catch (e) {}
+        window.__ssMainCanvasLoading = true;        // 53_lazy_media: slow internet pictures do not hold this load back
+        try { setTimeout(function () { window.__ssMainCanvasLoading = false; }, 0); } catch (e) {}
         canvas.loadFromJSON(target.json, () => {
           if (myGeneration !== _canvasLoadGeneration) {
             _canvasOwner = target;   // fabric kanvasga aynan shu varaqni qo'ydi (garchi eskirgan bo'lsa ham)
@@ -730,8 +732,11 @@
             console.warn("Kutilmagan bo'sh canvas saqlanishi to'xtatildi (race).");
             skipFullSave = true;
           }
-          const prevImgCount = prevObjs.filter(o => o && (o.type === 'image' || o.type === 'gifImage' || o.isGif)).length;
-          const currImgCount = currentObjs.filter(o => o && (o.type === 'image' || o.type === 'gifImage' || o.isGif)).length;
+          // a media slot (picture still loading) counts as a picture: before, a slide whose pictures were still
+          // loading never saved the user's edits (the thumbnail on the left did not change either)
+          const _isPic = (o) => o && (o.type === 'image' || o.type === 'gifImage' || o.isGif || o.ssMediaSlot || o.type === 'ssMediaSlot' || o.type === 'videoImage');
+          const prevImgCount = prevObjs.filter(_isPic).length;
+          const currImgCount = currentObjs.filter(_isPic).length;
           if (!force && prevImgCount > 0 && currImgCount < prevImgCount) {
             console.warn("Rasmlar hali yuklanmagan — to'liq saqlash kechiktirildi (race).");
             skipFullSave = true;

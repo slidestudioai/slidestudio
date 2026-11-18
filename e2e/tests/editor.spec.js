@@ -159,6 +159,25 @@ test('chap panel tugmalari chetga yopishmagan, ikki tomonda teng joy', async ({ 
   for (const [l, rgt] of sizes) { expect(l).toBeGreaterThanOrEqual(12); expect(Math.abs(l - rgt)).toBeLessThanOrEqual(10); }
 });
 
+test('«Hamma varaqni tozalash» is at the TOP of the slide list and stays visible while it scrolls', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await openEditor(page);
+  await page.evaluate(() => { for (let i = 0; i < 12; i++) slides.push({ json: JSON.stringify({ objects: [], background: '#ffffff' }), thumb: '', imageNumbers: [] }); renderSidebar(); });
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(async () => {
+    const sc = document.querySelector('.sidebar-slides-scroll');
+    const first = sc.firstElementChild, last = sc.lastElementChild;
+    sc.scrollTop = sc.scrollHeight;
+    await new Promise((res) => setTimeout(res, 200));
+    const b = sc.querySelector('.btn-reset-canvas').getBoundingClientRect(), p = sc.getBoundingClientRect();
+    const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    renderSidebar();                                  // a re-render keeps the order
+    return { first: first.className, last: last.className, visible: b.top >= p.top - 1 && b.bottom <= p.bottom,
+             clickable: !!(hit && hit.closest('.btn-reset-canvas')), afterRender: sc.firstElementChild.className, items: sc.querySelectorAll('.slide-item').length };
+  });
+  expect(r).toEqual({ first: 'btn-reset-canvas', last: 'btn-add-slide-bottom', visible: true, clickable: true, afterRender: 'btn-reset-canvas', items: 13 });
+});
+
 test('pastki AI qatori, boshqaruv va zoom tugmalari ixcham; AI panel torroq', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 960 });
   await openEditor(page);

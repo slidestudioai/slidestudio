@@ -81,8 +81,10 @@
       type: 'ssMediaSlot',
       initialize: function (options) {
         options = options || {};
+        // selectable: the user can move / resize / delete a picture that is still loading (the picture then
+        // appears in the slot's new box; a deleted slot stops loading)
         this.callSuper('initialize', Object.assign({ fill: '#e9eef5', rx: 10, ry: 10, objectCaching: false,
-          selectable: false, evented: false, hoverCursor: 'default' }, options));
+          selectable: true, evented: true, lockRotation: false }, options));
         this.ssMediaSlot = true;
       },
       toObject: function (extra) {
@@ -256,6 +258,37 @@
     if (findSlideWithSlot(id) >= 0) return true;
     try { return !!(typeof canvas !== 'undefined' && canvas && canvas.getObjects().some(function (o) { return o && o.ssSlotId === id; })); } catch (e) { return false; }
   }
+  // the words to search a replacement picture with: the element's own hint, else its slide's title
+  function topicFor(id, el) {
+    const own = el && (el.alt || el.query || el.searchQuery || el.title || el.caption);
+    if (own && String(own).trim()) return String(own).trim().slice(0, 80);
+    let objs = null;
+    const i = findSlideWithSlot(id);
+    try { if (i >= 0) objs = JSON.parse(slides[i].json).objects; } catch (e) {}
+    try { if (!objs && typeof canvas !== 'undefined' && canvas && canvas.getObjects().some(function (o) { return o && o.ssSlotId === id; })) objs = canvas.getObjects(); } catch (e) {}
+    let best = null;
+    (objs || []).forEach(function (o) {
+      if (!o || !/text/i.test(o.type || '') || !String(o.text || '').trim()) return;
+      if (!best || (Number(o.fontSize) || 0) > (Number(best.fontSize) || 0)) best = o;
+    });
+    if (best) return String(best.text).replace(/\s+/g, ' ').trim().slice(0, 80);
+    try { if (typeof projectTitle === 'string' && projectTitle.trim()) return projectTitle.trim().slice(0, 80); } catch (e) {}
+    return '';
+  }
+  // a picture whose URL is dead (404, blocked site, not an image): search the same topic and take an unused result
+  async function searchedAlts(id, el) {
+    if (!el || el.type !== 'image') return [];
+    const q = topicFor(id, el);
+    if (!q) return [];
+    try {
+      const r = await fetch('/api/media-search?provider=image&limit=12&q=' + encodeURIComponent(q));
+      const d = await r.json();
+      const used = deckUsedUrls(-1);
+      return (d.results || []).map(function (x) { return normUrl(x && (x.url || x.src)); })
+        .filter(function (u) { return isHttp(u) && !used.has(u) && !takenAlt.has(u) && !looksGif(u) && !looksVideo(u); })
+        .slice(0, 3);
+    } catch (e) { return []; }
+  }
   async function loadMedia(id, el) {
     let obj = await tryLoad(id, el);
     for (let n = 0; !obj && n < 2 && !cancelled.has(id); n++) {
@@ -263,6 +296,14 @@
       if (!alt) break;
       console.info('[lazy-media] picture failed, using another one from the pool:', elUrl(el), '->', alt.src);
       obj = await tryLoad(id, alt);
+    }
+    if (!obj && !cancelled.has(id)) {
+      const urls = await searchedAlts(id, el);
+      for (let n = 0; !obj && n < urls.length && !cancelled.has(id); n++) {
+        takenAlt.add(urls[n]);
+        console.info('[lazy-media] picture failed, using a new search result:', elUrl(el), '->', urls[n]);
+        obj = await tryLoad(id, Object.assign({}, el, { src: urls[n], ssSrcUrl: urls[n] }));
+      }
     }
     // A picture is NEVER given up while its slot is in the deck: the shimmer stays and the same picture is asked
     // for again every 15 s (network back, server not busy any more ...). Only a slot that is gone (slide deleted /
@@ -307,17 +348,45 @@
     return rec.promise;
   }
 
+  // the user may have moved / resized the slot meanwhile: the picture takes the slot's current box
+  function fitToSlot(obj, slot) {
+    try {
+      const sw = slot.width * (slot.scaleX || 1), sh = slot.height * (slot.scaleY || 1);
+      const ow = obj.width * (obj.scaleX || 1), oh = obj.height * (obj.scaleY || 1);
+      if (sw > 0 && sh > 0 && ow > 0 && oh > 0) obj.set({ scaleX: (obj.scaleX || 1) * sw / ow, scaleY: (obj.scaleY || 1) * sh / oh });
+      obj.set({ left: slot.left, top: slot.top, angle: slot.angle || 0 });
+      obj.setCoords();
+    } catch (e) {}
+  }
+  function slotJsonFromSlide(id) {
+    const i = findSlideWithSlot(id);
+    if (i < 0) return null;
+    try { return (JSON.parse(slides[i].json).objects || []).find(function (o) { return o && o.ssSlotId === id; }) || null; } catch (e) { return null; }
+  }
+
   function swapIn(id, obj) {
+    let liveSlot = null;
+    try { liveSlot = (typeof canvas !== 'undefined' && canvas) ? canvas.getObjects().find(function (o) { return o && o.ssSlotId === id; }) : null; } catch (e) {}
+    if (obj && liveSlot) fitToSlot(obj, liveSlot);
     const json = obj ? serialize(obj) : null;
     if (obj && json) {
       try { json.opacity = (obj.opacity == null ? 1 : obj.opacity); } catch (e) {}
     }
     // 1) the stored slide (any slide, even if the user is looking at another one)
     const i = findSlideWithSlot(id);
-    let liveSlot = null;
-    try { liveSlot = (typeof canvas !== 'undefined' && canvas) ? canvas.getObjects().find(function (o) { return o && o.ssSlotId === id; }) : null; } catch (e) {}
     if (i < 0 && !liveSlot) return false;          // not stored anywhere yet -> caller retries
-    if (i >= 0) patchSlideJson(i, id, json);
+    if (i >= 0 && json && !liveSlot) {
+      const sj = slotJsonFromSlide(id);
+      if (sj && obj) {
+        try {
+          const tmp = new (defineSlot())(sj);
+          fitToSlot(obj, tmp);
+          const j2 = serialize(obj);
+          if (j2) { j2.opacity = (obj.opacity == null ? 1 : obj.opacity); patchSlideJson(i, id, j2); }
+          else patchSlideJson(i, id, json);
+        } catch (e) { patchSlideJson(i, id, json); }
+      } else patchSlideJson(i, id, json);
+    } else if (i >= 0) patchSlideJson(i, id, json);
     // 2) the live canvas, with a fade-in in exactly the same box
     let live = false;
     try {
@@ -327,8 +396,11 @@
         if (slot) {
           live = true;
           const z = list.indexOf(slot);
+          const wasActive = canvas.getActiveObject && canvas.getActiveObject() === slot;
+          if (obj) fitToSlot(obj, slot);
           canvas.remove(slot);
           if (obj) {
+            if (wasActive) { try { canvas.setActiveObject(obj); } catch (e) {} }
             const target = (obj.opacity == null ? 1 : obj.opacity);
             obj.set({ opacity: 0 });
             canvas.insertAt(obj, z);
@@ -481,27 +553,40 @@
 
   // fabric drops a saved picture whose URL does not load when the slide is opened (and the next save loses it for
   // good). Instead a shimmer slot takes its place at the same box; it keeps the URL and loads the picture again.
+  // While the main slide canvas loads (window.__ssMainCanvasLoading, set by loadSlideCanvas), a picture from the
+  // internet that is not there within MAIN_LOAD_WAIT_MS does not hold the slide back: its slot is shown and the
+  // picture fades in when it arrives. (A load that never ended kept «AI is working» on, and then NO edit was saved.)
+  const MAIN_LOAD_WAIT_MS = 1500;
+  function savedPictureSlot(object, url) {
+    try {
+      const sx = Number(object.scaleX) || 1, sy = Number(object.scaleY) || 1;
+      const el = {
+        type: 'image', src: url, ssSrcUrl: url,
+        left: object.left, top: object.top, angle: object.angle || 0,
+        width: Math.max(1, Math.round((Number(object.width) || 200) * sx)),
+        height: Math.max(1, Math.round((Number(object.height) || 150) * sy)),
+      };
+      ['opacity', 'imageNumber', 'imageHash', 'id', '_oid'].forEach(function (k) { if (object[k] != null) el[k] = object[k]; });
+      return slotFor(el);
+    } catch (e) { return null; }
+  }
   function patchImageFromObject() {
     if (typeof fabric === 'undefined' || !fabric.Image || fabric.Image.__ssSafe) return;
     const orig = fabric.Image.fromObject;
     if (typeof orig !== 'function') return;
     fabric.Image.fromObject = function (object, callback) {
+      const url = object && (isHttp(object.ssSrcUrl) ? object.ssSrcUrl : (isHttp(object.src) ? object.src : ''));
+      let done = false;
+      const finish = function (img, isError) { if (done) return; done = true; if (callback) callback(img, isError); };
+      const srcIsHttp = object && isHttp(object.src);       // a data: URL is already here: never slow
+      if (url && srcIsHttp && window.__ssMainCanvasLoading && !window.__ssLazyMediaOff) {
+        setTimeout(function () { if (!done) { const sl = savedPictureSlot(object, url); if (sl) finish(sl, false); } }, MAIN_LOAD_WAIT_MS);
+      }
       return orig.call(this, object, function (img, isError) {
-        const url = object && (isHttp(object.ssSrcUrl) ? object.ssSrcUrl : (isHttp(object.src) ? object.src : ''));
-        if ((img && !isError) || !url || window.__ssLazyMediaOff) { if (callback) callback(img, isError); return; }
-        let slot = null;
-        try {
-          const sx = Number(object.scaleX) || 1, sy = Number(object.scaleY) || 1;
-          const el = {
-            type: 'image', src: url, ssSrcUrl: url,
-            left: object.left, top: object.top, angle: object.angle || 0,
-            width: Math.max(1, Math.round((Number(object.width) || 200) * sx)),
-            height: Math.max(1, Math.round((Number(object.height) || 150) * sy)),
-          };
-          ['opacity', 'imageNumber', 'imageHash', 'id', '_oid'].forEach(function (k) { if (object[k] != null) el[k] = object[k]; });
-          slot = slotFor(el);
-        } catch (e) { slot = null; }
-        if (callback) callback(slot || img, slot ? false : isError);
+        if (done) return;
+        if ((img && !isError) || !url || window.__ssLazyMediaOff) { finish(img, isError); return; }
+        const slot = savedPictureSlot(object, url);
+        finish(slot || img, slot ? false : isError);
       });
     };
     fabric.Image.__ssSafe = true;

@@ -282,7 +282,7 @@
       scroll.appendChild(addBtn);
       sidebar.appendChild(scroll);
     }
-    // v49: eng pastda «Hamma varaqni tozalash» (bitta bosish — hammasi 0 dan, ogohlantirish bilan)
+    // «Hamma varaqni tozalash» — ENG TEPADA (avval eng pastda edi: ko'p varaqda topish qiyin edi); bitta bosish, ogohlantirish bilan
     let clrBtn = scroll.querySelector(':scope > .btn-reset-canvas');
     if (!clrBtn) {
       clrBtn = document.createElement('div');
@@ -328,13 +328,14 @@
       }
       want.push(el);
     });
-    let ref = scroll.firstChild;
+    if (scroll.firstChild !== clrBtn) scroll.insertBefore(clrBtn, scroll.firstChild);
+    let ref = clrBtn.nextSibling;
     want.forEach(function (el) {
       if (el === ref) ref = ref.nextSibling;
       else scroll.insertBefore(el, ref);
     });
     Array.from(scroll.children).forEach(function (n) { if (n !== addBtn && n !== clrBtn && want.indexOf(n) < 0 && n.id !== 'ssAdSlot') n.remove(); });
-    if (addBtn.nextSibling !== clrBtn || scroll.lastChild !== clrBtn) { scroll.appendChild(addBtn); scroll.appendChild(clrBtn); }
+    if (scroll.lastChild !== addBtn) scroll.appendChild(addBtn);
 
     if (!sidebar.querySelector(':scope > .sidebar-user-section')) safe(function () { renderSidebarUserProfile(sidebar); });
     if (activeScrollTop > 0) scroll.scrollTop = activeScrollTop;

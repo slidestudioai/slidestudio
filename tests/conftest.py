@@ -15,6 +15,7 @@ for _k in ("SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY", "
            "SLIDE_STUDIO_DEV_TOKEN", "TRUST_CF_CONNECTING_IP", "REDIS_URL", "KEEPALIVE"):
     os.environ.pop(_k, None)
 os.environ.setdefault("SLIDE_STUDIO_HMAC_SECRET", "test-secret-" + "x" * 40)
+os.environ.setdefault("SEARCH_VERIFY_IMAGES", "0")      # tests use fake picture URLs (tested on its own)
 
 import pytest  # noqa: E402
 
