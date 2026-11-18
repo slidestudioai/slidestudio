@@ -153,29 +153,35 @@ test('e\'lon: sahifani yangilamasdan chiqadi, faqat oxirgisi, bekor qilinsa o\'z
 test('chap panel tugmalari chetga yopishmagan, ikki tomonda teng joy', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await openEditor(page);
-  const sizes = await page.$$eval('.sidebar-slides-scroll > .btn-add-slide-bottom, .sidebar-slides-scroll > .btn-reset-canvas',
+  const sizes = await page.$$eval('.sidebar-slides-scroll > .btn-add-slide-bottom, .ss-clear-dock > .btn-reset-canvas',
     (els) => els.map((e) => { const r = e.getBoundingClientRect(), p = e.parentElement.getBoundingClientRect(); return [Math.round(r.left - p.left), Math.round(p.right - r.right)]; }));
   expect(sizes.length).toBe(2);
   for (const [l, rgt] of sizes) { expect(l).toBeGreaterThanOrEqual(12); expect(Math.abs(l - rgt)).toBeLessThanOrEqual(10); }
 });
 
-test('«Hamma varaqni tozalash» is at the TOP of the slide list and stays visible while it scrolls', async ({ page }) => {
+test('«Hamma varaqni tozalash» is pinned under the slide list: always visible, nothing shows behind it', async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 800 });
   await openEditor(page);
   await page.evaluate(() => { for (let i = 0; i < 12; i++) slides.push({ json: JSON.stringify({ objects: [], background: '#ffffff' }), thumb: '', imageNumbers: [] }); renderSidebar(); });
   await page.waitForTimeout(300);
-  const r = await page.evaluate(async () => {
-    const sc = document.querySelector('.sidebar-slides-scroll');
-    const first = sc.firstElementChild, last = sc.lastElementChild;
-    sc.scrollTop = sc.scrollHeight;
-    await new Promise((res) => setTimeout(res, 200));
-    const b = sc.querySelector('.btn-reset-canvas').getBoundingClientRect(), p = sc.getBoundingClientRect();
-    const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
-    renderSidebar();                                  // a re-render keeps the order
-    return { first: first.className, last: last.className, visible: b.top >= p.top - 1 && b.bottom <= p.bottom,
-             clickable: !!(hit && hit.closest('.btn-reset-canvas')), afterRender: sc.firstElementChild.className, items: sc.querySelectorAll('.slide-item').length };
+  const check = () => page.evaluate(() => {
+    const sc = document.querySelector('.sidebar-slides-scroll'), dock = document.querySelector('#sidebar > .ss-clear-dock');
+    const d = dock.getBoundingClientRect(), s = sc.getBoundingClientRect(), b = dock.querySelector('.btn-reset-canvas').getBoundingClientRect();
+    // every point of the dock strip belongs to the dock (no slide, no thumbnail behind or over it)
+    const pts = [];
+    for (let x = d.left + 2; x < d.right - 2; x += 12) for (let y = d.top + 1; y < d.bottom - 1; y += 6) pts.push([x, y]);
+    const clean = pts.every(([x, y]) => { const h = document.elementFromPoint(x, y); return h && dock.contains(h); });
+    return { underList: Math.round(d.top) >= Math.round(s.bottom), inView: b.bottom <= innerHeight, clean,
+             inList: !!sc.querySelector('.btn-reset-canvas'), last: sc.lastElementChild.className, bg: getComputedStyle(dock).backgroundColor };
   });
-  expect(r).toEqual({ first: 'btn-reset-canvas', last: 'btn-add-slide-bottom', visible: true, clickable: true, afterRender: 'btn-reset-canvas', items: 13 });
+  const want = { underList: true, inView: true, clean: true, inList: false, last: 'btn-add-slide-bottom', bg: 'rgb(255, 255, 255)' };
+  expect(await check()).toEqual(want);
+  await page.evaluate(() => { const sc = document.querySelector('.sidebar-slides-scroll'); sc.scrollTop = 300; });
+  await page.waitForTimeout(200);
+  expect(await check()).toEqual(want);                 // scrolled: still the same
+  await page.evaluate(() => renderSidebar());
+  expect(await check()).toEqual(want);                 // a re-render keeps one dock
+  expect(await page.locator('.ss-clear-dock').count()).toBe(1);
 });
 
 test('pastki AI qatori, boshqaruv va zoom tugmalari ixcham; AI panel torroq', async ({ page }) => {

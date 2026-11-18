@@ -282,14 +282,20 @@
       scroll.appendChild(addBtn);
       sidebar.appendChild(scroll);
     }
-    // «Hamma varaqni tozalash» — ENG TEPADA (avval eng pastda edi: ko'p varaqda topish qiyin edi); bitta bosish, ogohlantirish bilan
-    let clrBtn = scroll.querySelector(':scope > .btn-reset-canvas');
-    if (!clrBtn) {
-      clrBtn = document.createElement('div');
-      clrBtn.className = 'btn-reset-canvas';
-      clrBtn.onclick = function (e) { e.stopPropagation(); if (window.ssResetCanvas) window.ssResetCanvas(); };
-      clrBtn.innerHTML = '<span class="material-symbols-outlined">delete_sweep</span> Hamma varaqni tozalash';
+    // «Hamma varaqni tozalash» — ro'yxat OSTIDA qadalgan alohida oq qatorda (.ss-clear-dock): ro'yxat aylansa ham
+    // doim ko'rinadi va orqasidan hech narsa o'tmaydi (avval ro'yxat ichida edi — eng pastda yoki chetlaridan varaq ko'rinardi)
+    let dock = sidebar.querySelector(':scope > .ss-clear-dock');
+    if (!dock) {
+      dock = document.createElement('div');
+      dock.className = 'ss-clear-dock';
+      const clr = document.createElement('div');
+      clr.className = 'btn-reset-canvas';
+      clr.onclick = function (e) { e.stopPropagation(); if (window.ssResetCanvas) window.ssResetCanvas(); };
+      clr.innerHTML = '<span class="material-symbols-outlined">delete_sweep</span> Hamma varaqni tozalash';
+      dock.appendChild(clr);
     }
+    if (scroll.nextSibling !== dock) scroll.after(dock);
+    Array.from(scroll.querySelectorAll(':scope > .btn-reset-canvas')).forEach(function (n) { n.remove(); });
     const activeScrollTop = scroll.scrollTop;
     window._liveThumbGifCount = scroll.querySelectorAll('.thumb-gif-item, .slide-thumb-bg-gif').length;
 
@@ -328,13 +334,12 @@
       }
       want.push(el);
     });
-    if (scroll.firstChild !== clrBtn) scroll.insertBefore(clrBtn, scroll.firstChild);
-    let ref = clrBtn.nextSibling;
+    let ref = scroll.firstChild;
     want.forEach(function (el) {
       if (el === ref) ref = ref.nextSibling;
       else scroll.insertBefore(el, ref);
     });
-    Array.from(scroll.children).forEach(function (n) { if (n !== addBtn && n !== clrBtn && want.indexOf(n) < 0 && n.id !== 'ssAdSlot') n.remove(); });
+    Array.from(scroll.children).forEach(function (n) { if (n !== addBtn && want.indexOf(n) < 0 && n.id !== 'ssAdSlot') n.remove(); });
     if (scroll.lastChild !== addBtn) scroll.appendChild(addBtn);
 
     if (!sidebar.querySelector(':scope > .sidebar-user-section')) safe(function () { renderSidebarUserProfile(sidebar); });

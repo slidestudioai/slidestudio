@@ -1254,8 +1254,9 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
 /* v46: sidebar — «Rasmni tozalash» va «Bot haqida» */
 .btn-reset-canvas, .btn-about-bot { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 6px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all .2s ease; flex-shrink: 0; user-select: none; -webkit-tap-highlight-color: transparent; white-space: nowrap; line-height: 1.2; text-align: center; }
 .btn-reset-canvas { background: #fff; border: 1px dashed #d93025; color: #d93025; margin-bottom: 2px; }
-/* at the top of the slide list; stays visible while the list scrolls */
-.sidebar-slides-scroll > .btn-reset-canvas { position: sticky; top: 0; z-index: 40; box-shadow: 0 0 0 8px #fff; }
+/* pinned under the slide list (not inside it): always visible, nothing scrolls behind it */
+.ss-clear-dock { flex: none; padding: 6px 16px; background: #fff; border-top: 1px solid #eef0f2; position: relative; z-index: 5; }
+.ss-clear-dock > .btn-reset-canvas { margin: 0; border-radius: 10px; }
 .btn-reset-canvas:hover { background: #fce8e6; border-style: solid; }
 .btn-about-bot { background: #f1f3f4; border: 1px solid transparent; color: #3c4043; margin-bottom: 6px; }
 .btn-about-bot:hover { background: #e8eaed; }
