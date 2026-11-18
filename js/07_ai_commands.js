@@ -2245,7 +2245,7 @@
             console.warn("parseElementToFabric rasm xatoligi:", e);
             resolve(null);
           }
-        }), 6000, null);
+        }), el._ssLoadMs || 6000, null);      // lazy media (does not block the slide) waits longer
       }
       return null;
     }

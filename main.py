@@ -528,6 +528,7 @@ init_supabase()
 from backend import jwt_auth          # Audit H3: local JWT verification
 from backend.services import resume as _resume   # Audit H5
 from backend.services import abuse as _abuse     # Audit M2
+from backend.services import image_shrink as _image_shrink   # big photos -> max 1600 px
 from backend.services import image_pool as _ipool  # session image pool (reuse found images, one URL once)
 _resume.configure(lambda: supabase)
 jwt_auth.configure(config.get("supabase_url") or "", os.environ.get("SUPABASE_JWT_SECRET", ""))
@@ -2513,6 +2514,10 @@ def _fetch_image_sync(url: str) -> dict:
         res = _fetch_with_backoff(cand)
         if not res.get("error"):
             break
+    if res.get("data"):
+        # a 5000 px / 10 MB original took too long for the browser (the picture was dropped) -> max 1600 px
+        res = dict(res)
+        res["data"], res["content_type"] = _image_shrink.shrink(res["data"], res.get("content_type") or "")
     _cache_put(url, res)
     return res
 

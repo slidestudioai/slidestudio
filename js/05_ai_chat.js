@@ -392,6 +392,8 @@
     }
     const _proxyCache = new Map();
     const _proxyFail = new Map(); // v24: xato URLlar 5 daqiqa qayta so'ralmaydi
+    // lazy media retries a picture that failed (proxy busy / timeout): the 5-minute «do not ask again» mark is removed first
+    window.ssForgetProxyFail = function (u) { try { _proxyFail.delete(sanitizeImageUrl(u)); _proxyFail.delete(String(u || '')); } catch (e) {} };
     function sanitizeImageUrl(url) {
       if (!url || typeof url !== 'string') return url;
       let u = url.trim();
