@@ -177,3 +177,33 @@ test('a picture whose server never answers does not block the slide: it opens at
   });
   expect(r).toEqual({ ok: true, fast: true, slot: true, saved: true, keepsUrl: true });
 });
+
+test('a picture that arrives during the slide reveal stays visible; saves and the sidebar thumbnail have it', async ({ page }) => {
+  await openEditor(page);
+  const r = await page.evaluate(async () => {
+    canvas.clear(); canvas.backgroundColor = '#ffffff';
+    canvas.add(new fabric.Textbox('Sarlavha', { left: 40, top: 20, width: 600, fontSize: 36, fill: '#000' }));
+    const im = await new Promise((res) => fabric.Image.fromURL(location.origin + '/e2e-img/rev-1.png', res, { crossOrigin: 'anonymous' }));
+    im.set({ left: 480, top: 120, scaleX: 0.6, scaleY: 0.6 });
+    // just swapped in by lazy media: fading in from 0 to 1 (exactly what swapIn does)
+    im.__ssTargetOpacity = 1; im.set({ opacity: 0 });
+    canvas.add(im);
+    im.animate('opacity', 1, { duration: 300, onChange: () => canvas.requestRenderAll(),
+      onComplete: () => { if (!im.__ssRevealOp) { im.opacity = 1; delete im.__ssTargetOpacity; } } });
+    isAiStreaming = true;
+    const rev = window.ssRevealCanvasObjects();                       // the slide reveal starts while the picture fades
+    await new Promise((res) => setTimeout(res, 60));
+    const midJson = im.toObject().opacity;                             // a save in the middle of the fade
+    await rev;
+    isAiStreaming = false;
+    await new Promise((res) => setTimeout(res, 500));
+    saveCurrentSlideStateDirectly();
+    await new Promise((res) => setTimeout(res, 900));
+    const json = JSON.parse(slides[activeIndex].json).objects.find((o) => o.type === 'image');
+    // the sidebar picture of this slide shows the image (pixel inside the image box is not white)
+    const domImg = document.querySelectorAll('#sidebar .slide-item')[activeIndex].querySelector('.slide-thumb > img');
+    const px = await new Promise((res) => { const i2 = new Image(); i2.onload = () => { const c = document.createElement('canvas'); c.width = i2.width; c.height = i2.height; const x = c.getContext('2d'); x.drawImage(i2, 0, 0); const k = i2.width / 960; res(Array.from(x.getImageData(Math.round(650 * k), Math.round(240 * k), 1, 1).data.slice(0, 3))); }; i2.src = domImg.src; });
+    return { live: im.opacity, midJson, saved: json && json.opacity, sameThumb: domImg.src === slides[activeIndex].thumb, white: px.every((v) => v > 245) };
+  });
+  expect(r).toEqual({ live: 1, midJson: 1, saved: 1, sameThumb: true, white: false });
+});

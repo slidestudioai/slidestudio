@@ -40,7 +40,14 @@
           if (finished) return;
           finished = true;
           window._ssRevealing = false;
-          rows.forEach(function (r) { r.o.opacity = r.op; r.o.top = r.top; try { r.o.setCoords(); } catch (e) {} });
+          rows.forEach(function (r) {
+            // a picture that fades in on its own meanwhile (lazy media) keeps ITS target opacity, not the 0 it had
+            const op = (r.o.__ssTargetOpacity != null && r.o.__ssTargetOpacity !== r.op) ? r.o.__ssTargetOpacity : r.op;
+            r.o.opacity = op; r.o.top = r.top;
+            if (r.o.__ssRevealOp === r.op) delete r.o.__ssTargetOpacity;
+            delete r.o.__ssRevealOp;
+            try { r.o.setCoords(); } catch (e) {}
+          });
           try { canvas.requestRenderAll(); } catch (e) {}
           resolve();
         };
@@ -53,8 +60,12 @@
           const step = Math.max(12, Math.min(40, 240 / n));
           rows = objs.map(function (o) {
             const media = !!(o.isGif || o.isVideo || o.isEmbed || o.ssMediaSlot || o.type === 'gifImage' || o.type === 'videoImage' || o.type === 'embedVideo');
-            return { o: o, op: (o.opacity == null ? 1 : o.opacity), top: o.top, lift: media ? 0 : LIFT };
+            // the real (target) opacity: an object that is fading in already has opacity ~0 now
+            const op = o.__ssTargetOpacity != null ? o.__ssTargetOpacity : (o.opacity == null ? 1 : o.opacity);
+            return { o: o, op: op, top: o.top, lift: media ? 0 : LIFT };
           });
+          // while hidden for the reveal, a save / thumbnail must use the real opacity (see 53_lazy_media toObject)
+          rows.forEach(function (r) { if (r.o.__ssTargetOpacity == null) { r.o.__ssTargetOpacity = r.op; r.o.__ssRevealOp = r.op; } });
           window._ssRevealing = true;
           rows.forEach(function (r) { r.o.opacity = 0; r.o.top = r.top + r.lift; });
           canvas.requestRenderAll();

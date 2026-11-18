@@ -402,13 +402,19 @@
           if (obj) {
             if (wasActive) { try { canvas.setActiveObject(obj); } catch (e) {} }
             const target = (obj.opacity == null ? 1 : obj.opacity);
+            obj.__ssTargetOpacity = target;          // saves / thumbnails during the fade use this, not ~0
             obj.set({ opacity: 0 });
             canvas.insertAt(obj, z);
             try { if (obj.isVideo || obj.type === 'videoImage') obj.dirty = true; } catch (e) {}
             obj.animate('opacity', target, {
               duration: FADE_MS, easing: fabric.util.ease.easeOutQuad,
               onChange: function () { canvas.requestRenderAll(); },
-              onComplete: function () { canvas.requestRenderAll(); },
+              onComplete: function () {
+                if (obj.__ssTargetOpacity != null && !obj.__ssRevealOp) { obj.opacity = obj.__ssTargetOpacity; delete obj.__ssTargetOpacity; }
+                canvas.requestRenderAll();
+                // the open slide's thumbnail: a photo of the canvas now that the picture is fully visible
+                try { if (!liveFading() && typeof window.ssPhotoLiveThumb === 'function') window.ssPhotoLiveThumb(); } catch (e) {}
+              },
             });
           }
           canvas.requestRenderAll();
@@ -592,6 +598,23 @@
     fabric.Image.__ssSafe = true;
   }
 
+  // An object that is fading in (picture just arrived, slide reveal) is saved with its TARGET opacity: a save or a
+  // thumbnail taken in the middle of a fade stored the picture (half) invisible — the sidebar lost it until a click.
+  function patchToObject() {
+    if (typeof fabric === 'undefined' || !fabric.Object || fabric.Object.prototype.__ssOpPatched) return;
+    const orig = fabric.Object.prototype.toObject;
+    fabric.Object.prototype.toObject = function (props) {
+      const o = orig.call(this, props);
+      if (o && this.__ssTargetOpacity != null) o.opacity = this.__ssTargetOpacity;
+      return o;
+    };
+    fabric.Object.prototype.__ssOpPatched = true;
+  }
+  /** true while something on the live canvas is still fading in (its photo would miss it) */
+  function liveFading() {
+    try { return !!(typeof canvas !== 'undefined' && canvas && canvas.getObjects().some(function (o) { return o && o.__ssTargetOpacity != null; })); } catch (e) { return false; }
+  }
+
   window.SSLazyMedia = {
     shouldDefer: shouldDefer, slotFor: slotFor, preload: preload, scanStream: scanStream, resetStream: resetStream,
     reflowWhenFontsReady: reflowWhenFontsReady, dedupeElements: dedupeElements, deckUsedUrls: deckUsedUrls,
@@ -603,6 +626,7 @@
         (d.objects || []).forEach(function (o) { if (o && o.ssSlotId && slots.has(o.ssSlotId)) cancelled.add(o.ssSlotId); });
       } catch (e) {}
     },
+    liveFading: liveFading,
     whenIdle: function () { return Promise.all(Array.from(slots.values()).map(function (r) { return r.promise; })); },
     FADE_MS: FADE_MS,
   };
@@ -610,6 +634,7 @@
   preloadFonts();
   defineSlot();
   patchImageFromObject();
+  patchToObject();
   // the app may create (or re-create) the main canvas after this file ran -> keep the hook attached
   hookCanvas();
   setInterval(hookCanvas, 1000);
