@@ -348,11 +348,8 @@ def search_images(query: str, kind: str = "photo", limit: int = 12) -> List[dict
         if len(pool) >= limit * 2:
             break
 
-    if len(pool) < 3:
-        try:
-            pool.extend(_loremflickr(query, max(limit, 6)))
-        except Exception as e:
-            print(f"[IMG-SEARCH] loremflickr: {str(e)[:100]}")
+    # (the loremflickr fallback was removed: its links often answer 500 / are blocked — the picture never opened
+    #  and its slide stayed empty. «Nothing found» is better: the caller retries with simpler words.)
     qw = _words(query)
     seen, clean = set(), []
     for it in pool:
@@ -384,7 +381,5 @@ def search_images(query: str, kind: str = "photo", limit: int = 12) -> List[dict
                 except Exception:
                     pass
             clean.sort(key=lambda x: x["score"], reverse=True)
-    if not clean:
-        clean = _loremflickr(query, limit)
     return [{k: v for k, v in it.items() if k in ("url", "thumb", "title", "width", "height", "source")}
             for it in clean[:limit]]

@@ -158,3 +158,22 @@ for (const blocked of [false, true]) {
     expect(r.ratio).toBeGreaterThan(blocked ? 0.75 : 0.6);
   });
 }
+
+test('AI message buttons (copy, regenerate, speak, edit) show the hand cursor everywhere on the button; the text keeps the text cursor', async ({ page }) => {
+  await openEditor(page);
+  await page.evaluate(() => { toggleAISidebar(true); appendAiChatMessage('user', 'salom'); appendAiChatMessage('bot', 'javob matni'); });
+  await page.waitForTimeout(400);
+  const r = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('.ai-msg-actions .ai-action-btn')];
+    const cur = (x, y) => getComputedStyle(document.elementFromPoint(x, y)).cursor;
+    // middle of the button, its left edge, and the corner next to the (round) button
+    const res = btns.map((b) => { const q = b.getBoundingClientRect(); return [cur(q.left + q.width / 2, q.top + q.height / 2), cur(q.left + 2, q.top + q.height / 2)]; });
+    const corners = btns.map((b) => { const q = b.getBoundingClientRect(); return cur(q.left + 1, q.top + 1); });
+    const t = document.querySelector('.ai-msg .msg-text');
+    return { n: btns.length, all: [...new Set(res.flat())], corners: [...new Set(corners)].filter((c) => c === 'text'), text: getComputedStyle(t).cursor };
+  });
+  expect(r.n).toBeGreaterThanOrEqual(3);
+  expect(r.all).toEqual(['pointer']);
+  expect(r.corners).toEqual([]);                       // no text (I-beam) cursor around the buttons either
+  expect(r.text).toBe('text');
+});

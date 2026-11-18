@@ -2762,10 +2762,16 @@ async def _verify_image_results(res: list, kind: str) -> list:
     head = [x for x in res[:SEARCH_VERIFY_FIRST] if isinstance(x, dict) and x.get("url")]
     rest = [x for x in res[SEARCH_VERIFY_FIRST:]]
 
-    async def one(x: dict) -> bool:
+    async def one(x: dict):
+        """True = opens, False = dead, None = could not be checked here (host not allowed for the proxy)."""
         async with _VERIFY_SEM:
             r = await asyncio.to_thread(_fetch_image_sync, str(x["url"]))
-        return bool(r) and not r.get("error")
+        if not r:
+            return False
+        err = str(r.get("error") or "")
+        if not err:
+            return True
+        return None if "ruxsat yo'q" in err or "Noto'g'ri URL" in err else False
 
     tasks = [asyncio.ensure_future(one(x)) for x in head]
     if not tasks:
@@ -2775,13 +2781,19 @@ async def _verify_image_results(res: list, kind: str) -> list:
     for x, t in zip(head, tasks):
         if not t.done():
             unknown.append(x)
-        elif not t.cancelled() and t.exception() is None and t.result():
-            good.append(x)
+        elif not t.cancelled() and t.exception() is None:
+            ok = t.result()
+            if ok:
+                good.append(x)
+            elif ok is None:
+                unknown.append(x)
     out = good + unknown + rest
     dropped = len(head) - len(good) - len(unknown)
     if dropped:
         print(f"[IMG-VERIFY] {dropped}/{len(head)} dead picture link(s) removed")
-    return out or res
+    # every checked link is dead: nothing from this search is given (a dead link left an empty place on a slide);
+    # the caller then searches again with simpler words
+    return out
 
 
 async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: bool = False, n0: int = 0,
@@ -2824,7 +2836,13 @@ async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: b
                 res = next((o for o in outs if isinstance(o, list) and o), [])
         if not res and kind == "gif":
             res = [{"url": u, "title": "safe", "source": "safe_pool"} for u in GIF_SAFE_POOL]
-        return await _verify_image_results(res, kind)
+        res = await _verify_image_results(res, kind)
+        if not res and kind in ("photo", "image"):           # all links dead -> simpler words, checked as well
+            for a in (_retry_queries(q, kind) or []):
+                alt = await _verify_image_results(await server_one(a, kind), kind)
+                if alt:
+                    return alt
+        return res
 
     pre: Dict[int, list] = {}
     if client_search and websocket is not None:     # brauzer qidiruvi — hammasi birdaniga so'raladi

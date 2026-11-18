@@ -51,6 +51,21 @@
   function looksGif(u) {
     return /\.gif(\?|#|$)/i.test(u) || /media\.giphy\.com|i\.giphy\.com|klipy\.com|tenor\.com/i.test(u) || /^data:image\/gif/i.test(u);
   }
+  // picture services that answer with errors / random pictures (they were a fallback of the search): never waited for,
+  // replaced at once by a real search result
+  const DEAD_HOST_RE = /^https?:\/\/([\w-]+\.)*(loremflickr\.com|picsum\.photos|source\.unsplash\.com|placehold\.co|placeholder\.com|dummyimage\.com|fakeimg\.pl|placekitten\.com)(\/|$|\?)/i;
+  function deadHost(u) { return DEAD_HOST_RE.test(normUrl(u)); }
+  // the words inside such a link: loremflickr.com/1280/720/Menkes,disease,kinky,hair -> «Menkes disease kinky hair»
+  function urlWords(u) {
+    try {
+      const x = new URL(normUrl(u));
+      let t = '';
+      if (/loremflickr\.com$/i.test(x.hostname)) t = decodeURIComponent(x.pathname.split('/').filter(Boolean).filter(function (p) { return !/^\d+$/.test(p) && p !== 'g' && p !== 'p'; }).join(' '));
+      else t = x.searchParams.get('q') || x.searchParams.get('query') || decodeURIComponent((x.search || '').replace(/^\?/, ''));
+      t = t.replace(/[,+_\-\/]+/g, ' ').replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim();
+      return /[\p{L}]{3}/u.test(t) ? t.slice(0, 60) : '';
+    } catch (e) { return ''; }
+  }
   function looksVideo(u) { return /\.(mp4|webm|ogv|mov|m4v)(\?|#|$)/i.test(u); }
   function unwrapUrl(u) {
     u = String(u || '');
@@ -159,7 +174,7 @@
              sy: (el.type === 'image' && el.scaleX != null && el.scaleY != null && !el.height) ? sy : 1 };
   }
 
-  function slotFor(el) {
+  function slotFor(el, opts) {
     const C = defineSlot();
     if (!C) return null;
     const id = 'mslot_' + Date.now().toString(36) + '_' + (++seq);
@@ -173,7 +188,7 @@
     });
     if (el.imageNumber != null) o.imageNumber = el.imageNumber;
     if (el._oid != null) o._oid = el._oid;
-    startLoad(id, keep);
+    if (!(opts && opts.noLoad)) startLoad(id, keep);   // noLoad: the main canvas hook / reviveAll starts it when needed
     return o;
   }
 
@@ -227,6 +242,7 @@
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
   async function tryLoad(id, el) {
+    if (deadHost(elUrl(el))) return null;
     for (let k = 0; k < RETRY_DELAYS.length; k++) {
       if (cancelled.has(id)) return null;
       if (RETRY_DELAYS[k]) await sleep(RETRY_DELAYS[k]);
@@ -278,16 +294,23 @@
   // a picture whose URL is dead (404, blocked site, not an image): search the same topic and take an unused result
   async function searchedAlts(id, el) {
     if (!el || el.type !== 'image') return [];
-    const q = topicFor(id, el);
-    if (!q) return [];
-    try {
-      const r = await fetch('/api/media-search?provider=image&limit=12&q=' + encodeURIComponent(q));
-      const d = await r.json();
-      const used = deckUsedUrls(-1);
-      return (d.results || []).map(function (x) { return normUrl(x && (x.url || x.src)); })
-        .filter(function (u) { return isHttp(u) && !used.has(u) && !takenAlt.has(u) && !looksGif(u) && !looksVideo(u); })
-        .slice(0, 3);
-    } catch (e) { return []; }
+    const qs = [];
+    const add = function (q) { q = String(q || '').trim(); if (q && qs.indexOf(q) < 0) qs.push(q); };
+    add(urlWords(elUrl(el)));
+    add(topicFor(id, el));
+    qs.slice().forEach(function (q) { const w = q.split(' '); if (w.length > 2) add(w.slice(0, 2).join(' ')); });
+    for (let k = 0; k < qs.length; k++) {
+      try {
+        const r = await fetch('/api/media-search?provider=image&limit=12&q=' + encodeURIComponent(qs[k]));
+        const d = await r.json();
+        const used = deckUsedUrls(-1);
+        const urls = (d.results || []).map(function (x) { return normUrl(x && (x.url || x.src)); })
+          .filter(function (u) { return isHttp(u) && !used.has(u) && !takenAlt.has(u) && !looksGif(u) && !looksVideo(u) && !deadHost(u); })
+          .slice(0, 3);
+        if (urls.length) return urls;
+      } catch (e) {}
+    }
+    return [];
   }
   async function loadMedia(id, el) {
     let obj = await tryLoad(id, el);
@@ -308,12 +331,18 @@
     // A picture is NEVER given up while its slot is in the deck: the shimmer stays and the same picture is asked
     // for again every 15 s (network back, server not busy any more ...). Only a slot that is gone (slide deleted /
     // rebuilt) stops the loop — and a slot saved in the deck starts it again when its slide is opened.
-    let missing = 0;
+    let missing = 0, wait = LATER_RETRY_MS;
     while (!obj && !cancelled.has(id)) {
-      await sleep(LATER_RETRY_MS);
+      await sleep(wait);
+      wait = Math.min(wait * 2, 120000);           // 15 s, 30 s, 1 min, 2 min … (no flood of failing requests)
       if (cancelled.has(id)) break;
       if (!slotAlive(id)) { if (++missing >= 3) break; continue; }
       missing = 0;
+      if (deadHost(elUrl(el))) {                   // that link never works: search again (network may be back)
+        const urls = await searchedAlts(id, el);
+        for (let n = 0; !obj && n < urls.length && !cancelled.has(id); n++) { takenAlt.add(urls[n]); obj = await tryLoad(id, Object.assign({}, el, { src: urls[n], ssSrcUrl: urls[n] })); }
+        continue;
+      }
       try { if (window.ssForgetProxyFail) window.ssForgetProxyFail(elUrl(el)); } catch (e) {}
       await acquire();
       try { obj = await realObject(Object.assign({}, el, { _ssLoadMs: 0 })); } catch (e) { obj = null; } finally { release(); }
@@ -402,13 +431,19 @@
           if (obj) {
             if (wasActive) { try { canvas.setActiveObject(obj); } catch (e) {} }
             const target = (obj.opacity == null ? 1 : obj.opacity);
+            obj.__ssTargetOpacity = target;          // saves / thumbnails during the fade use this, not ~0
             obj.set({ opacity: 0 });
             canvas.insertAt(obj, z);
             try { if (obj.isVideo || obj.type === 'videoImage') obj.dirty = true; } catch (e) {}
             obj.animate('opacity', target, {
               duration: FADE_MS, easing: fabric.util.ease.easeOutQuad,
               onChange: function () { canvas.requestRenderAll(); },
-              onComplete: function () { canvas.requestRenderAll(); },
+              onComplete: function () {
+                if (obj.__ssTargetOpacity != null && !obj.__ssRevealOp) { obj.opacity = obj.__ssTargetOpacity; delete obj.__ssTargetOpacity; }
+                canvas.requestRenderAll();
+                // the open slide's thumbnail: a photo of the canvas now that the picture is fully visible
+                try { if (!liveFading() && typeof window.ssPhotoLiveThumb === 'function') window.ssPhotoLiveThumb(); } catch (e) {}
+              },
             });
           }
           canvas.requestRenderAll();
@@ -567,7 +602,7 @@
         height: Math.max(1, Math.round((Number(object.height) || 150) * sy)),
       };
       ['opacity', 'imageNumber', 'imageHash', 'id', '_oid'].forEach(function (k) { if (object[k] != null) el[k] = object[k]; });
-      return slotFor(el);
+      return slotFor(el, { noLoad: true });
     } catch (e) { return null; }
   }
   function patchImageFromObject() {
@@ -579,6 +614,10 @@
       let done = false;
       const finish = function (img, isError) { if (done) return; done = true; if (callback) callback(img, isError); };
       const srcIsHttp = object && isHttp(object.src);       // a data: URL is already here: never slow
+      if (url && srcIsHttp && deadHost(object.src) && !window.__ssLazyMediaOff) {          // known dead link: no request at all
+        const sl = savedPictureSlot(object, url);
+        if (sl) { setTimeout(function () { finish(sl, false); }, 0); return; }
+      }
       if (url && srcIsHttp && window.__ssMainCanvasLoading && !window.__ssLazyMediaOff) {
         setTimeout(function () { if (!done) { const sl = savedPictureSlot(object, url); if (sl) finish(sl, false); } }, MAIN_LOAD_WAIT_MS);
       }
@@ -592,6 +631,58 @@
     fabric.Image.__ssSafe = true;
   }
 
+  // An object that is fading in (picture just arrived, slide reveal) is saved with its TARGET opacity: a save or a
+  // thumbnail taken in the middle of a fade stored the picture (half) invisible — the sidebar lost it until a click.
+  function patchToObject() {
+    if (typeof fabric === 'undefined' || !fabric.Object || fabric.Object.prototype.__ssOpPatched) return;
+    const orig = fabric.Object.prototype.toObject;
+    fabric.Object.prototype.toObject = function (props) {
+      const o = orig.call(this, props);
+      if (o && this.__ssTargetOpacity != null) o.opacity = this.__ssTargetOpacity;
+      return o;
+    };
+    fabric.Object.prototype.__ssOpPatched = true;
+  }
+  /** true while something on the live canvas is still fading in (its photo would miss it) */
+  function liveFading() {
+    try { return !!(typeof canvas !== 'undefined' && canvas && canvas.getObjects().some(function (o) { return o && o.__ssTargetOpacity != null; })); } catch (e) { return false; }
+  }
+
+  // Slides that are not open: a stored slot (or a stored picture with a dead link) is loaded too — before, only the open
+  // slide loaded its pictures, so the other slides' thumbnails stayed grey until each one was clicked.
+  function reviveAll() {
+    try {
+      if (typeof slides === 'undefined' || !Array.isArray(slides) || window.__ssLazyMediaOff) return;
+      slides.forEach(function (s, i) {
+        if (!s || typeof s.json !== 'string' || s._ssPH) return;
+        const hasSlot = s.json.indexOf('ssMediaSlot') >= 0;
+        const hasDead = DEAD_HOST_RE.test(s.json) || /loremflickr\.com|picsum\.photos|source\.unsplash\.com/i.test(s.json);
+        if (!hasSlot && !hasDead) return;
+        let d;
+        try { d = JSON.parse(s.json); } catch (e) { return; }
+        let changed = false;
+        (d.objects || []).forEach(function (o, k) {
+          if (!o) return;
+          if (o.type === 'image' && isHttp(o.src) && deadHost(o.src)) {      // stored dead picture -> slot (keeps its box)
+            const sl = savedPictureSlot(o, o.ssSrcUrl && isHttp(o.ssSrcUrl) ? o.ssSrcUrl : o.src);
+            if (sl) { d.objects[k] = serialize(sl) || o; changed = true; }
+          }
+        });
+        if (changed) {
+          // the open slide: the live canvas is the truth, it is not rewritten here
+          if (i === activeIndex) return;
+          s.json = JSON.stringify(d);
+        }
+        (d.objects || []).forEach(function (o) {
+          if (!o || !o.ssMediaSlot || !o.ssSlotId || slots.has(o.ssSlotId) || early.has(o.ssSlotId)) return;
+          let el = null;
+          try { el = JSON.parse(o.ssSlotEl || 'null'); } catch (e) { el = null; }
+          if (el) startLoad(o.ssSlotId, el);
+        });
+      });
+    } catch (e) {}
+  }
+
   window.SSLazyMedia = {
     shouldDefer: shouldDefer, slotFor: slotFor, preload: preload, scanStream: scanStream, resetStream: resetStream,
     reflowWhenFontsReady: reflowWhenFontsReady, dedupeElements: dedupeElements, deckUsedUrls: deckUsedUrls,
@@ -603,6 +694,8 @@
         (d.objects || []).forEach(function (o) { if (o && o.ssSlotId && slots.has(o.ssSlotId)) cancelled.add(o.ssSlotId); });
       } catch (e) {}
     },
+    liveFading: liveFading,
+    reviveAll: reviveAll, deadHost: deadHost, urlWords: urlWords,
     whenIdle: function () { return Promise.all(Array.from(slots.values()).map(function (r) { return r.promise; })); },
     FADE_MS: FADE_MS,
   };
@@ -610,7 +703,9 @@
   preloadFonts();
   defineSlot();
   patchImageFromObject();
+  patchToObject();
   // the app may create (or re-create) the main canvas after this file ran -> keep the hook attached
   hookCanvas();
   setInterval(hookCanvas, 1000);
+  setInterval(reviveAll, 4000);
 })();

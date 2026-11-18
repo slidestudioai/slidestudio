@@ -695,6 +695,29 @@
         if (callback) callback();
       }
     }
+    // The live slide's thumbnail. While something on the canvas is still fading in (a picture that just arrived, the
+    // AI reveal), a photo of the canvas would miss it: then the thumbnail is drawn from the saved slide instead
+    // (refreshSlideThumb), a moment later. The sidebar picture is updated as well (before it changed only on a click).
+    function _ssLiveThumb(idx) {
+      const slide = slides[idx];
+      if (!slide) return;
+      const fading = !!(window.SSLazyMedia && window.SSLazyMedia.liveFading && window.SSLazyMedia.liveFading()) || !!window._ssRevealing;
+      if (!fading) {
+        slide.thumb = safeToDataURL(canvas, { format: 'png', multiplier: 0.3 });
+      } else {
+        setTimeout(function () {
+          const k = slides.indexOf(slide);
+          if (k >= 0 && typeof window.refreshSlideThumb === 'function') window.refreshSlideThumb(k);
+        }, 700);
+      }
+      try { if (typeof scheduleSidebarRender === 'function') scheduleSidebarRender(120); } catch (e) {}
+    }
+    window.ssPhotoLiveThumb = function () {
+      if (!slides[activeIndex] || Date.now() < _canvasLoadingUntil || _ownerMismatch()) return;
+      if (window._ssRevealing || (window.SSLazyMedia && window.SSLazyMedia.liveFading && window.SSLazyMedia.liveFading())) return;
+      try { slides[activeIndex].thumb = safeToDataURL(canvas, { format: 'png', multiplier: 0.3 }); } catch (e) { return; }
+      try { if (typeof scheduleSidebarRender === 'function') scheduleSidebarRender(80); } catch (e) {}
+    };
     function loadSlideCanvasAsync(index) {
       return new Promise((resolve) => loadSlideCanvas(index, resolve));
     }
@@ -831,7 +854,7 @@
           delete jsonState.backgroundVideo;
         }
         slides[activeIndex].json = JSON.stringify(jsonState);
-        slides[activeIndex].thumb = safeToDataURL(canvas, { format: 'png', multiplier: 0.3 });
+        _ssLiveThumb(activeIndex);
         hasUnsavedChanges = true;
       } catch (e) { console.warn("saveCurrentSlideState:", e); }
     }
@@ -1323,7 +1346,7 @@
       if (Date.now() < _canvasLoadingUntil || _ownerMismatch()) return;
       try {
         slides[activeIndex].json = JSON.stringify(canvas.toJSON(SERIALIZE_PROPS));
-        slides[activeIndex].thumb = safeToDataURL(canvas, { format: 'png', multiplier: 0.3 });
+        _ssLiveThumb(activeIndex);
         hasUnsavedChanges = true;
       } catch (e) { console.warn("saveCurrentSlideStateDirectly:", e); }
     }

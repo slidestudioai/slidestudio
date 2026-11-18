@@ -131,6 +131,8 @@
     URL_RE.lastIndex = 0;
     while ((m = URL_RE.exec(slide.json))) {
       const u = m[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+      // a known dead picture link (loremflickr …) is not downloaded in the background: lazy media replaces it
+      try { if (window.SSLazyMedia && window.SSLazyMedia.deadHost && window.SSLazyMedia.deadHost(RAM.unwrap(u) || u)) continue; } catch (e) {}
       if (RAM.unwrap(u)) out.add(u);
     }
     const u = Array.from(out);

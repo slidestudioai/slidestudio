@@ -17,6 +17,16 @@
       -webkit-user-select: none !important;
     }
     #presentationTitle, .doc-title { cursor: text; }
+    /* buttons inside a chat message (copy, regenerate, speak, edit, undo …): a hand cursor on the WHOLE button, icon
+       included — «.ai-msg *» above gave the icon in the middle of the button the text (I-beam) cursor */
+    .ai-msg button, .ai-msg button *, .ai-msg a, .ai-msg a *,
+    .ai-msg [role="button"], .ai-msg [role="button"] *, .ai-msg .ai-action-btn, .ai-msg .ai-action-btn * {
+      cursor: pointer;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
+    /* the row that holds those buttons is not text either (round buttons: their corners are this row) */
+    .ai-msg .ai-msg-actions { cursor: default; user-select: none !important; -webkit-user-select: none !important; }
     #loadingOverlay {
       position: fixed !important;
       top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
