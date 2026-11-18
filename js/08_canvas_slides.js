@@ -283,7 +283,7 @@
       resetBtn.className = 'btn-reset-canvas';
       resetBtn.onclick = (e) => { e.stopPropagation(); if (window.ssResetCanvas) window.ssResetCanvas(); };
       resetBtn.innerHTML = `<span class="material-symbols-outlined">delete_sweep</span> Hamma varaqni tozalash`;
-      scrollArea.appendChild(resetBtn);
+      scrollArea.insertBefore(resetBtn, scrollArea.firstChild);      // eng tepada
       const aboutBtn = document.createElement('div');
       aboutBtn.className = 'btn-about-bot';
       aboutBtn.onclick = (e) => { e.stopPropagation(); if (window.ssShowAbout) window.ssShowAbout(); };
