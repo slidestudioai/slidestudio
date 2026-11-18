@@ -428,7 +428,19 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
         callback && callback(img);
       };
       v.onloadeddata = ready;
-      v.onerror = function () { callback && callback(null); };
+      v.onerror = function () {
+        // the video did not load: a slot keeps its place and URL and loads it again (it is never just left out)
+        let slot = null;
+        try {
+          if (window.SSLazyMedia && /^https?:\/\//i.test(String(url))) {
+            const el = Object.assign({}, object, { type: 'videoImage', isVideo: true, videoUrl: url,
+              width: Math.round((Number(object.width) || 480) * (Number(object.scaleX) || 1)),
+              height: Math.round((Number(object.height) || 270) * (Number(object.scaleY) || 1)), scaleX: 1, scaleY: 1 });
+            slot = window.SSLazyMedia.slotFor(el);
+          }
+        } catch (e) { slot = null; }
+        callback && callback(slot);
+      };
       setTimeout(function () { if (v.readyState >= 2) ready(); }, 1500);
     };
     fabric.VideoImage = VideoImage;

@@ -1889,6 +1889,11 @@
         let fabEl = null;
         try { if (window.SSLazyMedia && window.SSLazyMedia.shouldDefer(el)) fabEl = window.SSLazyMedia.slotFor(el); } catch (e) { fabEl = null; }
         if (!fabEl) fabEl = await parseElementToFabric(el);
+        // a picture / video that did not load is never just left out: a slot keeps its place and loads it again
+        if (!fabEl && el && (el.type === 'image' || el.type === 'videoImage' || el.isVideo) && window.SSLazyMedia &&
+            /^https?:\/\//i.test(String(el.videoUrl || el.src || ''))) {
+          try { fabEl = window.SSLazyMedia.slotFor(el); } catch (e) { fabEl = null; }
+        }
         if (fabEl) {
           if (isImageLike(el) && el.imageNumber != null) {
             try {
@@ -2117,8 +2122,10 @@
               imageHash: el.imageHash || null,
               videoUrl: vidUrl,
               videoLoop: v.loop, videoMuted: v.muted, videoAutoplay: v.autoplay,
-              scaleX: (el.scaleX != null ? el.scaleX : 1),
-              scaleY: (el.scaleY != null ? el.scaleY : 1),
+              // no scale given: fit the video into the box the AI asked for (was its natural size, e.g. 1920x1080 -> off the slide)
+              width: v.videoWidth || vw, height: v.videoHeight || vh,
+              scaleX: (el.scaleX != null ? el.scaleX : vw / (v.videoWidth || vw)),
+              scaleY: (el.scaleY != null ? el.scaleY : vh / (v.videoHeight || vh)),
               objectCaching: false,
             });
             ensureObjectId(fImg);
@@ -2128,7 +2135,7 @@
           v.onloadeddata = done;
           v.onerror = () => resolve(null);
           setTimeout(() => { if (v.readyState >= 2) done(); }, 2000);
-        }), 6000, null);
+        }), el._ssLoadMs === 0 ? 0 : 6000, null);
       }
       if (el.type === 'image') {
         if (!el.src) return null;
@@ -2245,7 +2252,7 @@
             console.warn("parseElementToFabric rasm xatoligi:", e);
             resolve(null);
           }
-        }), el._ssLoadMs || 6000, null);      // lazy media (does not block the slide) waits longer
+        }), el._ssLoadMs === 0 ? 0 : (el._ssLoadMs || 6000), null);      // lazy media: 0 = wait until it arrives
       }
       return null;
     }

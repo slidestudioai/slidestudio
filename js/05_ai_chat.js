@@ -369,6 +369,7 @@
       }
     }
     function withTimeout(promise, ms, fallback) {
+      if (ms === 0) return Promise.resolve(promise).catch(() => fallback);   // 0 = no time limit (wait until it arrives)
       return new Promise((resolve) => {
         let settled = false;
         const timer = setTimeout(() => {
