@@ -2744,6 +2744,46 @@ async def _client_side_search_many(websocket, jobs: List[Tuple[int, str, str]], 
     return out
 
 
+# Pictures the AI gets must really open: before, a dead link (404, hot-link blocked site, an HTML page) was put on a
+# slide and its place stayed empty. The first results of each photo search are downloaded here (in parallel, through
+# the same proxy cache the browser uses -> later the browser gets them instantly); the ones that fail are removed.
+SEARCH_VERIFY_IMAGES = os.environ.get("SEARCH_VERIFY_IMAGES", "1").strip().lower() not in ("0", "false", "no", "off")
+SEARCH_VERIFY_FIRST = 6           # results checked per search
+SEARCH_VERIFY_WAIT = 8.0          # seconds; a result not checked by then keeps its place after the good ones
+_VERIFY_SEM: Optional[asyncio.Semaphore] = None
+
+
+async def _verify_image_results(res: list, kind: str) -> list:
+    global _VERIFY_SEM
+    if not SEARCH_VERIFY_IMAGES or kind not in ("photo", "image") or not res:
+        return res
+    if _VERIFY_SEM is None:
+        _VERIFY_SEM = asyncio.Semaphore(8)
+    head = [x for x in res[:SEARCH_VERIFY_FIRST] if isinstance(x, dict) and x.get("url")]
+    rest = [x for x in res[SEARCH_VERIFY_FIRST:]]
+
+    async def one(x: dict) -> bool:
+        async with _VERIFY_SEM:
+            r = await asyncio.to_thread(_fetch_image_sync, str(x["url"]))
+        return bool(r) and not r.get("error")
+
+    tasks = [asyncio.ensure_future(one(x)) for x in head]
+    if not tasks:
+        return res
+    await asyncio.wait(tasks, timeout=SEARCH_VERIFY_WAIT)     # unfinished ones keep running and warm the cache
+    good, unknown = [], []
+    for x, t in zip(head, tasks):
+        if not t.done():
+            unknown.append(x)
+        elif not t.cancelled() and t.exception() is None and t.result():
+            good.append(x)
+    out = good + unknown + rest
+    dropped = len(head) - len(good) - len(unknown)
+    if dropped:
+        print(f"[IMG-VERIFY] {dropped}/{len(head)} dead picture link(s) removed")
+    return out or res
+
+
 async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: bool = False, n0: int = 0,
                         per_query: int = 12, stagger: float = None) -> List[list]:
     """jobs: [(query, kind)] -> har biri uchun natijalar ro'yxati (tartib saqlanadi).
@@ -2784,7 +2824,7 @@ async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: b
                 res = next((o for o in outs if isinstance(o, list) and o), [])
         if not res and kind == "gif":
             res = [{"url": u, "title": "safe", "source": "safe_pool"} for u in GIF_SAFE_POOL]
-        return res
+        return await _verify_image_results(res, kind)
 
     pre: Dict[int, list] = {}
     if client_search and websocket is not None:     # brauzer qidiruvi — hammasi birdaniga so'raladi

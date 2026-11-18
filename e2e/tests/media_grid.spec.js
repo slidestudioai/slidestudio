@@ -57,6 +57,7 @@ test('a picture is never removed: no pool replacement -> the shimmer stays and t
   const block = (r) => (down && /net-/.test(decodeURIComponent(r.request().url())) ? r.fulfill({ status: 503, body: '' }) : r.continue());
   await page.route('**/api/proxy-image**', block);
   await page.route('**/e2e-img/**', block);
+  await page.route('**/api/media-search**', (r) => r.fulfill({ json: { results: [] } }));   // no replacement found either
   await page.evaluate(async () => {
     window._ssImagePool = [];
     const B = location.origin;
@@ -97,4 +98,82 @@ test('a saved slide whose picture does not load when opened keeps it (slot), and
   expect(r1).toEqual({ n: 1, slot: true, w: 320, json: true });       // before: the picture was gone, and the save lost it
   down = false;
   await page.waitForFunction(() => canvas.getObjects().some((o) => o.type === 'image' && /net-c/.test(o.ssSrcUrl || '')), null, { timeout: 40_000 });
+});
+
+test('edits on a slide whose picture is still loading are saved (and its thumbnail changes)', async ({ page }) => {
+  await openEditor(page);
+  await page.route('**/e2e-img/net-d*', (r) => r.fulfill({ status: 404, body: '' }));
+  await page.route('**/api/proxy-image**', (r) => (/net-d/.test(decodeURIComponent(r.request().url())) ? r.fulfill({ status: 503, body: '' }) : r.continue()));
+  await page.route('**/api/media-search**', (r) => r.fulfill({ json: { results: [] } }));
+  const r = await page.evaluate(async () => {
+    const u = location.origin + '/e2e-img/net-d.png';
+    slides.push({ json: JSON.stringify({ background: '#000', objects: [
+      { type: 'textbox', text: 'AI sarlavha', left: 40, top: 20, width: 600, fontSize: 36, fill: '#fff', styles: [] },
+      { type: 'image', src: u, ssSrcUrl: u, left: 100, top: 100, width: 640, height: 400, scaleX: 0.5, scaleY: 0.5, crossOrigin: 'anonymous' },
+      { type: 'image', src: u + '?2', ssSrcUrl: u + '?2', left: 500, top: 100, width: 640, height: 400, scaleX: 0.5, scaleY: 0.5, crossOrigin: 'anonymous' }] }), thumb: 'old', imageNumbers: [] });
+    renderSidebar();
+    activeIndex = slides.length - 1;
+    await loadSlideCanvasAsync(activeIndex);
+    await new Promise((r) => setTimeout(r, 1200));
+    // the user's own picture + text, then a normal (not forced) save — like every edit
+    const own = await new Promise((res) => fabric.Image.fromURL(location.origin + '/e2e-img/mine.png', res, { crossOrigin: 'anonymous' }));
+    own.set({ left: 500, top: 300, scaleX: 0.3, scaleY: 0.3 });
+    canvas.add(own);
+    canvas.add(new fabric.Textbox('Mening matnim', { left: 40, top: 460, width: 300 }));
+    canvas.renderAll();
+    saveCurrentSlideState();
+    const j = slides[activeIndex].json;
+    const slot = canvas.getObjects().find((o) => o.ssMediaSlot);
+    return { text: j.indexOf('Mening matnim') >= 0, mine: j.indexOf('mine.png') >= 0, keepsUrl: j.indexOf('net-d.png') >= 0,
+             thumb: slides[activeIndex].thumb !== 'old', slotSelectable: !!(slot && slot.selectable && slot.evented) };
+  });
+  expect(r).toEqual({ text: true, mine: true, keepsUrl: true, thumb: true, slotSelectable: true });
+});
+
+test('a dead picture with no pool replacement is replaced by a new search on its slide title', async ({ page }) => {
+  test.setTimeout(90_000);
+  await openEditor(page);
+  let q = null;
+  await page.route('**/e2e-img/dead-x*', (r) => r.fulfill({ status: 404, body: '' }));
+  await page.route('**/api/proxy-image**', (r) => (/dead-x/.test(decodeURIComponent(r.request().url())) ? r.fulfill({ status: 503, body: '' }) : r.continue()));
+  await page.route('**/api/media-search**', (r) => {
+    q = new URL(r.request().url()).searchParams.get('q');
+    return r.fulfill({ json: { results: [{ url: new URL(r.request().url()).origin + '/e2e-img/found-1.png' }] } });
+  });
+  await page.evaluate(async () => {
+    window._ssImagePool = [];
+    isAiStreaming = true;
+    try {
+      await executeAiCommands({ actions: [{ action: 'replace_slide', slide: 1, background: '#0b1020', elements: [
+        { type: 'text', text: 'Menkes kasalligi', left: 40, top: 20, width: 880, height: 50, fontSize: 36, fill: '#fff' },
+        { type: 'image', src: location.origin + '/e2e-img/dead-x.png', left: 40, top: 90, width: 430, height: 210 }] }] });
+    } finally { isAiStreaming = false; }
+  });
+  await page.waitForFunction(() => canvas.getObjects().some((o) => o.type === 'image' && /found-1/.test(o.ssSrcUrl || '')), null, { timeout: 40_000 });
+  expect(q).toBe('Menkes kasalligi');
+  const box = await page.evaluate(() => { const b = canvas.getObjects().find((o) => o.type === 'image').getBoundingRect(true, true); return [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)]; });
+  expect(box).toEqual([40, 90, 430, 210]);
+});
+
+test('a picture whose server never answers does not block the slide: it opens at once and edits are saved', async ({ page }) => {
+  await openEditor(page);
+  await page.route('**/e2e-img/hang*', () => {});                       // never answered
+  await page.route('**/api/proxy-image**', (r) => (/hang/.test(decodeURIComponent(r.request().url())) ? undefined : r.continue()));
+  const r = await page.evaluate(async () => {
+    const u = location.origin + '/e2e-img/hang.png';
+    slides.push({ json: JSON.stringify({ background: '#000', objects: [
+      { type: 'textbox', text: 'AI', left: 40, top: 20, width: 600, fontSize: 36, fill: '#fff', styles: [] },
+      { type: 'image', src: u, ssSrcUrl: u, left: 100, top: 100, width: 640, height: 400, scaleX: 0.5, scaleY: 0.5, crossOrigin: 'anonymous' }] }), thumb: 'old', imageNumbers: [] });
+    activeIndex = slides.length - 1;
+    const t0 = Date.now();
+    const ok = await Promise.race([loadSlideCanvasAsync(activeIndex).then(() => true), new Promise((res) => setTimeout(() => res(false), 8000))]);
+    const took = Date.now() - t0;
+    await new Promise((res) => setTimeout(res, 300));
+    canvas.add(new fabric.Textbox('Mening matnim', { left: 40, top: 460, width: 300 }));
+    canvas.renderAll();
+    saveCurrentSlideState();
+    const j = slides[activeIndex].json;
+    return { ok, fast: took < 4000, slot: canvas.getObjects().some((o) => o.ssMediaSlot), saved: j.indexOf('Mening matnim') >= 0, keepsUrl: j.indexOf('hang.png') >= 0 };
+  });
+  expect(r).toEqual({ ok: true, fast: true, slot: true, saved: true, keepsUrl: true });
 });

@@ -419,7 +419,10 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
       v.muted = object.videoMuted !== false;
       v.playsInline = true;
       v.autoplay = object.videoAutoplay !== false;
+      let called = false;
       const ready = function () {
+        if (called) return;
+        called = true;
         const img = new VideoImage(v, object);
         img._videoUrl = url;
         img.isVideo = true;
@@ -429,6 +432,8 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
       };
       v.onloadeddata = ready;
       v.onerror = function () {
+        if (called) return;
+        called = true;
         // the video did not load: a slot keeps its place and URL and loads it again (it is never just left out)
         let slot = null;
         try {
@@ -441,7 +446,9 @@ try { if (typeof fabric !== 'undefined' && fabric.Object) fabric.Object.NUM_FRAC
         } catch (e) { slot = null; }
         callback && callback(slot);
       };
-      setTimeout(function () { if (v.readyState >= 2) ready(); }, 1500);
+      // a slow / stalled video never holds the slide load back (a load that never ended blocked every save):
+      // after 1.5 s the video object is created anyway at its saved size and plays as soon as data arrives
+      setTimeout(function () { ready(); }, 1500);
     };
     fabric.VideoImage = VideoImage;
     fabric.videoImage = VideoImage;
