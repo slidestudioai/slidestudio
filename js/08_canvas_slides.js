@@ -283,13 +283,16 @@
       resetBtn.className = 'btn-reset-canvas';
       resetBtn.onclick = (e) => { e.stopPropagation(); if (window.ssResetCanvas) window.ssResetCanvas(); };
       resetBtn.innerHTML = `<span class="material-symbols-outlined">delete_sweep</span> Hamma varaqni tozalash`;
-      scrollArea.insertBefore(resetBtn, scrollArea.firstChild);      // eng tepada
+      const _dock = document.createElement('div');
+      _dock.className = 'ss-clear-dock';                               // ro'yxat ostida qadalgan (25_v38 bilan bir xil)
+      _dock.appendChild(resetBtn);
       const aboutBtn = document.createElement('div');
       aboutBtn.className = 'btn-about-bot';
       aboutBtn.onclick = (e) => { e.stopPropagation(); if (window.ssShowAbout) window.ssShowAbout(); };
       aboutBtn.innerHTML = `<span class="material-symbols-outlined">info</span> Bot haqida`;
       scrollArea.appendChild(aboutBtn);
       sidebar.appendChild(scrollArea);
+      sidebar.appendChild(_dock);
 
       renderSidebarUserProfile(sidebar);
 
