@@ -213,7 +213,7 @@
   // same kind from this presentation's pool takes its place. Only when all of that fails the slot is removed.
   const LOAD_PARALLEL = 6;
   const RETRY_DELAYS = [0, 1500, 4000];
-  const LOAD_WAIT_MS = 20000;               // the slide is already shown -> the picture may take its time
+  const LATER_RETRY_MS = 15000;             // after that: the same picture again every 15 s, as long as its slot exists
   let loading = 0;
   const waiters = [];
   const takenAlt = new Set();
@@ -231,7 +231,8 @@
       if (k > 0) { try { if (window.ssForgetProxyFail) window.ssForgetProxyFail(elUrl(el)); } catch (e) {} }
       await acquire();
       let o = null;
-      try { o = await realObject(Object.assign({}, el, { _ssLoadMs: LOAD_WAIT_MS })); } catch (e) { o = null; } finally { release(); }
+      // _ssLoadMs 0 = no time limit: the slide is already shown, the picture is waited for until it really arrives
+      try { o = await realObject(Object.assign({}, el, { _ssLoadMs: 0 })); } catch (e) { o = null; } finally { release(); }
       if (o) return o;
       if (cancelled.has(id)) return null;
     }
@@ -251,6 +252,10 @@
     takenAlt.add(u);
     return Object.assign({}, el, { src: u, ssSrcUrl: u });
   }
+  function slotAlive(id) {
+    if (findSlideWithSlot(id) >= 0) return true;
+    try { return !!(typeof canvas !== 'undefined' && canvas && canvas.getObjects().some(function (o) { return o && o.ssSlotId === id; })); } catch (e) { return false; }
+  }
   async function loadMedia(id, el) {
     let obj = await tryLoad(id, el);
     for (let n = 0; !obj && n < 2 && !cancelled.has(id); n++) {
@@ -259,7 +264,19 @@
       console.info('[lazy-media] picture failed, using another one from the pool:', elUrl(el), '->', alt.src);
       obj = await tryLoad(id, alt);
     }
-    if (!obj && !cancelled.has(id)) console.warn('[lazy-media] picture could not be loaded, slot removed:', elUrl(el));
+    // A picture is NEVER given up while its slot is in the deck: the shimmer stays and the same picture is asked
+    // for again every 15 s (network back, server not busy any more ...). Only a slot that is gone (slide deleted /
+    // rebuilt) stops the loop — and a slot saved in the deck starts it again when its slide is opened.
+    let missing = 0;
+    while (!obj && !cancelled.has(id)) {
+      await sleep(LATER_RETRY_MS);
+      if (cancelled.has(id)) break;
+      if (!slotAlive(id)) { if (++missing >= 3) break; continue; }
+      missing = 0;
+      try { if (window.ssForgetProxyFail) window.ssForgetProxyFail(elUrl(el)); } catch (e) {}
+      await acquire();
+      try { obj = await realObject(Object.assign({}, el, { _ssLoadMs: 0 })); } catch (e) { obj = null; } finally { release(); }
+    }
     return obj;
   }
 
@@ -271,7 +288,8 @@
       try { obj = await loadMedia(id, el); } catch (e) { obj = null; }
       // the slide that holds this slot may not be stored yet (the image came from the preload cache very fast):
       // keep the result and retry until the slot shows up (max ~30 s)
-      for (let attempt = 0; attempt < 250; attempt++) {
+      if (!obj) { slots.delete(id); cancelled.delete(id); return null; }     // slot is gone: nothing to place
+      for (let attempt = 0; attempt < 2500; attempt++) {     // ~5 min: the slide may still be getting built
         let placed = false;
         try { placed = swapIn(id, obj); } catch (e) { console.warn('[lazy-media] swap:', e); placed = true; }
         if (placed || cancelled.has(id)) break;
@@ -448,7 +466,7 @@
         const pu = normUrl(p && p.url);
         return isHttp(pu) && !used.has(pu) && (!!(p.kind === 'gif') === gif);
       });
-      if (!alt) { console.info('[lazy-media] duplicate image dropped:', u); return; }
+      if (!alt) { out.push(el); return; }        // no unused one: a repeated picture is better than an empty place
       const nu = normUrl(alt.url);
       used.add(nu);
       const copy = Object.assign({}, el);
@@ -459,6 +477,34 @@
       out.push(copy);
     });
     return out;
+  }
+
+  // fabric drops a saved picture whose URL does not load when the slide is opened (and the next save loses it for
+  // good). Instead a shimmer slot takes its place at the same box; it keeps the URL and loads the picture again.
+  function patchImageFromObject() {
+    if (typeof fabric === 'undefined' || !fabric.Image || fabric.Image.__ssSafe) return;
+    const orig = fabric.Image.fromObject;
+    if (typeof orig !== 'function') return;
+    fabric.Image.fromObject = function (object, callback) {
+      return orig.call(this, object, function (img, isError) {
+        const url = object && (isHttp(object.ssSrcUrl) ? object.ssSrcUrl : (isHttp(object.src) ? object.src : ''));
+        if ((img && !isError) || !url || window.__ssLazyMediaOff) { if (callback) callback(img, isError); return; }
+        let slot = null;
+        try {
+          const sx = Number(object.scaleX) || 1, sy = Number(object.scaleY) || 1;
+          const el = {
+            type: 'image', src: url, ssSrcUrl: url,
+            left: object.left, top: object.top, angle: object.angle || 0,
+            width: Math.max(1, Math.round((Number(object.width) || 200) * sx)),
+            height: Math.max(1, Math.round((Number(object.height) || 150) * sy)),
+          };
+          ['opacity', 'imageNumber', 'imageHash', 'id', '_oid'].forEach(function (k) { if (object[k] != null) el[k] = object[k]; });
+          slot = slotFor(el);
+        } catch (e) { slot = null; }
+        if (callback) callback(slot || img, slot ? false : isError);
+      });
+    };
+    fabric.Image.__ssSafe = true;
   }
 
   window.SSLazyMedia = {
@@ -478,6 +524,7 @@
 
   preloadFonts();
   defineSlot();
+  patchImageFromObject();
   // the app may create (or re-create) the main canvas after this file ran -> keep the hook attached
   hookCanvas();
   setInterval(hookCanvas, 1000);
