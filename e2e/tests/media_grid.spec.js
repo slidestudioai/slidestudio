@@ -207,3 +207,32 @@ test('a picture that arrives during the slide reveal stays visible; saves and th
   });
   expect(r).toEqual({ live: 1, midJson: 1, saved: 1, sameThumb: true, white: false });
 });
+
+test('a dead loremflickr link (old decks) is replaced at once by a search with its own words — also on a slide that is not open', async ({ page }) => {
+  test.setTimeout(60_000);
+  await openEditor(page);
+  const qs = [];
+  let flickr = 0;
+  await page.route('**/loremflickr.com/**', (r) => { flickr++; return r.fulfill({ status: 500, body: '' }); });
+  await page.route('**/api/proxy-image**', (r) => (/loremflickr/.test(decodeURIComponent(r.request().url())) ? (flickr++, r.fulfill({ status: 400, body: '' })) : r.continue()));
+  await page.route('**/api/media-search**', (r) => {
+    const q = new URL(r.request().url()).searchParams.get('q'); qs.push(q);
+    return r.fulfill({ json: { results: [{ url: new URL(r.request().url()).origin + '/e2e-img/menkes-' + qs.length + '.png' }] } });
+  });
+  await page.evaluate(() => {
+    const u = 'https://loremflickr.com/1280/720/Menkes%2Cdisease%2Ckinky%2Chair?lock=9';
+    slides.push({ json: JSON.stringify({ background: '#fff', objects: [
+      { type: 'textbox', text: 'Menkes kasalligi', left: 40, top: 20, width: 600, fontSize: 36, fill: '#000', styles: [] },
+      { type: 'image', src: u, ssSrcUrl: u, left: 40, top: 90, width: 1280, height: 720, scaleX: 0.3, scaleY: 0.3 }] }), thumb: '', imageNumbers: [] });
+    renderSidebar();                                   // the new slide is NOT opened
+  });
+  await page.waitForFunction(() => /e2e-img\/menkes-/.test(slides[slides.length - 1].json) && slides[slides.length - 1].json.indexOf('ssMediaSlot') < 0, null, { timeout: 30_000 });
+  const r = await page.evaluate(() => {
+    const o = JSON.parse(slides[slides.length - 1].json).objects.find((x) => x.type === 'image');
+    return { url: o.ssSrcUrl, box: [Math.round(o.left), Math.round(o.top), Math.round(o.width * o.scaleX), Math.round(o.height * o.scaleY)] };
+  });
+  expect(qs[0]).toBe('Menkes disease kinky hair');
+  expect(r.url).toMatch(/e2e-img\/menkes-1\.png$/);
+  expect(r.box).toEqual([40, 90, 384, 216]);                  // same place and size as the old picture
+  expect(flickr).toBe(0);                                     // the dead site is not even asked
+});
