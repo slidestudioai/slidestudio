@@ -196,7 +196,11 @@
       const _batchReportStart = lastActionReport.length;
       try {
         const hasReset = commands.some((c) => c && (c.action === 'reset_deck' || c.action === 'delete_extra_slides'));
-        const hasClearAll = commands.filter((c) => c && c.action === 'clear_slide').length >= Math.max(1, slides.length - 1);
+        // «all slides are cleared» only when EVERY slide gets a clear_slide (before: count >= slides-1, so in a 2-slide deck
+        // one clear_slide of slide 2 also wiped the GIFs of the slide on screen)
+        const _cleared = new Set(commands.filter((c) => c && c.action === 'clear_slide')
+          .map((c) => parseInt(c.slide != null ? c.slide : (activeIndex + 1), 10)).filter((n) => n >= 1));
+        const hasClearAll = slides.length > 0 && _cleared.size >= slides.length;
         if (hasReset) {
 
           if (_resetDeckAppliedThisStream || executedActionSignatures.has('RESET_DECK')) {

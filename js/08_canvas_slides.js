@@ -255,12 +255,14 @@
         };
         item.ontouchend = () => clearTimeout(pressTimer);
         item.ontouchmove = () => clearTimeout(pressTimer);
-        const imgNums = slide.imageNumbers && slide.imageNumbers.length > 0
-          ? `<div class="img-nums">#${slide.imageNumbers.join(',#')}</div>` : '';
+        const _nums = (Array.isArray(slide.imageNumbers) ? slide.imageNumbers : []).map(Number).filter((n) => Number.isFinite(n));
+        const imgNums = _nums.length > 0 ? `<div class="img-nums">#${_nums.join(',#')}</div>` : '';
+        // thumb: only an image data/blob/http URL, escaped (an imported deck is untrusted data)
+        const _th = (typeof slide.thumb === 'string' && /^(data:image\/|blob:|https?:\/\/)/i.test(slide.thumb)) ? _ssEscHtml(slide.thumb) : '';
         item.innerHTML = `
           <div class="slide-num">${idx + 1}</div>
           <div class="slide-thumb">
-            <img ${slide.thumb ? `src="${slide.thumb}"` : ''} alt="">
+            <img ${_th ? `src="${_th}"` : ''} alt="">
             ${imgNums}
             <div class="slide-more-btn" onclick="event.stopPropagation(); showSlideContextMenu(event, ${idx})">
               <span class="material-symbols-outlined">more_vert</span>
@@ -306,14 +308,18 @@
         }
       } catch (e) {}
     }
+    function _ssEscHtml(v) {
+      return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
     function renderSidebarUserProfile(sidebar) {
       if (!sidebar) return;
       sidebar.querySelectorAll('.sidebar-user-section').forEach(el => el.remove());
       const section = document.createElement('div');
       section.className = 'sidebar-user-section';
       const isLoggedIn = !!(currentUserEmail && supabaseToken && supabaseToken !== 'dev-token');
-      const email = currentUserEmail || 'Mehmon';
-      const initial = (email[0] || 'U').toUpperCase();
+      // the label goes into HTML below: escaped (an account name / email is data, never markup)
+      const email = _ssEscHtml(currentUserEmail || 'Mehmon');
+      const initial = _ssEscHtml((String(currentUserEmail || 'Mehmon')[0] || 'U').toUpperCase());
       section.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px;">
           <span style="background:${isLoggedIn ? '#0b57d0' : '#9ca3af'};color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;font-size:11px;">${initial}</span>
@@ -362,8 +368,9 @@
       if (dd) dd.classList.remove('open');
 
       const isLoggedIn = !!(currentUserEmail && supabaseToken && supabaseToken !== 'dev-token');
-      const email = currentUserEmail || 'Mehmon';
-      const initial = (email[0] || 'U').toUpperCase();
+      // the label goes into HTML below: escaped (an account name / email is data, never markup)
+      const email = _ssEscHtml(currentUserEmail || 'Mehmon');
+      const initial = _ssEscHtml((String(currentUserEmail || 'Mehmon')[0] || 'U').toUpperCase());
       sidebar.innerHTML = '';
       const panel = document.createElement('div');
       panel.className = 'settings-panel-inner';

@@ -207,7 +207,9 @@
     } catch (e) { return ''; }
   }
   function slideItemHtml(slide, idx) {
-    const imgNums = slide.imageNumbers && slide.imageNumbers.length > 0 ? '<div class="img-nums">#' + slide.imageNumbers.join(',#') + '</div>' : '';
+    // only numbers go into this HTML (an imported deck could carry markup in imageNumbers)
+    const _nums = (Array.isArray(slide.imageNumbers) ? slide.imageNumbers : []).map(Number).filter(function (n) { return Number.isFinite(n); });
+    const imgNums = _nums.length > 0 ? '<div class="img-nums">#' + _nums.join(',#') + '</div>' : '';
     return '<div class="slide-num">' + (idx + 1) + '</div><div class="slide-thumb"><img alt="">' + imgNums +
       '<div class="slide-more-btn"><span class="material-symbols-outlined">more_vert</span></div></div>';
   }
@@ -319,11 +321,11 @@
       }
       const numEl = el.querySelector('.slide-num');
       if (numEl.textContent !== String(idx + 1)) numEl.textContent = idx + 1;
-      const nums = (slide.imageNumbers || []).join(',');
+      const nums = (slide.imageNumbers || []).map(Number).filter(function (n) { return Number.isFinite(n); }).join(',');
       if (rec.nums !== nums) {
         rec.nums = nums;
         const old = el.querySelector('.img-nums'); if (old) old.remove();
-        if (nums) { const d = document.createElement('div'); d.className = 'img-nums'; d.textContent = '#' + (slide.imageNumbers || []).join(',#'); el.querySelector('.slide-thumb').insertBefore(d, el.querySelector('.slide-more-btn')); }
+        if (nums) { const d = document.createElement('div'); d.className = 'img-nums'; d.textContent = '#' + (slide.imageNumbers || []).map(Number).filter(function (n) { return Number.isFinite(n); }).join(',#'); el.querySelector('.slide-thumb').insertBefore(d, el.querySelector('.slide-more-btn')); }
       }
       const img = el.querySelector('.slide-thumb > img');
       if (rec.thumb !== slide.thumb) { rec.thumb = slide.thumb; if (slide.thumb) img.src = slide.thumb; else img.removeAttribute('src'); }
