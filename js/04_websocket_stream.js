@@ -1,5 +1,18 @@
     const AiSearchUI = (function () {
       let chip = null, active = 0, hostId = null;
+      function _t(x) { try { return window.SSI18n ? SSI18n.t(x) : x; } catch (e) { return x; } }
+      function finishThink(all) {
+        const list = all ? document.querySelectorAll('.ai-think.on') : (function () { const b = host(); return b ? b.querySelectorAll(':scope > .ai-think.on') : []; })();
+        Array.prototype.forEach.call(list, function (r) {
+          r.classList.remove('on');
+          r.classList.add('done');
+          const n = Math.max(1, Number(r.dataset.sec) || Math.round((Date.now() - Number(r.dataset.t0 || Date.now())) / 1000));
+          r.querySelector('.ai-think-t').textContent = _t(n + ' soniya o\u2018yladi');
+          r.querySelector('.ai-think-s').textContent = '';
+        });
+        // old markup (a reply restored from before this version)
+        document.querySelectorAll('.ai-search-row.thinking').forEach(function (r) { r.remove(); });
+      }
 
       const SEP_EVERY = 5;
       let searchCount = 0;
@@ -76,34 +89,30 @@
           }
           if (!active) { try { setMediaSearchStatus(null); } catch (e) {} }
         },
-        // v54: Chuqur (Pro) AI o'ylayotganda ham Tez AI kabi jonli holat qatori
+        // Deep AI «thinking» line. It sits ABOVE the answer text (like «Thought for 12 s» in modern chats):
+        // while thinking — a soft violet line with a live timer; when done — a small grey caption «14 soniya o'yladi».
+        // (Before: a green «success» search card «O'ylab bo'ldi — javob yozilmoqda…» stayed under the text.)
         thinking: function (sec) {
-          const c = ensure();
-          if (!c) return;
-          let r = c.querySelector('.ai-search-row.thinking');
+          const b = host();
+          if (!b) return;
+          let r = b.querySelector(':scope > .ai-think');
           if (!r) {
             r = document.createElement('div');
-            r.className = 'ai-search-row searching thinking';
-            r.innerHTML = '<span class="material-symbols-outlined spin">psychology</span><span class="asr-text"></span>';
-            c.insertBefore(r, c.firstChild);
+            r.className = 'ai-think on';
+            r.setAttribute('role', 'status');
+            r.innerHTML = '<span class="ai-think-ic" aria-hidden="true"></span><span class="ai-think-t"></span><span class="ai-think-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="ai-think-s"></span>';
+            r.dataset.t0 = String(Date.now() - (Number(sec) || 0) * 1000);
+            b.insertBefore(r, b.firstChild);
           }
-          r.querySelector('.asr-text').textContent = 'Chuqur o\u2018ylayapti' + (sec ? ' · ' + sec + ' s' : '') + '…';
+          if (!r.classList.contains('on')) return;
+          r.querySelector('.ai-think-t').textContent = _t('Chuqur o\u2018ylayapti');
+          const n = Math.max(0, Math.round(Number(sec) || (Date.now() - Number(r.dataset.t0 || Date.now())) / 1000));
+          r.dataset.sec = String(n);
+          r.querySelector('.ai-think-s').textContent = n ? n + ' s' : '';
         },
-        thinkingDone: function () {
-          const r = chip && chip.querySelector('.ai-search-row.thinking.searching');
-          if (!r) return;
-          r.classList.remove('searching'); r.classList.add('ok', 'writing');
-          const ic = r.querySelector('.material-symbols-outlined'); ic.classList.remove('spin'); ic.textContent = 'check_circle';
-          r.querySelector('.asr-text').textContent = 'O\u2018ylab bo\u2018ldi — javob yozilmoqda\u2026';
-        },
-        // v62: javob TUGAGACH «javob yozilmoqda» qolib ketmasin (avval doim shunday turardi)
-        thinkingFinal: function () {
-          document.querySelectorAll('.ai-search-row.thinking').forEach(function (r) {
-            r.classList.remove('searching', 'writing'); r.classList.add('ok');
-            const ic = r.querySelector('.material-symbols-outlined'); if (ic) { ic.classList.remove('spin'); ic.textContent = 'check_circle'; }
-            const t = r.querySelector('.asr-text'); if (t) t.textContent = 'O\u2018ylab bo\u2018ldi';
-          });
-        },
+        thinkingDone: function () { finishThink(); },
+        // v62: when the answer is finished nothing «in progress» may stay
+        thinkingFinal: function () { finishThink(true); },
         reset: function () { chip = null; active = 0; searchCount = 0; window._aiSearchBreakRaw = null; },
         chipEl: function () { return chip && chip.isConnected ? chip : null; },
       };

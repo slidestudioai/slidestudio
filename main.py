@@ -238,10 +238,13 @@ _SMALLTALK_RE = _re.compile(r"^\s*(?:salom|assalom\w*|hi|hello|hey|rahmat|raxmat
 _N_SLIDES_RE = _re.compile(r"(\d{1,2})\s*(?:ta\s*)?(?:slayd|slide|varaq|sahifa|page|слайд)", _re.IGNORECASE)
 
 
-def _presearch_count(text: str) -> int:
-    """How many searches are planned before writing: one per requested slide / topic (3..12)."""
+def _presearch_count(text: str, deep: bool = False) -> int:
+    """How many searches are planned before writing: one per requested slide / topic (3..12; Deep AI: 4..16,
+    because it cannot search later by itself)."""
     n = _slide_amount(text or "")
     topics = len([p for p in _re.split(r"[,;\n]|\bva\b|\band\b|\bи\b", text or "") if len(p.strip()) > 2])
+    if deep:
+        return max(4, min(16, max(n, topics)))
     return max(3, min(12, max(n, topics)))
 
 
@@ -272,8 +275,8 @@ def _slide_amount(text: str) -> int:
         if pre == "-" or pre.isdigit():
             continue
         suffix = (m.group(3) or "").lower()
-        if m.group(2) or suffix in ("s", "li", "lik", "ов", "а", "ы") or (
-                suffix == "" and _CREATE_VERB_RE.search(text or "") and not _re.search(r"\d\s*-\s*(?:slayd|slide)", text or "", _re.I)):
+        # «10 slayd» (bare, no case ending) is an amount too; «10 slaydni / 10 slayddagi» is a slide number
+        if m.group(2) or suffix in ("", "s", "li", "lik", "ов", "а", "ы"):
             return n
     return 0
 
@@ -328,6 +331,51 @@ def _turn_may_search(raw: str) -> bool:
     return False
 
 
+_PLACEHOLDER_TEXTS = {"sarlavha kiriting", "enter title", "введите заголовок", "matn kiriting...", "enter text...", "введите текст...",
+                      "sarlavha", "title", "заголовок", "yangi matn", "new text", "новый текст", "matn kiriting", "enter text", ""}
+
+
+def _deck_is_empty(deck_state: Any) -> bool:
+    """True when the user's deck has no content yet (one blank slide / only placeholder texts).
+    Then a message that is just a topic («Iqlim o'zgarishi haqida», «Amir Temur», «Sun'iy intellekt 10 slayd») means:
+    make a new deck — with pictures. Before, such messages searched no pictures at all (Deep AI cannot search itself)."""
+    try:
+        d = json.loads(deck_state) if isinstance(deck_state, str) else deck_state
+    except Exception:
+        return False
+    if not isinstance(d, dict):
+        return False
+    pres = d.get("presentation")
+    slides_ = pres if isinstance(pres, list) and pres else [d.get("slide_data") or {}]
+    try:
+        if int(d.get("total_slides") or len(slides_) or 1) > 1:
+            return False
+    except Exception:
+        return False
+    for sl in slides_:
+        if not isinstance(sl, dict):
+            return False
+        if sl.get("backgroundImage") or sl.get("backgroundGif") or sl.get("backgroundVideo") or sl.get("backgroundImageUrl"):
+            return False
+        for o in (sl.get("objects") or sl.get("elements") or []):
+            if not isinstance(o, dict):
+                continue
+            typ = str(o.get("type") or "").lower()
+            if typ in ("text", "textbox", "i-text"):
+                if str(o.get("text") or "").strip().lower().replace("…", "...") in _PLACEHOLDER_TEXTS:
+                    continue
+            return False
+    return True
+
+
+def _new_deck_topic(raw: str, deck_state: Any) -> bool:
+    """An empty deck + a real request (not a greeting / question about the site, not «no pictures»)."""
+    t = (raw or "").strip()
+    if len(t) < 3 or _SMALLTALK_RE.match(t) or _NO_IMG_RE.search(t) or t.endswith("?"):
+        return False
+    return _deck_is_empty(deck_state)
+
+
 _EDIT_NO_NEW_MEDIA_NOTE = (
     "\n\n[TAHRIR — YANGI RASM YO'Q]\nBu xabar mavjud slayd(lar)ni TAHRIRLASH so'rovi (rang, matn, joylashuv, o'lcham, tartib …). "
     "Yangi rasm / GIF / video QIDIRMANG va QO'SHMANG, mavjud rasmlarni almashtirmang va o'chirmang (foydalanuvchi o'zi so'ramagan bo'lsa). "
@@ -358,7 +406,7 @@ def _presearch_kind(text: str) -> str:
 
 
 async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: Any = None, stats: Optional[dict] = None,
-                          kind: str = "photo") -> str:
+                          kind: str = "photo", show: int = 4) -> str:
     """Chuqur AI (deepseek-reasoner) tool chaqira olmaydi — shuning uchun rasmlarni OLDINDAN topib, tayyor URL ro'yxatini beramiz.
     Kichik tez model inglizcha so'rovlarni yozadi, qidiruv parallel ishlaydi. Xatoda bo'sh matn (oqim buzilmaydi)."""
     if not _search_images_sync:
@@ -373,7 +421,7 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     _first = "mavzuga mos rasmlar"
     try:
         r = await asyncio.wait_for(client.chat.completions.create(
-            model="deepseek-chat", temperature=0, max_tokens=160, response_format={"type": "json_object"},
+            model="deepseek-chat", temperature=0, max_tokens=400, response_format={"type": "json_object"},
             messages=[{"role": "system", "content": f"You write {'animated GIF' if kind == 'gif' else ('short video clip' if kind == 'video' else 'photo')} search queries for slides. Return only JSON (json): {{\"queries\": [\"2-4 word ENGLISH query\", ...]}}. "
                                                     f"Cover EVERY topic, sub-topic and slide the user mentions (one query each, in slide order) — do not skip any. "
                                                     f"At most {max_q} queries, each a concrete photographable subject. If the request needs no pictures return an empty list."},
@@ -392,7 +440,7 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     for q, f in zip(qs, res):
         if isinstance(f, list):
             lines = []
-            for x in f[:4]:
+            for x in f[:max(1, show)]:
                 if not (isinstance(x, dict) and x.get("url")):
                     continue
                 size = f" {x['width']}x{x['height']}" if x.get("width") and x.get("height") else ""
@@ -3306,26 +3354,29 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
                 _pre_stats: Dict[str, int] = {}
                 # «generate» = one slide of a planned deck (it decides by the plan's has_image); otherwise: only when
                 # the message creates slides or asks for a picture — an edit never searches / adds pictures
-                _may_search = mode == "generate" or _turn_may_search(prompt or "")
+                _new_deck = mode not in ("plan", "generate") and _new_deck_topic(prompt or "", (data or {}).get("deck_state") or (data or {}).get("slide_context"))
+                _may_search = mode == "generate" or _new_deck or _turn_may_search(prompt or "")
                 tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and _may_search
                 if not _may_search and mode not in ("plan", "generate") and messages:
                     messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _EDIT_NO_NEW_MEDIA_NOTE}
                 # «Search everything first, then write everything»: for a new deck / several slides the server finds the
                 # pictures for ALL topics of the message in ONE parallel batch, then the AI writes the whole deck in ONE
                 # answer (no tools, no slide-by-slide search rounds that ran out and left slides unfinished).
-                _batch_first = (tools_on and mode not in ("plan", "generate") and _is_multi_slide_request(prompt or "")
-                                and _wants_images(prompt or ""))
+                _batch_first = (tools_on and mode not in ("plan", "generate")
+                                and ((_is_multi_slide_request(prompt or "") and _wants_images(prompt or "")) or _new_deck))
                 if (model == "deepseek-reasoner" or _batch_first) and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(prompt or ""):
                     try:
                         # the user's OWN text (user_content also carries the browser's action report — Audit M1)
-                        _ctx, _want = prompt or "", _wants_images(prompt or "") and _may_search
+                        _ctx = prompt or ""
+                        _want = _may_search if model == "deepseek-reasoner" else (_wants_images(prompt or "") or _new_deck) and _may_search
                         if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
                             _cur = plan_slides[int(plan_index)] or {}
                             _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
                             _ctx = f"Deck topic: {prompt}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                         if _want:
-                            _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else _presearch_count(prompt or ""), websocket, _pre_stats,
-                                                           kind=_presearch_kind(prompt or ""))
+                            _nq = 1 if mode == "generate" else _presearch_count(prompt or "", deep=model == "deepseek-reasoner")
+                            _extra = await _deep_presearch(client, _ctx, _nq, websocket, _pre_stats, kind=_presearch_kind(prompt or ""),
+                                                           show=6 if model == "deepseek-reasoner" else 4)
                             if _extra:
                                 messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
                                 if _batch_first:

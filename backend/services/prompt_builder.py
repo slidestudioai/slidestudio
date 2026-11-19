@@ -93,6 +93,24 @@ _NO_TOOLS_NOTE = ("\n\n[MUHIM — BU REJIMDA TOOL YO'Q]\nSizda hech qanday tool/
                   "U bo'lim bo'lmasa — rasm elementi qo'shmang. Javobni darhol yozing: qisqa PART A matn + bitta ```json blok.")
 
 
+# Deep AI («Chuqur AI») is the slower, paid-more mode: the user expects a clearly better result than Fast AI.
+_DEEP_MODE_NOTE = (
+    "\n\n[CHUQUR AI REJIMI — SIFAT BIRINCHI O'RINDA]\n"
+    "You are in DEEP mode. Think it through before writing, then deliver a result clearly better than the fast mode:\n"
+    "1. PLAN first (in your reasoning, not in the answer): the audience and goal, a logical storyline (intro → main parts → "
+    "conclusion), what EACH slide must say and show. No two slides repeat the same point.\n"
+    "2. CONTENT: accurate, specific, expert-level facts (names, numbers, dates, causes, examples) in the user's language; "
+    "short clear bullet sentences, no filler, no invented statistics. University / professional level when the topic is academic.\n"
+    "3. PICTURES: use the server's [TAYYOR RASMLAR] list fully — give every content slide a picture that matches ITS subject "
+    "(read each result's title), never the same URL twice, never a picture that does not fit. If the list has no fitting "
+    "picture for a slide, design it with cards and shapes instead (never invent a URL).\n"
+    "4. DESIGN: one consistent style for the whole deck (same palette, title position, card radius); a strong title slide "
+    "and a closing slide; 2–4 cards per content slide from the grid. Before writing each slide, CHECK every coordinate: "
+    "nothing overlaps, everything inside 40..920 × 30..510, text fits its card.\n"
+    "5. COMPLETENESS: build EVERY slide the user asked for, fully, in this one answer — never stop half-way, never leave "
+    "placeholder text. Edits of existing slides follow section 15 rule 0 (no new pictures unless asked).")
+
+
 def _extract_imgs(objects, slide_num):
     out = []
     if not isinstance(objects, list):
@@ -523,7 +541,8 @@ def build_turn_messages(*, base_prompt: str, data: Dict[str, Any], usage: dict, 
         except Exception:
             sys_p += "\n\n[LIVE DECK STATE]:\n" + wrap_untrusted("deck_state", sanitize_untrusted(deck_state, 6000))
     if model == "deepseek-reasoner":
-        sys_p = sys_p.replace("search_images tool bilan", "tayyor rasm ro'yxatidan").replace("search_images", "(rasm qidirish)") + _NO_TOOLS_NOTE
+        sys_p = (sys_p.replace("search_images tool bilan", "tayyor rasm ro'yxatidan").replace("search_images", "(rasm qidirish)")
+                 + _NO_TOOLS_NOTE + _DEEP_MODE_NOTE)
     messages = [{"role": "system", "content": sys_p}]
     messages.extend(build_history(chat_history, max_ctx))
     user_content = sanitize_untrusted(prompt, PROMPT_MAX) or "Buyruqni bajaring."                 # Audit M1

@@ -155,10 +155,13 @@ test('slayd yaratilayotganda ekran va effekt orqaga (oldingi slaydga) qaytmaydi'
 test('rasm topilmasa AI uni boshqa so\'z bilan qayta qidiradi, keyin slaydlarni yasaydi', async ({ page }) => {
   await openEditor(page);
   await login(page);
-  // bitta slayd (tahrir) — AI o'zi qidiradi (bir nechta slayd/taqdimotda esa server hamma mavzuni oldindan qidiradi)
+  // bitta slayd (tahrir) — AI o'zi qidiradi (bir nechta slayd/taqdimotda yoki BO'SH taqdimotda esa server hamma mavzuni
+  // oldindan qidiradi) — shuning uchun taqdimotda allaqachon matn bor
+  await page.evaluate(() => { canvas.add(new fabric.Textbox('Mavjud matn', { left: 60, top: 60, width: 300 })); canvas.renderAll(); saveCurrentSlideState({ force: true }); });
   await ask(page, '1 ta slayd yarat, 1 ta rasm bilan, topilmas');
   const rows = await page.$$eval('.ai-search-row', (r) => r.map((x) => x.innerText));
   expect(rows.join(' | ')).toContain('yoq narsa');
   expect(rows.join(' | ')).toContain('subject retry');   // topilmagani uchun boshqa so'z bilan qayta qidirildi (chatda ko'rinadi)
-  expect((await deck(page)).length).toBe(1);
+  // slide 1 already had content -> the new slide is added after it (the user's slide is kept)
+  expect((await deck(page)).length).toBe(2);
 });
