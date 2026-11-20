@@ -21,9 +21,13 @@ def test_google_verification_and_meta(client, monkeypatch):
     html = r.text
     head = html.split("</head>")[0]
     assert '<meta name="google-site-verification" content="faIm498mQA0y-NhL6pXWpqVHeNM6nTfn1pwpH7PDlk8" />' in head
-    assert re.search(r"<title>Slide Studio — AI Presentation &amp; Slide Maker Online</title>", head)
-    assert 'name="description" content="Create professional presentations with AI' in head
-    assert 'name="keywords"' in head and "slayd yaratish" in head and "создать презентацию" in head
+    assert "<title>SlideStudio — AI bilan onlayn slayd va prezentatsiya yasash | AI Slide Maker</title>" in head
+    assert 'name="description" content="SlideStudio (Slide Studio) yordamida sun&#39;iy intellekt (AI) orqali' in head
+    kw = re.search(r'name="keywords" content="([^"]*)"', head).group(1)
+    for w in ("SlideStudio", "Slide Studio", "SlideStudio AI", "slayd yasash", "AI bilan slayd yasash", "AI slayd",
+              "taqdimot yasash", "prezentatsiya yasash", "AI slide maker", "AI presentation maker", "создать слайды с ИИ",
+              "ИИ презентация", "сделать презентацию онлайн", "генератор презентаций", "create slides with AI"):
+        assert w in kw, w
     assert 'name="robots" content="index, follow' in head
     assert f'<link rel="canonical" href="{BASE}/">' in head
     assert "noindex" not in head and "noindex" not in r.headers.get("x-robots-tag", "")
@@ -32,7 +36,8 @@ def test_google_verification_and_meta(client, monkeypatch):
 def test_structured_data_is_valid_json(client, monkeypatch):
     html = _home(client, monkeypatch).text
     ld = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S).group(1))
-    assert ld["@type"] == "SoftwareApplication" and ld["name"] == "Slide Studio" and ld["url"] == BASE + "/"
+    assert ld["@type"] == "SoftwareApplication" and ld["name"] == "SlideStudio" and ld["url"] == BASE + "/"
+    assert "Slide Studio" in ld["alternateName"]
 
 
 def test_robots_txt(client, monkeypatch):
