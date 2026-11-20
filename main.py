@@ -1446,6 +1446,11 @@ def _render_index() -> Optional[str]:
         v = _hashlib.md5(_ver(m.group(2)).encode()).hexdigest()[:10]
         return f"{m.group(1)}{m.group(2)}?v={v}{m.group(3)}"
     html = _ASSET_RE.sub(_sub, raw)
+    # link previews need an ABSOLUTE address (Telegram/WhatsApp do not resolve «/og-image.png»)
+    _base = (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+    if not _re.match(r"^https?://[\w.-]+(:\d+)?$", _base):
+        _base = ""
+    html = html.replace("__SS_BASE__", _base)
     _index_cache["sig"], _index_cache["html"] = sig, html
     return html
 
@@ -3095,7 +3100,7 @@ except Exception as _cm_err:
 
 PUBLIC_STATIC_FILES = {
         "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css", "v54.css", "topup.css", "v68.css",
-        "favicon.ico", "logo.png", "manifest.json",
+        "favicon.ico", "logo.png", "manifest.json", "og-image.png",
         "terms.html", "privacy.html", "refund.html",
     }
 
@@ -3354,8 +3359,12 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
                 _pre_stats: Dict[str, int] = {}
                 # «generate» = one slide of a planned deck (it decides by the plan's has_image); otherwise: only when
                 # the message creates slides or asks for a picture — an edit never searches / adds pictures
-                _new_deck = mode not in ("plan", "generate") and _new_deck_topic(prompt or "", (data or {}).get("deck_state") or (data or {}).get("slide_context"))
-                _may_search = mode == "generate" or _new_deck or _turn_may_search(prompt or "")
+                # «Shu varaq haqida yozing» (scope current_slide) is about THAT slide only: a topic written there fills the
+                # slide (it may get a picture), it never starts a whole new deck
+                _one_slide = str((data or {}).get("scope") or "") == "current_slide"
+                _topic_empty = mode not in ("plan", "generate") and _new_deck_topic(prompt or "", (data or {}).get("deck_state") or (data or {}).get("slide_context"))
+                _new_deck = _topic_empty and not _one_slide
+                _may_search = mode == "generate" or _topic_empty or _turn_may_search(prompt or "")
                 tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and _may_search
                 if not _may_search and mode not in ("plan", "generate") and messages:
                     messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _EDIT_NO_NEW_MEDIA_NOTE}
@@ -3374,7 +3383,8 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
                             _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
                             _ctx = f"Deck topic: {prompt}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                         if _want:
-                            _nq = 1 if mode == "generate" else _presearch_count(prompt or "", deep=model == "deepseek-reasoner")
+                            _nq = 1 if mode == "generate" else (2 if _one_slide and not _is_multi_slide_request(prompt or "")
+                                                                else _presearch_count(prompt or "", deep=model == "deepseek-reasoner"))
                             _extra = await _deep_presearch(client, _ctx, _nq, websocket, _pre_stats, kind=_presearch_kind(prompt or ""),
                                                            show=6 if model == "deepseek-reasoner" else 4)
                             if _extra:

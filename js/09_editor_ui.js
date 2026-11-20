@@ -415,6 +415,8 @@
             }
             const h = Math.max(220, Math.floor(vv.height));
             document.documentElement.style.setProperty('--ai-panel-h', h + 'px');
+            // iPhone: the visible part may be shifted (offsetTop) — the panel follows it exactly, no jump
+            document.documentElement.style.setProperty('--ai-panel-top', Math.max(0, Math.floor(vv.offsetTop || 0)) + 'px');
             ai.classList.add('keyboard-open');
           } else {
             if (document.body.classList.contains('ai-keyboard-lock')) {
@@ -425,10 +427,14 @@
             }
             ai.classList.remove('keyboard-open');
             document.documentElement.style.removeProperty('--ai-panel-h');
+            document.documentElement.style.removeProperty('--ai-panel-top');
           }
         };
-        window.visualViewport.addEventListener('resize', adjustAiForKeyboard);
-        window.visualViewport.addEventListener('scroll', adjustAiForKeyboard);
+        // the keyboard animation fires many resize events: handle at most one per frame
+        let _kbRaf = 0;
+        const onVv = () => { if (_kbRaf) return; _kbRaf = requestAnimationFrame(() => { _kbRaf = 0; adjustAiForKeyboard(); }); };
+        window.visualViewport.addEventListener('resize', onVv);
+        window.visualViewport.addEventListener('scroll', onVv);
       }
       const bottomAiModalEl = document.getElementById('bottomAiModal');
       if (bottomAiModalEl) {
