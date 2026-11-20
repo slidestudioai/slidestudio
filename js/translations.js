@@ -199,6 +199,8 @@ window.SS_I18N = {
     "Bekor qilish uchun oldingi holat topilmadi": ["Не найдено предыдущее состояние для отмены", "No previous state to undo"],
     "Bekor qilindi (Undo)": ["Отменено", "Undone"],
     "Qaytarish uchun keyingi holat yo'q": ["Нечего повторить", "Nothing to redo"],
+    "Qaytarildi (Redo)": ["Повторено", "Redone"],
+    "AI ishlayapti — tugagach qayta urinib ko'ring.": ["AI работает — попробуйте после завершения.", "The AI is working — try again when it finishes."],
     "Avval tizimga kiring": ["Сначала войдите в систему", "Please sign in first"],
 
     /* ---------- ovoz va «+» ---------- */

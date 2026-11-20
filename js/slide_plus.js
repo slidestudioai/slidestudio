@@ -53,6 +53,7 @@
       ur.querySelector('#mobUndoBtn').addEventListener('click', function (e) { e.stopPropagation(); try { undo(); } catch (er) {} });
       ur.querySelector('#mobRedoBtn').addEventListener('click', function (e) { e.stopPropagation(); try { redo(); } catch (er) {} });
       document.body.appendChild(ur);
+      try { if (window.updateUndoRedoUI) window.updateUndoRedoUI(); } catch (er) {}
     }
 
     // v66: tugma DOIM ish maydonining (toolbar ostidagi, chap panel o'ngidagi joyning) CHAP-YUQORI burchagida,

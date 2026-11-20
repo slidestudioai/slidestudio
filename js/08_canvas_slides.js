@@ -1328,26 +1328,85 @@
       canvas.requestRenderAll();
       try { GifOverlay.scheduleSync(); } catch (e) {}
     }
+    // ---------------------------------------------------------------------------------------------
+    // Undo / redo history (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z, toolbar and phone buttons)
+    // - An entry is an OBJECT, not one big JSON string: unchanged slides share the same json string with the
+    //   deck and with the other entries, so 100 steps no longer mean 100 full copies of every image/video.
+    //   A memory budget (HISTORY_MAX_CHARS) drops the oldest steps when big media slides change often.
+    // - Every slide field is kept (transition, background settings ...): before, an undo dropped them.
+    // - Thumbnails are not compared: a re-rendered thumbnail is not a user change (no "empty" undo steps).
+    // ---------------------------------------------------------------------------------------------
+    const HISTORY_MAX_CHARS = 120 * 1000 * 1000;
+    const HISTORY_MIN_STEPS = 5;
+    function _histSlide(s) {
+      const c = Object.assign({}, s);
+      c.imageNumbers = Array.isArray(s && s.imageNumbers) ? s.imageNumbers.slice() : [];
+      return c;
+    }
+    function _histEntry(e) {                       // old entries (and 38_v46_fixes.js) may still be JSON strings
+      if (typeof e === 'string') { try { e = JSON.parse(e); } catch (er) { return null; } }
+      return (e && Array.isArray(e.slides)) ? e : null;
+    }
+    function _histSame(a, b) {
+      a = _histEntry(a); b = _histEntry(b);
+      if (!a || !b || a.slides.length !== b.slides.length) return false;
+      for (let i = 0; i < a.slides.length; i++) {
+        const x = a.slides[i], y = b.slides[i];
+        if ((x.json || '') !== (y.json || '')) return false;
+        if (String(x.imageNumbers || []) !== String(y.imageNumbers || [])) return false;
+        for (const k of ['transition', 'transDur', 'transAuto', 'bgType', 'bgVal']) if ((x[k] || '') !== (y[k] || '')) return false;
+      }
+      return true;
+    }
+    function _histCost(e, prev) {                  // chars this entry adds on top of the previous one
+      e = _histEntry(e); prev = _histEntry(prev);
+      if (!e) return 0;
+      let n = 0;
+      e.slides.forEach((s, i) => {
+        const j = s.json || '';
+        const pj = prev && prev.slides[i] ? (prev.slides[i].json || '') : null;
+        if (j !== pj) n += j.length + (s.thumb ? String(s.thumb).length : 0);
+      });
+      return n;
+    }
+    function _histTrim() {
+      while (globalHistory.length > MAX_HISTORY_STEPS) { globalHistory.shift(); historyStep--; }
+      let total = 0;
+      for (let i = 0; i < globalHistory.length; i++) total += _histCost(globalHistory[i], globalHistory[i - 1]);
+      while (total > HISTORY_MAX_CHARS && globalHistory.length > HISTORY_MIN_STEPS && historyStep > 0) {
+        total -= _histCost(globalHistory[0], null) - _histCost(globalHistory[1], null) + _histCost(globalHistory[1], globalHistory[0]);
+        globalHistory.shift(); historyStep--;
+      }
+    }
+    function _histSnapshot() {
+      return { slides: slides.map(_histSlide), activeIndex };
+    }
     function recordGlobalState() {
       if (isUndoRedoAction) return;
       if (isAiStreaming || isAiApplyingCommands || aiSessionActive ||
           window.isAiStreaming || window.isAiApplyingCommands || window.aiSessionActive) {
         return;
       }
-      const slidesSnapshot = slides.map(s => ({
-        json: s.json, thumb: s.thumb,
-        imageNumbers: s.imageNumbers || []
-      }));
-      const snapshotStr = JSON.stringify({ slides: slidesSnapshot, activeIndex });
-      if (globalHistory[historyStep] === snapshotStr) return;
+      const snap = _histSnapshot();
+      if (historyStep >= 0 && _histSame(globalHistory[historyStep], snap)) return;
       historyStep++;
-      globalHistory = globalHistory.slice(0, historyStep);
-      globalHistory.push(snapshotStr);
-      if (globalHistory.length > MAX_HISTORY_STEPS) {
-        globalHistory.shift();
-        historyStep--;
-      }
+      globalHistory = globalHistory.slice(0, historyStep);   // a new change removes the redo steps
+      globalHistory.push(snap);
+      _histTrim();
+      updateUndoRedoUI();
     }
+    function canUndo() { return historyStep > 0; }
+    function canRedo() { return historyStep < globalHistory.length - 1; }
+    function updateUndoRedoUI() {
+      try {
+        const u = canUndo(), r = canRedo();
+        document.querySelectorAll('[onclick="undo()"], #mobUndoBtn').forEach((b) => { b.classList.toggle('ss-hist-off', !u); b.setAttribute('aria-disabled', String(!u)); });
+        document.querySelectorAll('[onclick="redo()"], #mobRedoBtn').forEach((b) => { b.classList.toggle('ss-hist-off', !r); b.setAttribute('aria-disabled', String(!r)); });
+      } catch (e) {}
+    }
+    window.updateUndoRedoUI = updateUndoRedoUI;
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', updateUndoRedoUI);
+    else setTimeout(updateUndoRedoUI, 0);
     function saveCurrentSlideStateDirectly() {
       if (!slides[activeIndex]) return;
       if (Date.now() < _canvasLoadingUntil || _ownerMismatch()) return;
@@ -1370,62 +1429,71 @@
         return diff.indexOf(activeIndex) >= 0 ? activeIndex : diff[0];
       } catch (e) { return fallback; }
     }
-    async function undo() {
-      if (historyStep <= 0) {
-        showToast("Bekor qilish uchun oldingi holat yo'q", 'error');
+    // Undo/redo calls run one after another (fast Ctrl+Z Ctrl+Z Ctrl+Z = exactly 3 steps, never a half-loaded slide).
+    let _histQueue = Promise.resolve();
+    let _histPending = 0;
+    function _histCommitPending() {
+      // A change whose save is still deferred (drag, panel buttons: 31_v42_responsive.js waits up to 0.9 s)
+      // becomes a real step first. Before, Ctrl+Z right after a change skipped it and undid one step more,
+      // and the change could not be brought back with Ctrl+Y.
+      // Only a REALLY pending change is recorded: a plain re-save could turn an invisible canvas normalisation
+      // (e.g. right after «add slide») into an extra step, and the first Ctrl+Z would seem to do nothing.
+      let editing = false;
+      try {
+        const ao = canvas.getActiveObject();
+        if (ao && ao.isEditing && ao.exitEditing) { editing = true; ao.exitEditing(); }   // toolbar button while typing
+      } catch (e) {}
+      let flushed = false;
+      try { if (typeof window.ssFlushSave === 'function') flushed = !!window.ssFlushSave(); } catch (e) {}
+      if (editing && !flushed) {
+        try { saveCurrentSlideState(); recordGlobalState(); } catch (e) {}
+      }
+    }
+    async function _histGo(dir) {
+      if (isAiStreaming || isAiApplyingCommands || window.isAiStreaming || window.isAiApplyingCommands) {
+        showToast("AI ishlayapti — tugagach qayta urinib ko'ring.");
         return;
       }
-      try { saveCurrentSlideStateDirectly(); } catch (e) {}
+      _histCommitPending();
+      if (dir < 0 ? !canUndo() : !canRedo()) {
+        showToast(dir < 0 ? "Bekor qilish uchun oldingi holat yo'q" : "Qaytarish uchun keyingi holat yo'q");   // info, not a red error
+        updateUndoRedoUI();
+        return;
+      }
       isUndoRedoAction = true;
       window.isRedoUndoAction = true;
-      historyStep--;
       try {
-        const state = JSON.parse(globalHistory[historyStep]);
+        const state = _histEntry(globalHistory[historyStep + dir]);
+        if (!state) throw new Error('bad history entry');
+        historyStep += dir;
         const _prevSlides = slides;
-        slides = state.slides;
+        slides = state.slides.map(_histSlide);              // copies: later edits never change the history entry
         activeIndex = Math.min(Math.max(_pickUndoIndex(_prevSlides, slides, state.activeIndex || 0), 0), slides.length - 1);
         try { recalculateGlobalImageCounter(); } catch (e) {  }
         _lastRenderedSlideIndex = -1;
+        try { canvas.discardActiveObject(); } catch (e) {}
         await loadSlideCanvasAsync(activeIndex);
         renderSidebar();
         updateSlideCounterUI();
         updateAllImageBadges();
-        showToast("Bekor qilindi (Undo)");
+        hasUnsavedChanges = true;
+        showToast(dir < 0 ? "Bekor qilindi (Undo)" : "Qaytarildi (Redo)");
       } catch (e) {
-        console.warn('undo xato:', e);
+        console.warn(dir < 0 ? 'undo xato:' : 'redo xato:', e);
       } finally {
         isUndoRedoAction = false;
         window.isRedoUndoAction = false;
+        updateUndoRedoUI();
       }
     }
-    async function redo() {
-      if (historyStep >= globalHistory.length - 1) {
-        showToast("Qaytarish uchun keyingi holat yo'q", 'error');
-        return;
-      }
-      try { saveCurrentSlideStateDirectly(); } catch (e) {}
-      isUndoRedoAction = true;
-      window.isRedoUndoAction = true;
-      historyStep++;
-      try {
-        const state = JSON.parse(globalHistory[historyStep]);
-        const _prevSlides = slides;
-        slides = state.slides;
-        activeIndex = Math.min(Math.max(_pickUndoIndex(_prevSlides, slides, state.activeIndex || 0), 0), slides.length - 1);
-        try { recalculateGlobalImageCounter(); } catch (e) {  }
-        _lastRenderedSlideIndex = -1;
-        await loadSlideCanvasAsync(activeIndex);
-        renderSidebar();
-        updateSlideCounterUI();
-        updateAllImageBadges();
-        showToast("Qaytarildi (Redo)");
-      } catch (e) {
-        console.warn('redo xato:', e);
-      } finally {
-        isUndoRedoAction = false;
-        window.isRedoUndoAction = false;
-      }
+    function _histEnqueue(dir) {
+      if (_histPending >= 25) return _histQueue;            // a held-down key must not queue hundreds of steps
+      _histPending++;
+      _histQueue = _histQueue.then(() => _histGo(dir)).catch((e) => console.warn('history:', e)).finally(() => { _histPending--; });
+      return _histQueue;
     }
+    function undo() { return _histEnqueue(-1); }
+    function redo() { return _histEnqueue(1); }
     const paletteColors = [
       '#93c5fd', '#86efac', '#fde047', '#fdba74', '#fca5a5', '#c084fc', '#d97706', '#9ca3af', '#4b5563',
       '#3b82f6', '#22c55e', '#eab308', '#f97316', '#ef4444', '#a855f7', '#b45309', '#6b7280', '#374151',
