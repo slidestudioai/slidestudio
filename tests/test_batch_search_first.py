@@ -93,7 +93,7 @@ def test_new_deck_searches_all_topics_first_then_one_answer_without_tools(ai, cl
     got = _turn(client, "Quyosh tizimi haqida 3 ta slayd yarat: quyosh, oy va mars, rasmlar bilan",
                 hint="[OLDINGI AMALLAR HISOBOTI]\n✅ insert_slide okean")
     assert got[-1]["type"] == "end"
-    assert ai["searches"] == ["sun", "moon", "mars"]                    # ALL topics, one batch
+    assert sorted(ai["searches"]) == ["mars", "moon", "sun"]                 # ALL topics, one batch
     assert len(ai["calls"]) == 1                                        # ONE writing call, no search rounds
     main_call = ai["calls"][0]
     assert not main_call.get("tools")                                   # nothing left to search

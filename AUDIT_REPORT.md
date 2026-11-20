@@ -268,3 +268,25 @@ keeps working (old charge path, resume only on the same worker, M2 and purge swi
   (checked on commit 5643aa8). Not related to this work.
 - The e2e suite needs the CDN libraries; in a sandbox without internet use `E2E_LIBS=<folder with node_modules>`.
 - In the e2e config `MAX_AI_INFLIGHT_PER_USER=8`, because all browser tests share one dev user.
+
+---
+
+## Round 2 (2026-11-20): memory, multi-worker bot, autosave
+
+| # | Problem | Fix | Test |
+|---|---|---|---|
+| R1 | **Telegram bot state split between workers.** gunicorn runs 4 workers; Telegram sends each update to a random one, but the chat state (`_chats`: topic, current deck, `busy`, dedupe) is in one worker's RAM. Result: «Mavzu topilmadi» after pressing a slide-count button, an **old deck version** downloaded/edited after an edit made on another worker (the cached deck is never re-checked against the DB), two generations at the same time, 4× `setWebhook`, and 409 conflicts in polling mode. | One worker is the bot leader (file lock). Other workers forward the update to it over a local Unix socket. If the leader exits, the lock is released and another worker takes over in ≤5 s. If forwarding fails, the update is handled locally (old behaviour). `TG_ONE_WORKER=0` turns it off. | `tests/test_tg_one_worker.py`; manual: real gunicorn with 4 workers, 30 updates arrived at 4 different pids, all 30 were handled by one pid. |
+| R2 | Bot images in RAM: up to 8 × 6 MB per chat, kept 10 min, up to 300 chats → could fill a 512 MB instance. | One shared budget for all chats (`TG_IMG_RAM_MB`, default 96): above it, the images of the least recently used idle chats are dropped (downloaded again if needed). | `test_bot_image_ram_has_one_shared_budget` |
+| R3 | Autosave (`js/30_v40_present_persist.js`): the `blob:` → `data:` cache was never emptied — every converted video/image stayed in RAM as base64 for the whole session, also after it was deleted. Every save (every 3.5 s after a change) also did `JSON.parse` + `JSON.stringify` of **every** slide (with inline videos: tens of MB of work). | The cache keeps only URLs the deck still uses; files > 60 MB are not converted (they are session-only already); a slide without `blob:` is saved as the same string (no parse/stringify). | e2e suite 100/100; one-off check that a `blob:` image is stored as `data:`. |
+| R4 | `backend/gif_search.py` `_tenor_pos` grew forever (one key per new query). | Capped at 2000 keys. | — |
+| R5 | `tests/test_batch_search_first.py` failed sometimes: image searches run in parallel, so their order is random. | The test compares the sorted list. | — |
+
+Unused dicts removed: `community._mem_codes`, `media_search._tenor_cursors`.
+
+### Still open (not changed in this round — need a decision)
+
+- **Several containers.** All limits, locks, the bot state and the deferred-charge queue are per container. Render with more than one instance needs Redis (see H1) — otherwise use one bigger instance.
+- **Media inside slide JSON.** Uploaded images and videos ≤ 60 MB are stored as base64 strings inside `slides[i].json`. Every slide switch, thumbnail and autosave works with these big strings. Many large videos will make the editor slow on weak phones. Right fix: keep media as `Blob`s in IndexedDB and put only an id (`ssmedia:<hash>`) in the JSON — touches export (PPTX/HTML/PDF), import, AI and community code.
+- **System prompt is ~79 KB (~20–26k tokens) on every AI request.** The stable part is first, so DeepSeek's prefix cache works, but a shorter prompt is cheaper and faster.
+- **Bot image download (`tg_decks.download_image`)** checks the DNS name, then connects separately (DNS-rebinding gap); the site proxy in `main.py` already checks the connected IP. Low risk, worth aligning.
+- **Frontend: 63 script files (1.8 MB, not minified)** with many «fix» layers (`*_fixes.js`) that patch older files. Works, but a bundle (esbuild) and merging the fix layers would make loading faster and changes safer.

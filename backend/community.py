@@ -38,7 +38,6 @@ POST_MAX_LEN = 1000
 POST_COOLDOWN_SEC = 8
 
 _last_post_at: Dict[str, float] = {}
-_mem_codes: Dict[str, str] = {}
 api: Dict[str, Any] = {}          # register_community to'ldiradi: api["claim"], api["stats"] — Telegram bot ham shundan foydalanadi
 
 def _json(data: dict, status: int = 200):

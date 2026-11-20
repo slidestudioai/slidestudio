@@ -245,6 +245,9 @@ def _tenor(q: str, per: int, page: int) -> Result:
     nxt = d.get("next") or ""
     if nxt:
         _tenor_pos[(q.lower(), page + 1)] = nxt
+        if len(_tenor_pos) > 2000:          # every new query adds a key: without a cap this dict grows forever
+            for k in list(_tenor_pos.keys())[:500]:
+                _tenor_pos.pop(k, None)
     out = []
     for it in d.get("results") or []:
         mf = it.get("media_formats") or {}

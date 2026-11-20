@@ -211,11 +211,25 @@
   function idbPut(key, v) { return openDb().then(function (db) { return new Promise(function (res, rej) { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(v, key); tx.oncomplete = res; tx.onerror = function () { rej(tx.error); }; }); }); }
   function idbDel(key) { return openDb().then(function (db) { return new Promise(function (res) { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(key); tx.oncomplete = res; tx.onerror = res; }); }); }
 
-  var blobMap = new Map();
+  // blob: URL -> data: URL cache. Before, entries were never removed: every converted video/image stayed in RAM
+  // as a base64 string for the whole session (also after the media was deleted from the slides).
+  // Now only the URLs still used by the deck are kept (pruned after every save), and very big files are
+  // not converted at all (they are session-only anyway, see fileToVideoUrl in 15_video_anim_btn.js).
+  var MAX_PERSIST_BLOB = 60 * 1024 * 1024;
+  var blobMap = new Map(), blobSeen = null;
   async function blobToData(u) {
+    if (blobSeen) blobSeen.add(u);
     if (blobMap.has(u)) return blobMap.get(u);
-    var p = fetch(u).then(function (r) { return r.blob(); }).then(function (b) { return new Promise(function (res, rej) { var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.onerror = rej; fr.readAsDataURL(b); }); }).catch(function () { return null; });
+    var p = fetch(u).then(function (r) { return r.blob(); }).then(function (b) {
+      if (!b || b.size > MAX_PERSIST_BLOB) return null;
+      return new Promise(function (res, rej) { var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.onerror = rej; fr.readAsDataURL(b); });
+    }).catch(function () { return null; });
     blobMap.set(u, p); return p;
+  }
+  function pruneBlobMap() {
+    if (!blobSeen) return;
+    blobMap.forEach(function (_v, k) { if (!blobSeen.has(k)) blobMap.delete(k); });
+    blobSeen = null;
   }
   async function detachBlobs(node, depth) {
     if (!node || typeof node !== 'object' || depth > 8) return;
@@ -225,6 +239,15 @@
       if (typeof v === 'string') { if (/^blob:/i.test(v)) { var d = await blobToData(v); if (d) node[k] = d; } }
       else if (v && typeof v === 'object') await detachBlobs(v, depth + 1);
     }
+  }
+  // A slide whose JSON has no blob: URL is saved as the same string: no JSON.parse + JSON.stringify of
+  // every slide on every save (with inline images/videos that was tens of MB of work every 3.5 s).
+  async function slideJsonForSave(j) {
+    j = String(j || '{}');
+    if (j.indexOf('blob:') < 0) return j;
+    var p = {}; try { p = JSON.parse(j); } catch (e) { return j; }
+    await detachBlobs(p, 0);
+    return JSON.stringify(p);
   }
 
   var lastSavedSig = '', saving = false;
@@ -246,17 +269,17 @@
       var list = slides, sig = key + '|' + slideSig() + '|' + (typeof projectTitle === 'string' ? projectTitle : '') + '|' + activeIndex;
       if (sig === lastSavedSig) return;
       var out = [];
+      blobSeen = new Set();
       for (var i = 0; i < list.length; i++) {
-        var p = {}; try { p = JSON.parse(list[i].json || '{}'); } catch (e) { p = {}; }
-        await detachBlobs(p, 0);
-        out.push({ json: JSON.stringify(p), thumb: list[i].thumb || '', imageNumbers: list[i].imageNumbers || [], transition: list[i].transition || '',
+        out.push({ json: await slideJsonForSave(list[i].json), thumb: list[i].thumb || '', imageNumbers: list[i].imageNumbers || [], transition: list[i].transition || '',
                    transDur: list[i].transDur || 0, transAuto: list[i].transAuto || 0, bgType: list[i].bgType, bgVal: list[i].bgVal });
       }
       if (window.__ssUserLogout) return;
+      pruneBlobMap();
       await idbPut(key, { v: 2, owner: key, title: projectTitle, activeIndex: activeIndex, slides: out, savedAt: Date.now() });
       lastSavedSig = sig;
     } catch (e) { console.warn('[v40] saqlash:', e); }
-    finally { saving = false; }
+    finally { saving = false; blobSeen = null; }
   }
   setInterval(function () { if (document.visibilityState === 'visible') persistNow(false); }, 3500);
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') persistNow(true); });
