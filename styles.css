@@ -1369,3 +1369,7 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
 #ssUndoRedo button:active { background: #eef2ff; }
 #ssUndoRedo .material-symbols-outlined { font-size: 20px; }
 @media (max-width: 768px) { #ssUndoRedo { display: inline-flex; visibility: hidden; } #ssUndoRedo.ss-ready { visibility: visible; } }
+
+/* undo / redo: dimmed when there is nothing to undo / redo (08_canvas_slides.js updateUndoRedoUI) */
+.ss-hist-off { opacity: .38; }
+.ss-hist-off:hover { opacity: .55; }

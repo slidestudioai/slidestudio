@@ -26,10 +26,11 @@
   var cur = null, prev = null, curSig = '';
   function sigNow() { return slides.map(function (s) { return s.json || ''; }).join('\u0001') + '|' + slides.length; }
   function snapNow() {
-    return JSON.stringify({
-      slides: slides.map(function (s) { return { json: s.json, thumb: s.thumb, imageNumbers: s.imageNumbers || [] }; }),
+    // an object (not a JSON string): same format as recordGlobalState in 08_canvas_slides.js, all slide fields kept
+    return {
+      slides: slides.map(function (s) { var c = Object.assign({}, s); c.imageNumbers = (s.imageNumbers || []).slice(); return c; }),
       activeIndex: activeIndex
-    });
+    };
   }
   function sample() {
     try {

@@ -7,17 +7,19 @@
   var timer = null, maxTimer = null, pend = null;
   function gen() { try { return _canvasLoadGeneration; } catch (e) { return 0; } }
   function busy() { return !!(window.isAiApplyingCommands || window.isAiStreaming || window.isUndoRedoAction || window.isRedoUndoAction); }
+  /** Runs the pending save now. Returns true if a pending change was saved (undo/redo uses this). */
   function run() {
     clearTimeout(timer); clearTimeout(maxTimer); timer = maxTimer = null;
-    if (!pend) return;
+    if (!pend) return false;
     var p = pend; pend = null;
     try {
       // slayd almashgan bo'lsa — almashtirish paytida o'sha holat allaqachon saqlangan
-      if (p.idx !== activeIndex || p.gen !== gen() || slides[activeIndex] !== p.slide || busy()) return;
+      if (p.idx !== activeIndex || p.gen !== gen() || slides[activeIndex] !== p.slide || busy()) return false;
       saveCurrentSlideState();
       recordGlobalState();
       if (typeof p.after === 'function') p.after();
-    } catch (e) { console.warn('[v42] saqlash:', e); }
+      return true;
+    } catch (e) { console.warn('[v42] saqlash:', e); return false; }
   }
   /** Saqlashni kechiktiradi (qayta chaqirilsa birlashtiriladi). */
   window.ssDeferSave = function (after) {
