@@ -21,7 +21,7 @@ def test_google_verification_and_meta(client, monkeypatch):
     html = r.text
     head = html.split("</head>")[0]
     assert '<meta name="google-site-verification" content="faIm498mQA0y-NhL6pXWpqVHeNM6nTfn1pwpH7PDlk8" />' in head
-    assert "<title>SlideStudio — AI bilan onlayn slayd va prezentatsiya yasash | AI Slide Maker</title>" in head
+    assert "<title>SlideStudio</title>" in head
     assert 'name="description" content="SlideStudio (Slide Studio) yordamida sun&#39;iy intellekt (AI) orqali' in head
     kw = re.search(r'name="keywords" content="([^"]*)"', head).group(1)
     for w in ("SlideStudio", "Slide Studio", "SlideStudio AI", "slayd yasash", "AI bilan slayd yasash", "AI slayd",
