@@ -91,10 +91,31 @@ test('a touch on an object that is not selected only selects it; a selected one 
   expect(st.top).toBe(t0);
 });
 
-test('undo / redo are always in the bottom row on a phone and work', async ({ page }) => {
+for (const w of [375, 320]) {
+  test(`undo / redo: top-right of the work area, same row as «+», fits at ${w}px, not in the bottom row`, async ({ page }) => {
+    await page.setViewportSize({ width: w, height: 760 });
+    await openEditor(page);
+    await page.waitForTimeout(600);
+    const r = await page.evaluate(() => {
+      const R = (el) => el.getBoundingClientRect();
+      const ur = R(document.getElementById('ssUndoRedo')), plus = R(document.getElementById('ssSlidePlus'));
+      const cnt = R(document.getElementById('stickySlideCounter'));
+      const over = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+      return {
+        sameRow: Math.abs((ur.top + ur.bottom) / 2 - (plus.top + plus.bottom) / 2) <= 2,
+        rightEdge: Math.abs((innerWidth - ur.right) - plus.left) <= 2,     // mirrors «+» (same margin from the edge)
+        inView: ur.left >= 0 && ur.right <= innerWidth && ur.width > 50,
+        noCounter: !over(ur, cnt), noPlus: !over(ur, plus),
+        bottomRow: !!document.querySelector('.bottom-mobile-controls #mobUndoBtn'),
+      };
+    });
+    expect(r).toEqual({ sameRow: true, rightEdge: true, inView: true, noCounter: true, noPlus: true, bottomRow: false });
+  });
+}
+
+test('undo / redo buttons work', async ({ page }) => {
   await openEditor(page);
-  const vis = await page.evaluate(() => ['mobUndoBtn', 'mobRedoBtn'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return r.width > 20 && r.bottom <= innerHeight && r.right <= innerWidth && r.left >= 0; }));
-  expect(vis).toEqual([true, true]);
+  await page.waitForTimeout(600);
   await page.evaluate(() => { canvas.add(new fabric.Textbox('UNDO-ME', { left: 100, top: 100, width: 200 })); canvas.renderAll(); saveCurrentSlideState(); recordGlobalState(); });
   await page.waitForTimeout(300);
   await page.tap('#mobUndoBtn');

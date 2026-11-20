@@ -41,6 +41,20 @@
     });
     document.body.appendChild(b);        // v66: fixed — hech qanday blok (overflow:hidden) tugmani kesmaydi
 
+    // undo / redo pill — top-right corner of the same work area, same row and margin as «+» (phones; see styles.css)
+    var ur = document.getElementById('ssUndoRedo');
+    if (!ur) {
+      ur = document.createElement('div');
+      ur.id = 'ssUndoRedo';
+      ur.className = 'notranslate';
+      ur.setAttribute('translate', 'no');
+      ur.innerHTML = '<button type="button" id="mobUndoBtn" title="Ortga qaytarish" aria-label="Ortga qaytarish"><span class="material-symbols-outlined">undo</span></button>' +
+        '<button type="button" id="mobRedoBtn" title="Oldinga qaytarish" aria-label="Oldinga qaytarish"><span class="material-symbols-outlined">redo</span></button>';
+      ur.querySelector('#mobUndoBtn').addEventListener('click', function (e) { e.stopPropagation(); try { undo(); } catch (er) {} });
+      ur.querySelector('#mobRedoBtn').addEventListener('click', function (e) { e.stopPropagation(); try { redo(); } catch (er) {} });
+      document.body.appendChild(ur);
+    }
+
     // v66: tugma DOIM ish maydonining (toolbar ostidagi, chap panel o'ngidagi joyning) CHAP-YUQORI burchagida,
     // tepadan va chapdan bir xil kichik masofa bilan. Chap panel ochilib-yopilsa, toolbar yashirinsa — burchak bilan birga
     // siljiydi (position:fixed). Ish maydoni tepasida «Rasmlar:» / previews qatori ochiq bo'lsa — uning ostida turadi.
@@ -58,7 +72,7 @@
     }
     function place() {
       var wr = wrap.getBoundingClientRect();
-      if (!wr.width || !wr.height || card.getBoundingClientRect().width === 0) { b.style.visibility = 'hidden'; shown = false; return false; }
+      if (!wr.width || !wr.height || card.getBoundingClientRect().width === 0) { b.style.visibility = 'hidden'; ur.classList.remove('ss-ready'); shown = false; return false; }
       var top = Math.max(wr.top,
         visibleBottom(document.getElementById('pendingImagesBar')),
         visibleBottom(document.getElementById('workspacePreviewsBar')));
@@ -66,10 +80,15 @@
       var y = Math.round(Math.max(0, top) + M);
       b.style.left = x + 'px';
       b.style.top = y + 'px';
+      // the pill: same top, mirrored to the right edge of the visible work area
+      var right = Math.min(wr.right, window.innerWidth || wr.right);
+      var urW = ur.offsetWidth || 72;
+      ur.style.left = Math.round(Math.max(x + 44, right - M - urW)) + 'px';
+      ur.style.top = (y + Math.round(((b.offsetHeight || 34) - (ur.offsetHeight || 38)) / 2)) + 'px';
       var key = x + ',' + y;
       stable = key === last ? stable + 1 : 0;
       last = key;
-      if (!shown && stable >= 8 && appReady()) { shown = true; b.style.visibility = ''; }
+      if (!shown && stable >= 8 && appReady()) { shown = true; b.style.visibility = ''; ur.classList.add('ss-ready'); }
       return true;
     }
     // slayd o'lchami/joyi o'zgarayotgan paytda (fit animatsiyasi) har kadrda ergashadi, to'xtagach tinchiydi

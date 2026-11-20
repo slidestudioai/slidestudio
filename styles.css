@@ -1360,8 +1360,12 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
   .ai-sidebar.open.keyboard-open { top: var(--ai-panel-top, 0px) !important; }
 }
 
-/* undo / redo in the always-visible bottom row — phones only (computers have them in the toolbar) */
-.bottom-ctrl-btn.ss-mob-only { display: none; }
-@media (max-width: 768px) {
-  .bottom-ctrl-btn.ss-mob-only { display: flex; color: #4338ca; }
-}
+/* undo / redo — phones: a small pill in the TOP-RIGHT corner of the work area (same row as the «+» button,
+   placed by js/slide_plus.js). Not in the bottom row: there it did not fit on narrow screens. */
+#ssUndoRedo { position: fixed; z-index: 50; display: none; gap: 2px; padding: 3px; border-radius: 999px;
+  background: rgba(255, 255, 255, .94); border: 1px solid #dadce0; box-shadow: 0 2px 8px rgba(0, 0, 0, .08); backdrop-filter: blur(8px); }
+#ssUndoRedo button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; color: #4338ca; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0; -webkit-tap-highlight-color: transparent; }
+#ssUndoRedo button:active { background: #eef2ff; }
+#ssUndoRedo .material-symbols-outlined { font-size: 20px; }
+@media (max-width: 768px) { #ssUndoRedo { display: inline-flex; visibility: hidden; } #ssUndoRedo.ss-ready { visibility: visible; } }
