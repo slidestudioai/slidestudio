@@ -22,7 +22,7 @@ def test_preview_tags_are_english_and_absolute(client, monkeypatch):
     assert meta["og:image"] == "https://slidestudio.example/og-image.png"
     assert meta["twitter:card"] == "summary_large_image"
     desc = re.search(r'<meta name="description" content="([^"]*)"', html).group(1)
-    assert desc.startswith("Create professional presentations with AI")
+    assert desc.startswith("SlideStudio (Slide Studio) yordamida")          # Google: Uzbek; link previews (og) stay English
     assert "__SS_BASE__" not in html
 
 
