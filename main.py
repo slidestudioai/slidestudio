@@ -3104,6 +3104,55 @@ PUBLIC_STATIC_FILES = {
         "terms.html", "privacy.html", "refund.html",
     }
 
+# ---- SEO: robots.txt and sitemap.xml ----
+# The site address comes from PUBLIC_BASE_URL / RENDER_EXTERNAL_URL (Render sets the latter itself); without it, from
+# the request. So the files stay right when the address changes or a custom domain is added.
+SEO_PAGES = [("/", "daily", "1.0"), ("/terms.html", "yearly", "0.3"), ("/privacy.html", "yearly", "0.3"), ("/refund.html", "yearly", "0.3")]
+
+
+def _site_base(request: Request) -> str:
+    b = (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+    if _re.match(r"^https?://[\w.-]+(:\d+)?$", b):
+        return b
+    host = (request.headers.get("host") or "").strip()
+    if not _re.match(r"^[\w.-]+(:\d+)?$", host):
+        host = "localhost"
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+    return f"{'https' if proto == 'https' else 'http'}://{host}"
+
+
+@app.get("/robots.txt")
+def robots_txt(request: Request):
+    base = _site_base(request)
+    body = ("User-agent: *\n"
+            "Allow: /\n"
+            "Disallow: /api/\n"
+            "Disallow: /_a/\n"
+            "Disallow: /ws/\n"
+            "Disallow: /embed-player\n"
+            "Disallow: /metrics\n"
+            "Disallow: /healthz\n"
+            f"\nSitemap: {base}/sitemap.xml\n")
+    return Response(body, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/sitemap.xml")
+def sitemap_xml(request: Request):
+    from xml.sax.saxutils import escape as _x
+    base = _site_base(request)
+    rows = []
+    for path, freq, prio in SEO_PAGES:
+        f = os.path.join(BASE_DIR, "index.html" if path == "/" else path.lstrip("/"))
+        if not os.path.isfile(f):
+            continue
+        last = datetime.fromtimestamp(os.path.getmtime(f), tz=timezone.utc).strftime("%Y-%m-%d")
+        rows.append(f"  <url><loc>{_x(base + path)}</loc><lastmod>{last}</lastmod>"
+                    f"<changefreq>{freq}</changefreq><priority>{prio}</priority></url>")
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+           + "\n".join(rows) + "\n</urlset>\n")
+    return Response(xml, media_type="application/xml; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
+
+
 @app.get("/{filename}")
 def static_file(filename: str):
     if filename not in PUBLIC_STATIC_FILES:
