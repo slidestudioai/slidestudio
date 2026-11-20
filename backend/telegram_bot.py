@@ -395,17 +395,38 @@ MAX_CHATS, CHAT_TTL = 300, 3 * 3600
 
 
 IMG_TTL = 600
+# Downloaded slide images (up to 8 x 6 MB per chat) stay in RAM for IMG_TTL so the next format is fast.
+# With many active chats this alone could fill a 512 MB instance, so all chats share one byte budget:
+# above it, the images of the least recently used idle chats are dropped (they are downloaded again if needed).
+IMG_RAM_BUDGET = max(8, int(os.environ.get("TG_IMG_RAM_MB", "96") or 96)) * 1024 * 1024
 _last_sweep = 0.0
 
 
-def _sweep_imgs(now: float) -> None:
+def _imgs_bytes(v: dict) -> int:
+    try:
+        return sum(len(b) for b in (v.get("imgs") or {}).values() if b)
+    except Exception:
+        return 0
+
+
+def _sweep_imgs(now: float, force: bool = False) -> None:
     """Fayl yuborilmay qolgan rasmlar 10 daqiqadan keyin RAM'dan tashlanadi (xotira o'smasin)."""
     global _last_sweep
-    if now - _last_sweep < 60:
+    if not force and now - _last_sweep < 60:
         return
     _last_sweep = now
+    total = 0
     for v in _chats.values():
         if v.get("imgs") and now - v.get("img_ts", 0) > IMG_TTL and not v.get("busy") and not v.get("sending"):
+            v["imgs"] = {}
+        total += _imgs_bytes(v)
+    if total <= IMG_RAM_BUDGET:
+        return
+    for v in sorted(_chats.values(), key=lambda x: x.get("img_ts", 0)):      # oldest first
+        if total <= IMG_RAM_BUDGET:
+            break
+        if v.get("imgs") and not v.get("busy") and not v.get("sending"):
+            total -= _imgs_bytes(v)
             v["imgs"] = {}
 
 
@@ -2971,6 +2992,7 @@ async def _send_files(chat_id: int, fmt: str) -> bool:
             status_id = (m or {}).get("message_id") if isinstance(m, dict) else None
             imgs_q = await _fetch_images(deck, st.get("imgs") or {}, True)          # faqat yetishmayotgan rasmlar
             st["imgs"], st["img_ts"] = imgs_q, time.time()                          # IMG_TTL gacha RAM'da: keyingi format uchun qayta yuklanmaydi
+            _sweep_imgs(time.time(), force=True)                                    # umumiy RAM byudjeti (TG_IMG_RAM_MB)
             idx = _img_index(deck, imgs_q)
             files = []
             for f in fmts:
@@ -3033,6 +3055,7 @@ async def _prewarm_files(chat_id: int) -> None:
             return
         imgs_q = await _fetch_images(deck, st.get("imgs") or {}, True)
         st["imgs"], st["img_ts"] = imgs_q, time.time()
+        _sweep_imgs(time.time(), force=True)
         idx = _img_index(deck, imgs_q)
         async with _gen_sem:
             await asyncio.to_thread(decks.export_cached, deck, idx, "pptx", lang)
@@ -4053,6 +4076,125 @@ async def _safe_handle(data: dict) -> None:
         _warn("handle", f"update xatosi: {type(e).__name__}: {str(e)[:150]}")
 
 
+# ----------------------------------------------------------------------------------------------
+# One worker handles the bot (gunicorn runs several workers in one container).
+# Telegram sends each webhook update to ANY worker, but chat state (_chats: topic, current deck, busy flag,
+# dedupe) lives in one worker's RAM. Without this: «Mavzu topilmadi» after a button press, an OLD deck version
+# sent/edited after an edit made on another worker, two generations at once, 4x setWebhook / 409 polling conflicts.
+# Now: the worker holding a file lock is the leader; other workers forward updates to it over a local
+# Unix socket. If the leader dies, its lock is released and another worker takes over within a few seconds.
+# If forwarding fails, the update is handled locally (old behaviour) so nothing is lost.
+# Several containers: still one state per container -> use a sticky/single bot instance (or Redis) there.
+# TG_ONE_WORKER=0 turns this off.
+# ----------------------------------------------------------------------------------------------
+TG_ONE_WORKER = _env("TG_ONE_WORKER", "1") != "0"
+_LEAD_TAG = hashlib.sha256((BOT_TOKEN or "none").encode()).hexdigest()[:10]
+_LEAD_DIR = os.environ.get("TMPDIR", "/tmp")
+_LEAD_LOCK = os.path.join(_LEAD_DIR, f"ss_tg_{_LEAD_TAG}.lock")
+_LEAD_SOCK = os.path.join(_LEAD_DIR, f"ss_tg_{_LEAD_TAG}.sock")
+if len(_LEAD_SOCK) > 100:                          # AF_UNIX path limit (~107 bytes) with a long TMPDIR
+    _LEAD_SOCK = f"/tmp/ss_tg_{_LEAD_TAG}.sock"
+_lead: Dict[str, Any] = {"fd": None, "server": None, "started": False}
+
+
+def _is_leader() -> bool:
+    return _lead["fd"] is not None
+
+
+def _try_lead() -> bool:
+    if _lead["fd"] is not None:
+        return True
+    try:
+        import fcntl
+        fd = os.open(_LEAD_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+    except Exception:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False
+    _lead["fd"] = fd
+    return True
+
+
+async def _on_follower(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    try:
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            try:
+                data = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(data, dict) and not _is_dup(data.get("update_id")):
+                _spawn(_safe_handle(data))
+    except Exception:
+        pass
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
+async def _serve_followers() -> None:
+    try:
+        os.unlink(_LEAD_SOCK)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    _lead["server"] = await asyncio.start_unix_server(_on_follower, path=_LEAD_SOCK, limit=8 * 1024 * 1024)
+    try:
+        os.chmod(_LEAD_SOCK, 0o600)
+    except Exception:
+        pass
+
+
+async def _forward_to_leader(data: dict) -> bool:
+    """Follower worker: hand the update to the leader. False = not delivered (caller handles it locally)."""
+    if not TG_ONE_WORKER or _is_leader():
+        return False
+    try:
+        _r, w = await asyncio.wait_for(asyncio.open_unix_connection(_LEAD_SOCK), 2)
+        w.write(json.dumps(data, ensure_ascii=False).encode("utf-8") + b"\n")
+        await asyncio.wait_for(w.drain(), 2)
+        w.close()
+        try:
+            await asyncio.wait_for(w.wait_closed(), 1)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+async def _start_as_leader() -> None:
+    if _lead["started"]:
+        return
+    _lead["started"] = True
+    if TG_ONE_WORKER:
+        try:
+            await _serve_followers()
+        except Exception as e:
+            _warn("lead-sock", f"leader socket: {type(e).__name__}: {str(e)[:100]}")
+    t = asyncio.create_task(_bootstrap())          # startni bloklamaydi
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
+
+
+async def _follow_loop() -> None:
+    """Follower: take over when the leader worker exits (its file lock is released)."""
+    while True:
+        await asyncio.sleep(5)
+        if _try_lead():
+            print(f"[TG] pid={os.getpid()} bot uchun yetakchi worker bo'ldi")
+            await _start_as_leader()
+            return
+
+
 @router.post(WEBHOOK_PATH)
 async def telegram_webhook(request: Request, background: BackgroundTasks):
     if not ENABLED:
@@ -4065,6 +4207,8 @@ async def telegram_webhook(request: Request, background: BackgroundTasks):
     except Exception:
         return {"ok": True}
     if not isinstance(data, dict) or _is_dup(data.get("update_id")):
+        return {"ok": True}
+    if await _forward_to_leader(data):           # chat holati bitta workerda (yuqoridagi izohga qarang)
         return {"ok": True}
     background.add_task(_safe_handle, data)      # darhol 200 — Telegram qayta yubormaydi
     return {"ok": True}
@@ -4474,9 +4618,10 @@ async def startup() -> None:
         return
     if decks is None:
         print("[TG] ⚠️ tg_decks yuklanmadi — bot slayd yarata olmaydi (requirements.txt o'rnatilganmi?)")
-    t = asyncio.create_task(_bootstrap())          # startni bloklamaydi
-    _bg.add(t)
-    t.add_done_callback(_bg.discard)
+    if not TG_ONE_WORKER or _try_lead():
+        await _start_as_leader()                   # webhook/polling faqat bitta workerda o'rnatiladi
+    else:
+        _spawn(_follow_loop())
     _ad_sweeper_start()                            # reklama/ko'rib chiqish xabarlarini tozalovchi (restartdan keyin ham)
 
 
@@ -4484,6 +4629,22 @@ async def shutdown() -> None:
     global _client
     for t in list(_bg):
         t.cancel()
+    srv = _lead.get("server")
+    if srv is not None:
+        try:
+            srv.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(_LEAD_SOCK)
+        except Exception:
+            pass
+    if _lead.get("fd") is not None:
+        try:
+            os.close(_lead["fd"])                  # lock released -> another worker becomes the leader
+        except Exception:
+            pass
+    _lead.update(fd=None, server=None, started=False)
     if _client is not None and not _client.is_closed:
         try:
             await _client.aclose()

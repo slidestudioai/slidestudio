@@ -15,7 +15,6 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 
 _cache: Dict[Tuple, Tuple[float, dict]] = {}
 _cache_lock = threading.Lock()
-_tenor_cursors: Dict[Tuple, str] = {}
 _inflight: Dict[Tuple, threading.Lock] = {}
 _pool = ThreadPoolExecutor(max_workers=8)
 
