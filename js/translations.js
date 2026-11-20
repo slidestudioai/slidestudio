@@ -22,6 +22,8 @@ window.SS_I18N = {
     /* ---------- umumiy / yuklanish ---------- */
     "Yuklanmoqda...": ["Загрузка...", "Loading..."],
     "Chuqur o‘ylayapti": ["Глубоко думает", "Thinking deeply"],
+    "Ortga qaytarish": ["Отменить", "Undo"],
+    "Oldinga qaytarish": ["Повторить", "Redo"],
     "Yuklanmoqda…": ["Загрузка…", "Loading…"],
     "⏳ Yuklanmoqda...": ["⏳ Загрузка...", "⏳ Loading..."],
     "Xabar": ["Сообщение", "Message"],

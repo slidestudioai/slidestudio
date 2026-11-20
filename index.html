@@ -70,8 +70,23 @@
        sayt tili — o'zimizning uz / ru / en almashtirgichi (js/i18n.js) -->
   <meta name="google" content="notranslate">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
-  <title>Slide Studio — AI</title>
-  <meta name="description" content="AI yordamida professional slayd va taqdimotlar yarating. Slide Studio AI — ko'p tilli slayd muharriri.">
+  <title>Slide Studio — AI Presentation Maker</title>
+  <meta name="description" content="Create professional presentations with AI in seconds. Describe your topic and Slide Studio builds a complete, beautifully designed deck with real images — edit it in your browser and export to PowerPoint or PDF.">
+  <!-- link previews (Telegram, WhatsApp, Facebook, LinkedIn, X): __SS_BASE__ = the public site address (set by the server) -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Slide Studio">
+  <meta property="og:title" content="Slide Studio — AI Presentation Maker">
+  <meta property="og:description" content="Describe your topic and get a complete, beautifully designed presentation in seconds — real images, smart layouts, PowerPoint & PDF export. Free to start.">
+  <meta property="og:url" content="__SS_BASE__/">
+  <meta property="og:image" content="__SS_BASE__/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Slide Studio — AI Presentation Maker">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Slide Studio — AI Presentation Maker">
+  <meta name="twitter:description" content="Describe your topic and get a complete, beautifully designed presentation in seconds.">
+  <meta name="twitter:image" content="__SS_BASE__/og-image.png">
   <meta name="theme-color" content="#7c3aed">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
@@ -343,6 +358,9 @@
 
       <div class="bottom-controls-wrapper">
         <div class="bottom-mobile-controls">
+          <button class="bottom-ctrl-btn ss-mob-only" id="mobUndoBtn" onclick="undo()" title="Ortga qaytarish" aria-label="Ortga qaytarish">
+            <span class="material-symbols-outlined">undo</span>
+          </button>
           <button class="bottom-ctrl-btn" onclick="switchSlide(activeIndex - 1)" title="Oldingi slayd">
             <span class="material-symbols-outlined">chevron_left</span>
           </button>
@@ -354,6 +372,9 @@
           </button>
           <button class="bottom-ctrl-btn" onclick="switchSlide(activeIndex + 1)" title="Keyingi slayd">
             <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+          <button class="bottom-ctrl-btn ss-mob-only" id="mobRedoBtn" onclick="redo()" title="Oldinga qaytarish" aria-label="Oldinga qaytarish">
+            <span class="material-symbols-outlined">redo</span>
           </button>
         </div>
 

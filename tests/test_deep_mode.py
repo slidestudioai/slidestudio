@@ -66,3 +66,42 @@ def test_deep_searches_more():
     assert main._presearch_count("16 ta slayd", deep=True) == 16
     assert main._presearch_count("16 ta slayd") == 12
     assert main._is_multi_slide_request("Sun'iy intellekt haqida 10 slayd")
+
+
+def _turn_scope(client, prompt, model, deck, scope):
+    with client.websocket_connect("/ws/chat") as ws:
+        ws.send_text(json.dumps({"prompt": prompt, "token": "tok-1", "model": model, "deck_state": deck, "scope": scope,
+                                 "active_slide_index": 1, "deck_session": "deck-s1"}))
+        for _ in range(80):
+            m = ws.receive_json()
+            if m.get("type") in ("end", "error"):
+                return m
+
+
+def test_bottom_field_topic_fills_this_slide_not_a_new_deck(ai, client):  # noqa: F811
+    end = _turn_scope(client, "Iqlim o'zgarishi haqida", "fast", EMPTY, "current_slide")
+    assert end["type"] == "end"
+    call = ai["calls"][0]
+    assert ai["planner"] == []                                  # no whole-deck presearch
+    assert call.get("tools")                                    # the slide may still get a picture (AI searches itself)
+    sp = call["messages"][0]["content"]
+    assert "FAQAT SHU VARAQ" in sp and "insert_slide / create_slides / reset_deck" in sp
+
+
+def test_bottom_field_deep_searches_for_one_slide_only(ai, client, monkeypatch):  # noqa: F811
+    asked = []
+    orig = main._deep_presearch
+
+    async def spy(client_, ctx, max_q=3, *a, **k):
+        asked.append(max_q)
+        return await orig(client_, ctx, max_q, *a, **k)
+    monkeypatch.setattr(main, "_deep_presearch", spy)
+    _turn_scope(client, "Iqlim o'zgarishi haqida", "deep", EMPTY, "current_slide")
+    assert asked == [2]                                         # pictures for ONE slide, not for a 16-slide deck
+    _turn_scope(client, "Iqlim o'zgarishi haqida", "deep", EMPTY, "all_slides")
+    assert asked[-1] >= 4
+
+
+def test_side_panel_topic_in_empty_deck_is_still_a_new_deck(ai, client):  # noqa: F811
+    _turn_scope(client, "Iqlim o'zgarishi haqida", "fast", EMPTY, "all_slides")
+    assert ai["planner"] and not ai["calls"][0].get("tools")

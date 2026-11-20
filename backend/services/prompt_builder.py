@@ -297,8 +297,13 @@ def build_turn_messages(*, base_prompt: str, data: Dict[str, Any], usage: dict, 
     sys_p += image_pool_block or ""              # session image pool: reuse found images, never the same URL twice
     if scope == "current_slide":
         sys_p += (
-            f"\n\n[SCOPE: CURRENT_SLIDE]\nJoriy varoq: {active_slide}-slayd.\n"
-            "Agar foydalanuvchi shu slaydga tegishli o'zgartirish so'rasa, shu slaydda ishlang.\n"
+            f"\n\n[SCOPE: CURRENT_SLIDE — FAQAT SHU VARAQ]\nJoriy varoq: {active_slide}-slayd. Foydalanuvchi bu xabarni «Shu varaq haqida yozing» "
+            "maydoniga yozdi: u AYNAN SHU varaq haqida.\n"
+            f"- Har qanday buyruq / mavzu ({active_slide}-slaydni to'ldir, o'zgartir, yaxshila, «X haqida yoz») — FAQAT {active_slide}-slaydda bajariladi: "
+            f"replace_slide {{\"slide\": {active_slide}}} yoki shu slayddagi elementlarni o'zgartiruvchi actionlar.\n"
+            "- insert_slide / create_slides / reset_deck / boshqa slaydlarni o'zgartirish — TAQIQLANGAN, faqat foydalanuvchi aniq "
+            "«yangi slayd qo'sh», «N ta slayd» yoki boshqa slayd raqamini aytsa mumkin.\n"
+            "- Slayddagi mavjud rasmlarni (o'chir/almashtir deyilmagan bo'lsa) aynan o'sha src bilan qoldiring.\n"
             "Boshqa slaydga tegishli buyruq bo'lsa ham swap/move_image_to_slide ishlating.\n"
             "MUHIM: Agar foydalanuvchi shunchaki salomlashsa yoki umumiy savol bersa "
             "(slaydni o'zgartirishni so'ramasa), hech qanday action yaratmang — "

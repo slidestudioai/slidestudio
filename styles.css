@@ -1345,3 +1345,23 @@ button, .tb-btn, .modal-btn { -webkit-tap-highlight-color: transparent; }
 @keyframes aiThinkPulse { 0% { box-shadow: 0 0 0 0 rgba(124, 58, 237, .45); } 80%, 100% { box-shadow: 0 0 0 7px rgba(124, 58, 237, 0); } }
 @keyframes aiThinkDot { 0%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) { .ai-think.on, .ai-think-ic, .ai-think-dots i { animation: none; } }
+
+/* Phone: the AI panel slides in/out, but its SIZE never animates. Before («transition: all .3s») every keyboard
+   resize event animated the height for 0.3 s — the panel visibly shrank and grew in small steps. */
+@media (max-width: 768px) {
+  /* closed: the width collapses only AFTER the slide-out (delay), so closing still slides */
+  .ai-sidebar {
+    transition: transform .28s cubic-bezier(.4, 0, .2, 1), opacity .2s ease,
+                width 0s linear .3s, max-width 0s linear .3s !important;
+  }
+  .ai-sidebar.open, .ai-sidebar.open.keyboard-open {
+    transition: transform .28s cubic-bezier(.4, 0, .2, 1), opacity .2s ease, width 0s, max-width 0s !important;
+  }
+  .ai-sidebar.open.keyboard-open { top: var(--ai-panel-top, 0px) !important; }
+}
+
+/* undo / redo in the always-visible bottom row — phones only (computers have them in the toolbar) */
+.bottom-ctrl-btn.ss-mob-only { display: none; }
+@media (max-width: 768px) {
+  .bottom-ctrl-btn.ss-mob-only { display: flex; color: #4338ca; }
+}

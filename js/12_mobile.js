@@ -43,7 +43,9 @@
         return;
       }
 
-      var onBackdrop = (e.target === wrap);
+      // the empty area around the slide pans ONLY when zoomed in (or in hand mode). At normal zoom a finger that
+      // scrolls / pulls down to refresh / swipes no longer drags the slide away (a swipe still changes the slide)
+      var onBackdrop = (e.target === wrap) && zoomNow() > 1.001;
       if (handMode || onBackdrop) {
         e.preventDefault(); e.stopPropagation();
         var t = e.touches[0];
@@ -241,8 +243,42 @@
     }, true);
   }
 
+  // ===== a touch never moves an object by accident =====
+  // The first touch on an object only SELECTS it; it can be dragged once it is selected, and only after the finger
+  // really moved (> TOUCH_SLOP px) — a tap, a shaky finger or a scroll that starts on an object no longer moves it.
+  var TOUCH_SLOP = 10;
+  function isTouchEv(e) { return !!e && (/^touch/.test(e.type || '') || e.pointerType === 'touch' || e.pointerType === 'pen'); }
+  function evPoint(e) { var t = (e && e.touches && e.touches[0]) || (e && e.changedTouches && e.changedTouches[0]) || e || {}; return { x: t.clientX || 0, y: t.clientY || 0 }; }
+  function initTouchGuard() {
+    if (!canvas || canvas.__ssTouchGuard) return;
+    canvas.__ssTouchGuard = true;
+    var g = null;
+    canvas.on('mouse:down:before', function (opt) {
+      g = null;
+      var e = opt && opt.e, t = opt && opt.target;
+      if (!t || !isTouchEv(e) || handMode) return;
+      var act = canvas.getActiveObject();
+      var sel = !!act && (act === t || (act.type === 'activeSelection' && typeof act.contains === 'function' && act.contains(t)));
+      var p = evPoint(e);
+      g = { sel: sel, x: p.x, y: p.y, obj: null, left: 0, top: 0, free: false };
+    });
+    canvas.on('object:moving', function (opt) {
+      if (!g || g.free) return;
+      var o = opt.target;
+      if (!g.obj) { g.obj = o; var t0 = (canvas._currentTransform && canvas._currentTransform.original) || null; g.left = t0 ? t0.left : o.left; g.top = t0 ? t0.top : o.top; }
+      var p = evPoint(opt.e);
+      var moved = Math.abs(p.x - g.x) + Math.abs(p.y - g.y);
+      if (g.sel && moved > TOUCH_SLOP) { g.free = true; return; }
+      o.set({ left: g.left, top: g.top });
+      o.setCoords();
+    });
+    canvas.on('mouse:up', function () { g = null; });
+  }
+  window.ssTouchGuardSlop = TOUCH_SLOP;
+
   function init() {
     initGestures();
+    safe(initTouchGuard);
     safe(initObjectPinch);
     safe(initSwipeSlides);
     safe(initPresentationSwipe);
