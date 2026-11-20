@@ -21,6 +21,7 @@ window.SS_I18N = {
   text: {
     /* ---------- umumiy / yuklanish ---------- */
     "Yuklanmoqda...": ["Загрузка...", "Loading..."],
+    "Chuqur o‘ylayapti": ["Глубоко думает", "Thinking deeply"],
     "Yuklanmoqda…": ["Загрузка…", "Loading…"],
     "⏳ Yuklanmoqda...": ["⏳ Загрузка...", "⏳ Loading..."],
     "Xabar": ["Сообщение", "Message"],
@@ -532,6 +533,7 @@ window.SS_I18N = {
     "Oldingi ishingiz tiklandi ✅": ["Ваша прошлая работа восстановлена ✅", "Your previous work was restored ✅"]
   },
   patterns: [
+    ["^(\\d+) soniya o['‘’ʻ]yladi$", "Думал $1 с", "Thought for $1 s"],
     ["^Juda tez-tez so'rov yuboryapsiz\\. (\\d+) soniyadan keyin qayta urinib ko'ring\\.$", "Слишком частые запросы. Попробуйте через $1 с.", "Too many requests. Try again in $1 s."],
     ["^Navbatdasiz \\((\\d+)\\)\\. Biroz kuting…$", "Вы в очереди ($1). Подождите немного…", "You are in the queue ($1). Please wait…"],
     ["^⏳ Navbatdasiz \\((\\d+)\\)\\. Biroz kuting…$", "⏳ Вы в очереди ($1). Подождите немного…", "⏳ You are in the queue ($1). Please wait…"],

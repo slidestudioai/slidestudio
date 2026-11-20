@@ -310,21 +310,13 @@
               return;
             }
             if (choice.isDenied) {
-              const blob = new Blob([text], { type: 'text/html' });
-              const url = URL.createObjectURL(blob);
-              const win = window.open(url, '_blank');
-              setTimeout(() => URL.revokeObjectURL(url), 20000);
-              if (!win) Swal.fire('Bloklangan', "Pop-up bloklangan.", 'warning');
+              if (!ssOpenHtmlSandboxed(text)) Swal.fire('Bloklangan', "Pop-up bloklangan.", 'warning');
               return;
             }
             return;
           }
 
-          const blob = new Blob([text], { type: 'text/html' });
-          const url = URL.createObjectURL(blob);
-          const win = window.open(url, '_blank');
-          setTimeout(() => URL.revokeObjectURL(url), 20000);
-          if (!win) Swal.fire('Bloklangan', "Pop-up bloklangan.", 'warning');
+          if (!ssOpenHtmlSandboxed(text)) Swal.fire('Bloklangan', "Pop-up bloklangan.", 'warning');
         } catch (e) {
           Swal.fire('HTML xato', e.message, 'error');
         }
@@ -1281,6 +1273,28 @@
       lb.style.display = 'flex';
     }
     window.openLightbox = openLightbox;
+    // An HTML file that is not a Slide Studio deck is shown in a SANDBOXED frame (its own, isolated origin).
+    // Before, it was opened as a blob: page — blob: pages run on OUR origin, so a malicious .html file sent to a user
+    // could read the login session from localStorage (account takeover).
+    function ssOpenHtmlSandboxed(html) {
+      let win = null;
+      try { win = window.open('', '_blank'); } catch (e) { win = null; }
+      if (!win) return false;
+      try {
+        const d = win.document;
+        d.open();
+        d.write('<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<title>HTML</title><style>html,body{margin:0;height:100%;background:#fff}iframe{border:0;width:100%;height:100%;display:block}</style></head><body></body></html>');
+        d.close();
+        const f = d.createElement('iframe');
+        f.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals allow-presentation');
+        f.setAttribute('referrerpolicy', 'no-referrer');
+        f.srcdoc = String(html || '');
+        d.body.appendChild(f);
+      } catch (e) { try { win.close(); } catch (e2) {} return false; }
+      return true;
+    }
+    window.ssOpenHtmlSandboxed = ssOpenHtmlSandboxed;
     function appendAiChatMessage(sender, text, attachedImages = []) {
       const chatBody = document.getElementById('aiChatBody');
       const msgDiv = document.createElement('div');

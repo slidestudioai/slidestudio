@@ -238,31 +238,149 @@ _SMALLTALK_RE = _re.compile(r"^\s*(?:salom|assalom\w*|hi|hello|hey|rahmat|raxmat
 _N_SLIDES_RE = _re.compile(r"(\d{1,2})\s*(?:ta\s*)?(?:slayd|slide|varaq|sahifa|page|слайд)", _re.IGNORECASE)
 
 
-def _presearch_count(text: str) -> int:
-    """How many searches are planned before writing: one per requested slide / topic (3..12)."""
-    m = _N_SLIDES_RE.search(text or "")
-    try:
-        n = int(m.group(1)) if m else 0
-    except Exception:
-        n = 0
+def _presearch_count(text: str, deep: bool = False) -> int:
+    """How many searches are planned before writing: one per requested slide / topic (3..12; Deep AI: 4..16,
+    because it cannot search later by itself)."""
+    n = _slide_amount(text or "")
     topics = len([p for p in _re.split(r"[,;\n]|\bva\b|\band\b|\bи\b", text or "") if len(p.strip()) > 2])
+    if deep:
+        return max(4, min(16, max(n, topics)))
     return max(3, min(12, max(n, topics)))
 
 
 _DECK_CREATE_RE = _re.compile(r"(taqdimot|prezentats|presentation|deck|презентац|слайды)", _re.I)
-_CREATE_VERB_RE = _re.compile(r"(yasa|yarat|tuz|qil|tayyorla|create|make|generate|build|созда|сдела|подготов)", _re.I)
+_CREATE_VERB_RE = _re.compile(r"(yasa|yarat|tuz(?!at|il)|tayyorla|create|make|generate|build|созда|сдела|подготов)", _re.I)
+# Before, any deck word + any of these verbs anywhere counted as «make a new deck»: «taqdimotdagi xatoni TUZat»,
+# «taqdimotni chiroyli QIL», «3 slaydni rangini o'zgartir» (the NUMBER of a slide) all ran 3+ picture searches.
+# Now the verb must belong to the deck word, and «N slayd» counts only as an amount («3 ta slayd», «3 slides», «3 slaydli»,
+# or «3 slayd yarat»), never «3 slaydni / 3 slayddagi …» (= slide number 3).
+_DECK_NOUN = r"(?:taqdimot|prezentats\w*|presentation|deck|slides|презентац\w*|слайды)"
+_DECK_VERB = r"(?:yasa|yarat|tuz(?!at|il)|tayyorla|qilib\s*ber|create|make|generate|build|prepare|созда\w*|сдела\w*|подготов\w*)"
+_DECK_NEW_RE = _re.compile(
+    _DECK_NOUN + r"\w*\s+(?:(?:qisqa|yangi|katta|kichik|chiroyli|mukammal|to'?liq)\s+)?" + _DECK_VERB +            # «taqdimot tayyorla»
+    r"|" + _DECK_NOUN + r"\s+qil\b" +                                                                               # «taqdimot qil»
+    r"|" + _DECK_VERB + r"\w*\s+(?:me\s+)?(?:a\s+|an\s+|the\s+|new\s+|yangi\s+)?(?:[\w'’-]+\s+){0,2}?" + _DECK_NOUN,   # «make a (short) presentation»
+    _re.I)
+_N_SLIDES_AMOUNT_RE = _re.compile(r"(\d{1,2})\s*(-?ta\s*)?(?:slayd|slide|varaq|sahifa|page|слайд)(\w*)", _re.I)
+
+
+def _slide_amount(text: str) -> int:
+    """«5 ta slayd» / «5 slides» / «5 slaydli» / «5 slayd yarat» -> 5; «5-slayd», «5 slaydni …» (slide number) -> 0."""
+    for m in _N_SLIDES_AMOUNT_RE.finditer(text or ""):
+        try:
+            n = int(m.group(1))
+        except Exception:
+            continue
+        pre = (text or "")[max(0, m.start() - 1):m.start()]
+        if pre == "-" or pre.isdigit():
+            continue
+        suffix = (m.group(3) or "").lower()
+        # «10 slayd» (bare, no case ending) is an amount too; «10 slaydni / 10 slayddagi» is a slide number
+        if m.group(2) or suffix in ("", "s", "li", "lik", "ов", "а", "ы"):
+            return n
+    return 0
 
 
 def _is_multi_slide_request(text: str) -> bool:
     """A new deck or 2+ slides in one message (then the pictures for all topics are searched first, in one batch)."""
     t = text or ""
-    m = _N_SLIDES_RE.search(t)
+    if _slide_amount(t) >= 2:
+        return True
+    return bool(_DECK_NEW_RE.search(t))
+
+
+# ---- May this turn search the internet for NEW pictures? ----
+# Before, the search tool was on for every non-greeting message: «3-slaydning rangini o'zgartir», «rasmlarni o'chirma,
+# faqat tekis joylashtir» … also searched and added new pictures. Now only a request that creates slides or asks for a
+# (new / another / added) picture / GIF / video may search; edits of colour, text, layout, size, order never do.
+_MEDIA_NOUN = r"(?:rasm|surat|foto|photo|image|picture|pic\b|gif|video|illyustr|background|orqa\s*fon|fon\b|изображ|картин|фото|видео|гиф|фон\b)"
+_MEDIA_ADD_VERB = (r"(?:qo'?sh|qo'?y|top|qidir|izla|yangi|almashtir|boshqa|add|insert|put|find|search|new|replace|another|change|swap|"
+                   r"добав|встав|найд|замен|нов|друг|постав)")
+_IMG_ADD_RE = _re.compile(_MEDIA_NOUN + r"\w*\W+(?:[\w'’]+\W+){0,3}?" + _MEDIA_ADD_VERB + r"|" +
+                          _MEDIA_ADD_VERB + r"\w*\W+(?:[\w'’]+\W+){0,3}?" + _MEDIA_NOUN, _re.I)
+# «a new picture» said directly (wins even next to «do not touch the other pictures»)
+_IMG_ADD_STRICT_RE = _re.compile(r"(?:yangi|boshqa|new|another|нов\w*|друг\w*)\s+" + _MEDIA_NOUN + r"|" +
+                                 _MEDIA_NOUN + r"\w*\s+(?:qo'?sh|qidir|top|izla|add|find|search|добав|найд)", _re.I)
+_IMG_KEEP_RE = _re.compile(_MEDIA_NOUN + r"\w*\s+(?:[\w'’]+\s+){0,2}?(?:o'?chirma|o'?zgartirma|almashtirma|tegma|qoldir|saqla|o'?zi\w*\s+qolsin)|"
+                           r"(?:don'?t|do\s+not|never)\s+(?:change|replace|remove|delete|touch)\s+(?:the\s+)?(?:images?|pictures?|photos?)|"
+                           r"keep\s+(?:the\s+|all\s+)?(?:images?|pictures?|photos?)|не\s+(?:меняй|удаляй|трогай|заменяй)\s+(?:\w+\s+)?(?:картин|фото|изображ)", _re.I)
+# «add something» that is not text / a shape / a table … (e.g. «mushuk qo'sh» = add a cat picture)
+_ADD_THING_RE = _re.compile(r"\b(?:qo'?sh|qo'?yib\s*ber|add|insert|добав|встав)\w*", _re.I)
+_NON_MEDIA_THING_RE = _re.compile(r"matn|text|sarlavha|title|shakl|shape|tugma|button|jadval|table|diagramma|chart|grafik|karta|card|blok|"
+                                  r"ramka|frame|chiziq|line|ikonka|icon|emoji|raqam|number|havola|link|animats|animation|o'?tish|transition|"
+                                  r"slayd|slide|varaq|текст|кнопк|таблиц|диаграм|ссылк|анимац|слайд", _re.I)
+
+
+def _turn_may_search(raw: str) -> bool:
+    """True when this message may search the internet for new pictures (see the comment above)."""
+    t = (raw or "").strip()
+    if len(t) < 4 or _SMALLTALK_RE.match(t) or _NO_IMG_RE.search(t):
+        return False
+    if _is_multi_slide_request(t):
+        return True
+    if _IMG_KEEP_RE.search(t):                       # «rasmlarni o'chirma / o'zgartirma …» -> only an explicit new one
+        return bool(_IMG_ADD_STRICT_RE.search(t))
+    if _IMG_ADD_RE.search(t):
+        return True
+    # a new slide is created (it gets a picture by default) — «yangi slayd qo'sh», «5-slayd yarat»
+    if _re.search(r"(?:yangi|new|нов\w*)\s+(?:slayd|slide|varaq|слайд)|(?:slayd|slide|varaq|слайд)\w*\s+(?:qo'?sh|yarat|yasa|tuz|add|create|добав|созда)|"
+                  r"(?:qo'?sh|yarat|yasa|tuz|add|create|добав|созда)\w*\s+(?:\w+\s+){0,2}?(?:slayd|slide|varaq|слайд)", t, _re.I):
+        return True
+    if _ADD_THING_RE.search(t) and not _NON_MEDIA_THING_RE.search(t):
+        return True
+    return False
+
+
+_PLACEHOLDER_TEXTS = {"sarlavha kiriting", "enter title", "введите заголовок", "matn kiriting...", "enter text...", "введите текст...",
+                      "sarlavha", "title", "заголовок", "yangi matn", "new text", "новый текст", "matn kiriting", "enter text", ""}
+
+
+def _deck_is_empty(deck_state: Any) -> bool:
+    """True when the user's deck has no content yet (one blank slide / only placeholder texts).
+    Then a message that is just a topic («Iqlim o'zgarishi haqida», «Amir Temur», «Sun'iy intellekt 10 slayd») means:
+    make a new deck — with pictures. Before, such messages searched no pictures at all (Deep AI cannot search itself)."""
     try:
-        if m and int(m.group(1)) >= 2:
-            return True
+        d = json.loads(deck_state) if isinstance(deck_state, str) else deck_state
     except Exception:
-        pass
-    return bool(_DECK_CREATE_RE.search(t) and _CREATE_VERB_RE.search(t))
+        return False
+    if not isinstance(d, dict):
+        return False
+    pres = d.get("presentation")
+    slides_ = pres if isinstance(pres, list) and pres else [d.get("slide_data") or {}]
+    try:
+        if int(d.get("total_slides") or len(slides_) or 1) > 1:
+            return False
+    except Exception:
+        return False
+    for sl in slides_:
+        if not isinstance(sl, dict):
+            return False
+        if sl.get("backgroundImage") or sl.get("backgroundGif") or sl.get("backgroundVideo") or sl.get("backgroundImageUrl"):
+            return False
+        for o in (sl.get("objects") or sl.get("elements") or []):
+            if not isinstance(o, dict):
+                continue
+            typ = str(o.get("type") or "").lower()
+            if typ in ("text", "textbox", "i-text"):
+                if str(o.get("text") or "").strip().lower().replace("…", "...") in _PLACEHOLDER_TEXTS:
+                    continue
+            return False
+    return True
+
+
+def _new_deck_topic(raw: str, deck_state: Any) -> bool:
+    """An empty deck + a real request (not a greeting / question about the site, not «no pictures»)."""
+    t = (raw or "").strip()
+    if len(t) < 3 or _SMALLTALK_RE.match(t) or _NO_IMG_RE.search(t) or t.endswith("?"):
+        return False
+    return _deck_is_empty(deck_state)
+
+
+_EDIT_NO_NEW_MEDIA_NOTE = (
+    "\n\n[TAHRIR — YANGI RASM YO'Q]\nBu xabar mavjud slayd(lar)ni TAHRIRLASH so'rovi (rang, matn, joylashuv, o'lcham, tartib …). "
+    "Yangi rasm / GIF / video QIDIRMANG va QO'SHMANG, mavjud rasmlarni almashtirmang va o'chirmang (foydalanuvchi o'zi so'ramagan bo'lsa). "
+    "replace_slide qilsangiz — slayddagi har bir mavjud rasmni AYNAN o'sha src / image_number bilan qoldiring (faqat joyi va o'lchami "
+    "so'ralgandek o'zgarishi mumkin). Rasm qo'shilmagan bo'lsa «rasm qo'shildi» demang.")
 
 
 def _wants_images(raw: str) -> bool:
@@ -288,7 +406,7 @@ def _presearch_kind(text: str) -> str:
 
 
 async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: Any = None, stats: Optional[dict] = None,
-                          kind: str = "photo") -> str:
+                          kind: str = "photo", show: int = 4) -> str:
     """Chuqur AI (deepseek-reasoner) tool chaqira olmaydi — shuning uchun rasmlarni OLDINDAN topib, tayyor URL ro'yxatini beramiz.
     Kichik tez model inglizcha so'rovlarni yozadi, qidiruv parallel ishlaydi. Xatoda bo'sh matn (oqim buzilmaydi)."""
     if not _search_images_sync:
@@ -303,7 +421,7 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     _first = "mavzuga mos rasmlar"
     try:
         r = await asyncio.wait_for(client.chat.completions.create(
-            model="deepseek-chat", temperature=0, max_tokens=160, response_format={"type": "json_object"},
+            model="deepseek-chat", temperature=0, max_tokens=400, response_format={"type": "json_object"},
             messages=[{"role": "system", "content": f"You write {'animated GIF' if kind == 'gif' else ('short video clip' if kind == 'video' else 'photo')} search queries for slides. Return only JSON (json): {{\"queries\": [\"2-4 word ENGLISH query\", ...]}}. "
                                                     f"Cover EVERY topic, sub-topic and slide the user mentions (one query each, in slide order) — do not skip any. "
                                                     f"At most {max_q} queries, each a concrete photographable subject. If the request needs no pictures return an empty list."},
@@ -322,7 +440,7 @@ async def _deep_presearch(client: Any, context: str, max_q: int = 3, websocket: 
     for q, f in zip(qs, res):
         if isinstance(f, list):
             lines = []
-            for x in f[:4]:
+            for x in f[:max(1, show)]:
                 if not (isinstance(x, dict) and x.get("url")):
                     continue
                 size = f" {x['width']}x{x['height']}" if x.get("width") and x.get("height") else ""
@@ -983,12 +1101,24 @@ def _rate_limited(ip: str, path: str) -> bool:
                 _RL.pop(k, None)
     return False
 
+MAX_REQUEST_BODY_BYTES = max(1, _env_int("MAX_REQUEST_BODY_MB", 25)) * 1024 * 1024
+
+
 @app.middleware("http")
 async def _security_middleware(request: Request, call_next):
     path = request.url.path
     ip = _client_ip(request)
     rid = obs.new_request_id(request.headers.get("x-request-id"))       # Audit M4
     obs.request_id_var.set(rid)
+    # a request body larger than the biggest legitimate upload (PDF 10 MB, images as base64) is refused before it is
+    # read into memory (before, e.g. /api/analyze-images read 30 x 14 MB of JSON without any login)
+    if request.method in ("POST", "PUT", "PATCH"):
+        try:
+            _cl = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            _cl = 0
+        if _cl > MAX_REQUEST_BODY_BYTES:
+            return JSONResponse({"error": "So'rov juda katta", "code": "TOO_LARGE"}, status_code=413, headers={"X-Request-ID": rid})
     if path.startswith("/api/") and _rate_limited(ip, path):
         _metrics.inc("http_rate_limited_total", help="HTTP requests refused by the IP rate limit")
         return JSONResponse({"error": "Juda ko'p so'rov. Biroz kuting.", "code": "RATE_LIMITED"}, status_code=429,
@@ -2192,7 +2322,9 @@ async def ads_media(ad_id: int, request: Request):
     if not row or not row.get("active"):
         raise HTTPException(404, "Topilmadi")
     u = str(row.get("media_url") or "")
-    hdr = {"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes"}
+    # sandbox: an uploaded SVG (image/svg+xml can hold <script>) never runs on our origin when opened directly
+    hdr = {"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes",
+           "Content-Security-Policy": "sandbox; default-src 'none'; img-src data:; media-src 'self' data:; style-src 'unsafe-inline'"}
     if u.startswith("tg:"):
         if tgbot is None:                    # v53: bot o'chiq — 500 emas, 404
             raise HTTPException(404, "Fayl topilmadi")
@@ -3220,23 +3352,31 @@ async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode:
             # kept (only finished actions are charged) and the client shows «Davom ettirish».
             async with asyncio.timeout(AI_TURN_DEADLINE_DEEP if model == "deepseek-reasoner" else AI_TURN_DEADLINE_FAST):
                 _pre_stats: Dict[str, int] = {}
-                tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and not _SMALLTALK_RE.match((prompt or "").strip() or "x")
+                # «generate» = one slide of a planned deck (it decides by the plan's has_image); otherwise: only when
+                # the message creates slides or asks for a picture — an edit never searches / adds pictures
+                _new_deck = mode not in ("plan", "generate") and _new_deck_topic(prompt or "", (data or {}).get("deck_state") or (data or {}).get("slide_context"))
+                _may_search = mode == "generate" or _new_deck or _turn_may_search(prompt or "")
+                tools_on = bool(_search_images_sync) and model != "deepseek-reasoner" and mode != "plan" and _may_search
+                if not _may_search and mode not in ("plan", "generate") and messages:
+                    messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _EDIT_NO_NEW_MEDIA_NOTE}
                 # «Search everything first, then write everything»: for a new deck / several slides the server finds the
                 # pictures for ALL topics of the message in ONE parallel batch, then the AI writes the whole deck in ONE
                 # answer (no tools, no slide-by-slide search rounds that ran out and left slides unfinished).
-                _batch_first = (tools_on and mode not in ("plan", "generate") and _is_multi_slide_request(prompt or "")
-                                and _wants_images(prompt or ""))
+                _batch_first = (tools_on and mode not in ("plan", "generate")
+                                and ((_is_multi_slide_request(prompt or "") and _wants_images(prompt or "")) or _new_deck))
                 if (model == "deepseek-reasoner" or _batch_first) and _search_images_sync and mode != "plan" and not _NO_IMG_RE.search(prompt or ""):
                     try:
                         # the user's OWN text (user_content also carries the browser's action report — Audit M1)
-                        _ctx, _want = prompt or "", _wants_images(prompt or "")
+                        _ctx = prompt or ""
+                        _want = _may_search if model == "deepseek-reasoner" else (_wants_images(prompt or "") or _new_deck) and _may_search
                         if mode == "generate" and isinstance(plan_slides, list) and plan_index is not None and 0 <= int(plan_index) < len(plan_slides):      # slayd-slayd yaratish: faqat has_image slaydlar
                             _cur = plan_slides[int(plan_index)] or {}
                             _want = bool(_cur.get("has_image")) and _wants_images(prompt or "") or bool(_cur.get("has_image"))
                             _ctx = f"Deck topic: {prompt}\nSlide: {_cur.get('title', '')} — {_cur.get('summary', '')}"
                         if _want:
-                            _extra = await _deep_presearch(client, _ctx, 1 if mode == "generate" else _presearch_count(prompt or ""), websocket, _pre_stats,
-                                                           kind=_presearch_kind(prompt or ""))
+                            _nq = 1 if mode == "generate" else _presearch_count(prompt or "", deep=model == "deepseek-reasoner")
+                            _extra = await _deep_presearch(client, _ctx, _nq, websocket, _pre_stats, kind=_presearch_kind(prompt or ""),
+                                                           show=6 if model == "deepseek-reasoner" else 4)
                             if _extra:
                                 messages[-1] = {"role": "user", "content": (messages[-1].get("content") or "") + _extra}
                                 if _batch_first:

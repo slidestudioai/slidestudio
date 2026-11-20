@@ -61,7 +61,15 @@ test('Chuqur AI: javob tugagach «javob yozilmoqda» qolib ketmaydi', async ({ p
   await page.evaluate(() => sendSidebarAiPrompt());
   await page.waitForFunction(() => isAiStreaming, null, { timeout: 8000 }).catch(() => {});
   await page.waitForFunction(() => !isAiStreaming, null, { timeout: 60_000 });
-  const rows = await page.$$eval('.ai-search-row.thinking .asr-text', (r) => r.map((x) => x.textContent));
-  expect(rows.length).toBeGreaterThan(0);
-  for (const t of rows) expect(t).not.toMatch(/yozilmoqda/);
+  // the thinking line sits ABOVE the answer and ends as a small caption «N soniya o'yladi» — no green card,
+  // nothing «in progress» left behind
+  const r = await page.evaluate(() => [...document.querySelectorAll('.ai-think')].map((x) => ({
+    text: x.textContent, done: x.classList.contains('done'), on: x.classList.contains('on'),
+    first: x.parentElement.firstElementChild === x })));
+  expect(r.length).toBeGreaterThan(0);
+  for (const x of r) {
+    expect(x.done && !x.on && x.first).toBe(true);
+    expect(x.text).toMatch(/^\d+ soniya o.yladi$|^Thought for \d+ s$|^Думал \d+ с$/);
+  }
+  expect(await page.locator('.ai-search-row.thinking').count()).toBe(0);
 });
