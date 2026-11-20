@@ -78,6 +78,9 @@
         return 'linear-gradient(' + deg + 'deg,' + stops + ')';
       } catch (e) { return null; }
     }
+    function firstStopColor(f) {
+      try { var st = (f && f.colorStops) || []; return (st[0] && st[0].color) || ''; } catch (e) { return ''; }
+    }
     function fillCss(f, w, h) {
       if (typeof f === 'string') return { color: f };
       if (f && typeof f === 'object' && f.colorStops) { var g = gradientCss(f, w, h); if (g) return { gradient: g }; }
@@ -464,6 +467,14 @@
     function buildSlide(i) {
       var p = slides[i] || {};
       var s = mk('div', 'slide');
+      // the slide's under-layer has the slide's OWN colour (was always white): at the rounded corners of the stage the
+      // browser blends edge pixels / a fractional-pixel gap shows the layer underneath — a white one showed as a thin
+      // white line around dark slides
+      try {
+        var _f = fillCss(p.background != null ? p.background : p.backgroundColor, W, H);
+        var _c = _f.gradient ? firstStopColor(p.background) : cssColor(_f.color, '#ffffff');
+        if (_c) s.style.backgroundColor = _c;
+      } catch (e) {}
       s.appendChild(buildBackground(p));
       var c = mk('div', 'content');
       (p.objects || []).forEach(function (o, oi) { var n = buildObject(o, i, oi); if (n) c.appendChild(n); });
