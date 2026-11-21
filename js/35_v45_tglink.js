@@ -87,6 +87,28 @@
     return { ok: r.ok, status: r.status, data: j };
   }
 
+  /* v69: after «Start» in the bot the site confirms by itself (checks every few seconds while the code lives) */
+  var watchId = 0;
+  function watchLinked(ms) {
+    var id = ++watchId, until = Date.now() + Math.min(ms, 30 * 60000);
+    (async function loop() {
+      while (id === watchId && Date.now() < until) {
+        await new Promise(function (r) { setTimeout(r, document.hidden ? 6000 : 3000); });
+        if (document.hidden && Date.now() < until) continue;
+        try {
+          var st = await api('/api/telegram/link-status');
+          if (st.ok && st.data && st.data.linked) {
+            tState = { linked: true, enabled: true }; tAt = Date.now(); tTok = token();
+            toast('✅ Telegram ulandi! Balans endi bot bilan bir xil.');
+            try { window.ssTgDecorate(); } catch (e) {}
+            try { if (typeof loadUserStats === 'function') loadUserStats(true); } catch (e) {}      // shared balance shows at once
+            return;
+          }
+        } catch (e) {}
+      }
+    })();
+  }
+
   var busy = false;
   window.ssTgLink = async function () {
     if (busy) return;
@@ -118,6 +140,7 @@
       }
       toast('Telegram ochilmoqda… botda «Start» ni bosing.');
       if (win && !win.closed) win.location.href = r.data.url; else window.location.href = r.data.url;
+      watchLinked((r.data.expires_in || 1800) * 1000);
     } catch (e) {
       if (win && !win.closed) win.close();
       toast('Ulab bo‘lmadi. Keyinroq urinib ko‘ring.', 'error');

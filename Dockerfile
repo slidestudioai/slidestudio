@@ -9,13 +9,5 @@ USER app
 ENV PORT=8080
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request,os;urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8080')+'/healthz')" || exit 1
-CMD ["gunicorn", "main:app", \
-  "--worker-class", "backend.worker.SlideStudioWorker", \
-  "--workers", "4", \
-  "--worker-connections", "1000", \
-  "--keep-alive", "5", \
-  "--timeout", "120", \
-  "--graceful-timeout", "30", \
-  "--bind", "0.0.0.0:8080", \
-  "--log-level", "warning", \
-  "--access-logfile", "-"]
+# v69: worker count follows the container's real RAM / CPU (backend/gunicorn_conf.py), not a fixed 4
+CMD ["gunicorn", "main:app", "-c", "backend/gunicorn_conf.py"]

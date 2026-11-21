@@ -115,5 +115,8 @@ def test_gunicorn_worker_limits_ws_frames():
     assert SlideStudioWorker.CONFIG_KWARGS["ws_max_size"] <= 8 * 1024 * 1024
     import pathlib
     root = pathlib.Path(main.BASE_DIR)
-    assert "backend.worker.SlideStudioWorker" in (root / "Dockerfile").read_text()
-    assert "backend.worker.SlideStudioWorker" in (root / "render.yaml").read_text()
+    # v69: both start gunicorn with backend/gunicorn_conf.py, which sets the worker class (and the worker count)
+    assert "backend/gunicorn_conf.py" in (root / "Dockerfile").read_text()
+    assert "backend/gunicorn_conf.py" in (root / "render.yaml").read_text()
+    from backend import gunicorn_conf
+    assert gunicorn_conf.worker_class == "backend.worker.SlideStudioWorker"

@@ -529,8 +529,12 @@
       try {
         if (typeof localStorage !== 'undefined') {
           Object.keys(localStorage).forEach(function(k) {
-            if (k.startsWith('sb-') || k.startsWith('ss-auth')) {
-              localStorage.removeItem(k);
+            // v69: the site language and small UI preferences stay after logout (they are not personal);
+            // the session, the typed draft and pending tokens are removed
+            var keep = k === 'ss-auth-v39-lang' || (k.startsWith('ss-auth-v39-p-') && k !== 'ss-auth-v39-p-draft');
+            // (plain localStorage.removeItem is a no-op after the storage lock in index.html — the allowed adapter is used)
+            if ((k.startsWith('sb-') || k.startsWith('ss-auth')) && !keep) {
+              try { if (window.__ssAuthStorage) window.__ssAuthStorage.removeItem(k); } catch (_) {}
             }
           });
         }
@@ -647,16 +651,18 @@
       saveCurrentSlideState();
     }
 
-    // Persist current prompt text to sessionStorage
+    // The prompt being typed survives the Google sign-in redirect. v69: sessionStorage is wiped on every load by the
+    // storage lock in index.html, so before the typed topic was lost after login. Kept 1 hour, restored once.
     document.addEventListener('input', function(e) {
       var el = e.target;
       if (el && (el.id === 'promptInput' || el.id === 'chatInput' || el.id === 'aiSidebarInput' || (el.classList && el.classList.contains('ai-input')))) {
-        sessionStorage.setItem('ss_draft_prompt', el.value);
+        try { if (window.ssPref) { if (el.value) ssPref.set('draft', JSON.stringify({ v: String(el.value).slice(0, 4000), at: Date.now() })); else ssPref.del('draft'); } } catch (_) {}
       }
     });
     // Restore on load
     document.addEventListener('DOMContentLoaded', function() {
-      var saved = sessionStorage.getItem('ss_draft_prompt');
+      var saved = '';
+      try { var d = JSON.parse((window.ssPref && ssPref.get('draft')) || 'null'); if (d && d.v && Date.now() - d.at < 3600000) saved = d.v; if (window.ssPref) ssPref.del('draft'); } catch (_) {}
       if (saved) {
         var el = document.getElementById('promptInput') || document.getElementById('chatInput') || document.getElementById('aiSidebarInput');
         if (el && !el.value) el.value = saved;

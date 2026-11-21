@@ -934,7 +934,11 @@
     function duplicateSlide() {
       const idx = window._rightClickedSlideIndex;
       if (idx === undefined || idx === null) return;
+      // the open slide's latest edits are saved FIRST (like switchSlide / addSlide do) — otherwise the copy is old
+      // and loadSlideCanvas below reloads the canvas from the old JSON, so the user's last change disappears
+      try { saveCurrentSlideState(); } catch (e) {}
       const source = slides[idx];
+      if (!source) return;
       slides.splice(idx + 1, 0, {
         json: source.json,
         thumb: source.thumb,
@@ -950,7 +954,9 @@
       const idx = window._rightClickedSlideIndex;
       if (idx === undefined || idx === null) return;
       if (slides.length <= 1) { showToast("Kamida bitta slayd kerak!", 'error'); return; }
+      try { saveCurrentSlideState(); } catch (e) {}     // deleting ANOTHER slide must not lose edits on the open one
       slides.splice(idx, 1);
+      if (idx < activeIndex) activeIndex--;             // the open slide moved one place up — stay on it
       if (activeIndex >= slides.length) activeIndex = slides.length - 1;
       renderSidebar();
       loadSlideCanvas(activeIndex, updateSlideCounterUI);

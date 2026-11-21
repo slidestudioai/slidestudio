@@ -147,8 +147,8 @@
     return STYLE_ALIAS[s] || STYLE_ALIAS[s.replace(/_/g, '-')] || null;
   }
   var current = 'neo_brutalism';
-  try { var saved = styleKey(localStorage.getItem('ssKitStyle')); if (saved) current = saved; } catch (e) {}
-  function setStyle(k) { k = styleKey(k); if (!k) return; current = k; try { localStorage.setItem('ssKitStyle', k); } catch (e) {} }
+  try { var saved = styleKey(window.ssPref && ssPref.get('kitStyle')); if (saved) current = saved; } catch (e) {}
+  function setStyle(k) { k = styleKey(k); if (!k) return; current = k; try { if (window.ssPref) ssPref.set('kitStyle', k); } catch (e) {} }
   function resolveStyle(el) {
     var base = STYLES[styleKey(el && el.style) || current] || STYLES.neo_brutalism;
     var S = Object.assign({}, base);

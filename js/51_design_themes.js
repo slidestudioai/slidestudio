@@ -433,7 +433,7 @@
   document.head.appendChild(css);
 
   var scope = 'all';
-  try { if (localStorage.getItem('ssThemeScope') === 'one') scope = 'one'; } catch (e) {}
+  try { if (window.ssPref && ssPref.get('themeScope') === 'one') scope = 'one'; } catch (e) {}
   function html() {
     var cur = currentThemeOf();
     var h = '<div class="kscope"><span>Qo\'llash:</span>' +
@@ -477,7 +477,7 @@
   function onClick(b, rerender, closeMenu) {
     if (b.dataset.scope) {
       scope = b.dataset.scope === 'one' ? 'one' : 'all';
-      try { localStorage.setItem('ssThemeScope', scope); } catch (e) {}
+      try { if (window.ssPref) ssPref.set('themeScope', scope); } catch (e) {}
       rerender();
       return true;
     }

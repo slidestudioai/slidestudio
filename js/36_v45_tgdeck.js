@@ -2,7 +2,7 @@
  * 36_v45_tgdeck.js  (v45) — botdan keladigan havolalar
  *  ?tgdeck=TOKEN  — botdagi «Muharrirda ochish»: SHU slaydning o'zi PPTX qilib olinadi va editorga import qilinadi.
  *  ?tglink=TOKEN  — botdagi «Saytda ulash»: Google bilan kirilgach Telegram akkaunti o'zi ulanadi.
- * Token sahifa yangilansa / Google'ga o'tib qaytsa ham yo'qolmasin deb sessionStorage'da saqlanadi (vaqtincha).
+ * Token sahifa yangilansa / Google'ga o'tib qaytsa ham yo'qolmasin deb 'ss-auth-v39-*' kaliti ostida saqlanadi (vaqtincha).
  * ===================================================================== */
 (function () {
   'use strict';
@@ -15,27 +15,69 @@
   function toast(m, k) { try { if (typeof showToast === 'function') showToast(m, k || 'info'); } catch (e) {} }
   function token() { try { return (typeof supabaseToken !== 'undefined') ? supabaseToken : ''; } catch (e) { return ''; } }
   function logged() { var t = token(); return !!t && t !== 'dev-token'; }
-  function ssGet(k) { try { return sessionStorage.getItem(k) || ''; } catch (e) { return ''; } }
-  function ssSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }
-  function ssDel(k) { try { sessionStorage.removeItem(k); } catch (e) {} }
   async function waitFor(fn, ms, step) {
     var t0 = Date.now();
     while (Date.now() - t0 < ms) { try { var v = fn(); if (v) return v; } catch (e) {} await sleep(step || 300); }
     return null;
   }
 
-  var qs = new URLSearchParams(location.search);
-  var deckTok = qs.get('tgdeck') || '', linkTok = qs.get('tglink') || '';
-  if (deckTok || linkTok) {
-    if (deckTok) ssSet('ssTgDeck', deckTok);
-    if (linkTok) ssSet('ssTgLinkTok', linkTok);
+  // v69: plain localStorage / sessionStorage do NOT work on this site — index.html's storage lock (v39) makes setItem a
+  // no-op and clears sessionStorage on every load. That is why the link token was lost after the Google sign-in and
+  // the user had to press the bot button a second time. Only 'ss-auth-v39*' keys survive (window.__ssAuthStorage).
+  var AS = window.__ssAuthStorage;
+  function lsGet(k) { try { return (AS && AS.getItem('ss-auth-v39-' + k)) || ''; } catch (e) { return ''; } }
+  function lsSet(k, v) { try { if (AS) AS.setItem('ss-auth-v39-' + k, v); } catch (e) {} }
+  function lsDel(k) { try { if (AS) AS.removeItem('ss-auth-v39-' + k); } catch (e) {} }
+  // v69: the link token (L.<tg_id>.0.<exp>.<sig>) carries its own expiry
+  function tokExp(t) { var e = +String(t || '').split('.')[3]; return e > 0 ? e * 1000 : Date.now() + 30 * 60000; }
+  function storedLink() {
+    try { var o = JSON.parse(lsGet('tglink') || 'null'); if (o && o.t && o.exp > Date.now()) return o.t; } catch (e) {}
+    lsDel('tglink');
+    return '';
+  }
+  function stripParams(keys) {
     try {
-      qs.delete('tgdeck'); qs.delete('tglink'); qs.delete('src');
-      history.replaceState(null, '', location.pathname + (qs.toString() ? '?' + qs.toString() : '') + location.hash);
+      var q = new URLSearchParams(location.search), had = false;
+      keys.forEach(function (k) { if (q.has(k)) { q.delete(k); had = true; } });
+      if (had) history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
     } catch (e) {}
   }
-  deckTok = deckTok || ssGet('ssTgDeck');
-  linkTok = linkTok || ssGet('ssTgLinkTok');
+
+  var qs = new URLSearchParams(location.search);
+  var deckTok = qs.get('tgdeck') || '', linkTok = qs.get('tglink') || '';
+  if (deckTok) { lsSet('tgdeck', JSON.stringify({ t: deckTok, exp: Date.now() + 30 * 60000 })); stripParams(['tgdeck', 'src']); }
+  // v69: the link token is kept in localStorage (survives the Google redirect, a closed tab, opening the site again)
+  // and STAYS in the address bar until linking is finished — «⋮ → Open in browser» from Telegram must carry it along.
+  // (Before it was removed at once, so the page opened in Chrome had no token and the user had to start again.)
+  if (linkTok) lsSet('tglink', JSON.stringify({ t: linkTok, exp: tokExp(linkTok) }));
+  if (!deckTok) { try { var dk = JSON.parse(lsGet('tgdeck') || 'null'); if (dk && dk.t && dk.exp > Date.now()) deckTok = dk.t; else lsDel('tgdeck'); } catch (e) {} }
+  linkTok = linkTok || storedLink();
+  function linkFinished() { lsDel('tglink'); stripParams(['tglink', 'src']); }
+  // Telegram's own in-app browser (not the Mini App): Google refuses to sign in there
+  function inTgBrowser() {
+    if (inTg) return false;
+    try { return typeof window.TelegramWebviewProxy !== 'undefined' || /Telegram/i.test(navigator.userAgent || ''); } catch (e) { return false; }
+  }
+  async function askLogin() {
+    var inApp = inTgBrowser();
+    var title = 'Telegram botni ulash';
+    var text = inApp
+      ? "Google Telegram ichidagi brauzerda kirishga ruxsat bermaydi. Yuqoridagi ⋮ (yoki ⋯) tugmasini bosing → «Brauzerda ochish». Ulash o'sha yerda o'zi tugaydi."
+      : 'Ulash uchun Google bilan kiring — qolgani o\u2018zi bajariladi.';
+    if (!window.Swal) { toast(text); return; }
+    try {
+      var r = await Swal.fire({ title: title, text: text, icon: 'info', heightAuto: false,
+        showCancelButton: true, cancelButtonText: 'Keyinroq',
+        confirmButtonText: inApp ? 'Havolani nusxalash' : 'Google bilan kirish', confirmButtonColor: '#1a73e8' });
+      if (!r.isConfirmed) return;
+      if (inApp) {
+        try { await navigator.clipboard.writeText(location.href); toast('Havola nusxalandi — brauzerga qo\u2018ying.'); }
+        catch (e) { toast('Yuqoridagi ⋮ → «Brauzerda ochish» ni bosing.'); }
+      } else if (typeof window.handleGoogleLogin === 'function') {
+        window.handleGoogleLogin();
+      }
+    } catch (e) {}
+  }
 
   async function runDeck() {
     if (!deckTok) return;
@@ -49,11 +91,11 @@
     for (var a = 0; a < 3; a++) {
       try {
         var r = await fetch('/api/telegram/deck-file?t=' + encodeURIComponent(deckTok));
-        if (r.status === 410 || r.status === 404) { ssDel('ssTgDeck'); toast('Havola eskirgan yoki slayd o‘chirilgan. Botdan «Muharrirda ochish» ni qayta bosing.', 'error'); return; }
+        if (r.status === 410 || r.status === 404) { lsDel('tgdeck'); toast('Havola eskirgan yoki slayd o‘chirilgan. Botdan «Muharrirda ochish» ni qayta bosing.', 'error'); return; }
         if (!r.ok) throw new Error('HTTP ' + r.status);
         var blob = await r.blob();
         var f = new File([blob], 'slayd.pptx', { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
-        ssDel('ssTgDeck');
+        lsDel('tgdeck');
         await window.importPptxClient(f);
         return;
       } catch (e) { await sleep(2500 * (a + 1)); }                // Render uyg'onguncha qayta urinadi
@@ -63,21 +105,29 @@
 
   async function runLink() {
     if (!linkTok) return;
-    var ok = await waitFor(logged, 5000);
+    if (tokExp(linkTok) < Date.now()) { linkFinished(); toast('Havola eskirgan — botdan «Sayt akkauntini ulash» ni qayta bosing.', 'error'); return; }
+    var ok = await waitFor(logged, 6000);
     if (!ok) {
-      toast('Google bilan kiring — Telegram ulash o‘zi tugaydi.');
-      ok = await waitFor(logged, 600000, 1000);
+      askLogin();
+      ok = await waitFor(logged, Math.max(60000, tokExp(linkTok) - Date.now()), 1000);   // as long as the link lives
     }
     if (!ok) return;
-    try {
-      var r = await fetch('/api/telegram/link-complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token(), link: linkTok }) });
-      var j = {}; try { j = await r.json(); } catch (e) {}
-      if (r.ok && j.ok) { ssDel('ssTgLinkTok'); toast('✅ Telegram ulandi! Balans endi bot bilan bir xil.'); }
-      else if (r.status === 410) { ssDel('ssTgLinkTok'); toast('Havola eskirgan — botdan «Sayt akkauntini ulash» ni qayta bosing.', 'error'); }
-      else if (r.status === 409) { ssDel('ssTgLinkTok'); toast('Bu havola allaqachon ishlatilgan.', 'error'); }
-      else if (r.status === 400) { ssDel('ssTgLinkTok'); toast('Bu akkaunt Telegram akkaunti — Google bilan kirib ulang.', 'error'); }
-      else toast('Ulab bo‘lmadi. Keyinroq urinib ko‘ring.', 'error');
-    } catch (e) { toast('Ulab bo‘lmadi. Internetni tekshiring.', 'error'); }
+    // v69: a sleeping server (Render free plan) or a short network error must not cost the user a second try:
+    // up to 5 attempts with a growing pause; the server answers «ok» again if this account is already linked.
+    for (var a = 0; a < 5; a++) {
+      try {
+        var r = await fetch('/api/telegram/link-complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token(), link: linkTok }) });
+        var j = {}; try { j = await r.json(); } catch (e) {}
+        if (r.ok && j.ok) { linkFinished(); toast('✅ Telegram ulandi! Balans endi bot bilan bir xil.'); try { window.ssTgDecorate && window.ssTgDecorate(); } catch (e) {} return; }
+        if (r.status === 410) { linkFinished(); toast('Havola eskirgan — botdan «Sayt akkauntini ulash» ni qayta bosing.', 'error'); return; }
+        if (r.status === 409) { linkFinished(); toast('Bu havola allaqachon ishlatilgan.', 'error'); return; }
+        if (r.status === 400) { linkFinished(); toast('Bu akkaunt Telegram akkaunti — Google bilan kirib ulang.', 'error'); return; }
+        if (r.status === 401) await waitFor(logged, 8000);        // session was refreshing — try again with the new token
+      } catch (e) {}
+      if (a === 0) toast('Ulanmoqda… server javobini kutyapmiz.');
+      await sleep(2000 * (a + 1));
+    }
+    toast('Ulab bo‘lmadi. Sahifani yangilang — havola hali ishlaydi.', 'error');      // token kept: a reload retries
   }
 
   runDeck();

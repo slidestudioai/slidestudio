@@ -391,7 +391,14 @@ def _limited(chat_id: int, mx: int = RL_MAX) -> bool:
 # Foydalanuvchi holati (RAM, chegaralangan, 3 soatdan keyin o'chadi)
 # ----------------------------------------------------------------------------------------------
 _chats: "OrderedDict[int, dict]" = OrderedDict()
-MAX_CHATS, CHAT_TTL = 300, 3 * 3600
+# v69: 300 was too few for a big audience — with 1000+ people writing at once, a chat's state (the question the bot
+# is waiting an answer for, the open deck) was pushed out while the user was still typing. A chat state is small
+# (text only; images have their own RAM budget below), so 3000 chats are ~30–60 MB. Env: TG_MAX_CHATS.
+try:
+    MAX_CHATS = max(100, min(50000, int(os.environ.get("TG_MAX_CHATS", "3000") or 3000)))
+except ValueError:
+    MAX_CHATS = 3000
+CHAT_TTL = 3 * 3600
 
 
 IMG_TTL = 600
@@ -631,8 +638,9 @@ def _ulock(uid: str) -> asyncio.Lock:
         return shared(str(uid))
     lk = _ulocks.get(uid)
     if lk is None:
-        if len(_ulocks) > 3000:
-            _ulocks.clear()
+        if len(_ulocks) > 3000:                   # v69: only FREE locks are dropped (before: .clear() also dropped held ones)
+            for k in [k for k, v in list(_ulocks.items()) if not v.locked()][:1500]:
+                _ulocks.pop(k, None)
         lk = _ulocks[uid] = asyncio.Lock()
     return lk
 
@@ -767,7 +775,7 @@ async def _charge(uid: str, email: str, pages: int, tokens: int, mode: str, deta
 # Jadvallar: SUPABASE_SCHEMA.sql. Jadval yo'q bo'lsa bot baribir ishlaydi (faqat RAM, restartda tarix yo'qoladi).
 # ----------------------------------------------------------------------------------------------
 MAX_SAVED = 1          # faqat OXIRGI slayd saqlanadi (yangisi eskisini almashtiradi)
-LINK_TTL = 600
+LINK_TTL = 1800          # 30 min: a new user may need to create a Google account, a sleeping server needs time to wake
 
 
 def _now_iso() -> str:
@@ -942,7 +950,17 @@ def _link_consume_sync(user: dict, code: str) -> dict:
         expired = True
     if expired:
         return {"error": "bad_code"}
-    return {"ok": True, "tid": tid, "user_id": str(row["user_id"]), "email": str(row["email"])}
+    return {"ok": True, "tid": tid, "user_id": str(row["user_id"]), "email": str(row["email"]),
+            "code": code, "expires_at": str(row["expires_at"])}
+
+
+def _link_code_restore_sync(res: dict) -> None:
+    """v69: the code was used but linking failed (DB hiccup) — put it back so the SAME button works again."""
+    try:
+        _sb().table("tg_link_codes").insert({"code": res["code"], "user_id": res["user_id"], "email": res["email"],
+                                              "expires_at": res["expires_at"]}).execute()
+    except Exception as e:
+        _db_warn(e)
 
 
 def _tg_src_uid_sync(tid: int, uid: str) -> Optional[str]:
@@ -2674,13 +2692,21 @@ def _summary(deck: dict) -> str:
 # ----------------------------------------------------------------------------------------------
 # Generatsiya / tahrirlash vazifalari (alohida task'larda — webhook darhol 200 qaytaradi)
 # ----------------------------------------------------------------------------------------------
-try:
-    _GEN_PARALLEL = max(2, min(16, int(_env("TG_AI_PARALLEL", "6"))))      # v52: 3 -> 6 (AI so'rovlari tarmoq kutishi, CPU emas)
-except Exception:
-    _GEN_PARALLEL = 6
+# v69: two separate limits. Before, ONE semaphore (6 slots, 30 waiting) was shared by AI calls (they only wait on the
+# network, almost no RAM/CPU) and by PPTX/PDF export (heavy CPU + RAM). So with 100 people at once 64 got «busy».
+#   _gen_sem     — AI requests: many in parallel is fine (the global DEEPSEEK_CONCURRENCY semaphore still caps the API key)
+#   _export_sem  — file export: few at once, so RAM stays bounded on a small instance
+def _int_env_tg(name: str, default: int, lo: int, hi: int) -> int:
+    try:
+        return max(lo, min(hi, int(_env(name, str(default)))))
+    except Exception:
+        return default
+_GEN_PARALLEL = _int_env_tg("TG_AI_PARALLEL", 24, 2, 200)
+_EXPORT_PARALLEL = _int_env_tg("TG_EXPORT_PARALLEL", 3, 1, 32)
 _gen_sem = asyncio.Semaphore(_GEN_PARALLEL)
+_export_sem = asyncio.Semaphore(_EXPORT_PARALLEL)
 _gen_waiting = 0
-GEN_QUEUE_MAX = 30          # v51: navbatda 30 tadan ko'p AI so'rovi bo'lsa — yangisi rad etiladi (server qotmasin)
+GEN_QUEUE_MAX = _int_env_tg("TG_QUEUE_MAX", 400, 10, 100000)   # waiting AI requests cost almost nothing; only above this «busy»
 _bg: set = set()
 
 
@@ -2996,7 +3022,7 @@ async def _send_files(chat_id: int, fmt: str) -> bool:
             idx = _img_index(deck, imgs_q)
             files = []
             for f in fmts:
-                async with _gen_sem:                                                # CPU og'ir ish: AI bilan bir xil cheklov
+                async with _export_sem:                                             # CPU/RAM og'ir ish — alohida cheklov (v69)
                     name, stream, mime, size = await asyncio.to_thread(decks.export_stream, deck, idx, f, lang)
                 files.append((name, stream, mime))
         else:
@@ -3057,7 +3083,7 @@ async def _prewarm_files(chat_id: int) -> None:
         st["imgs"], st["img_ts"] = imgs_q, time.time()
         _sweep_imgs(time.time(), force=True)
         idx = _img_index(deck, imgs_q)
-        async with _gen_sem:
+        async with _export_sem:
             await asyncio.to_thread(decks.export_cached, deck, idx, "pptx", lang)
     except Exception as e:
         _warn("prewarm", f"oldindan tayyorlash: {type(e).__name__}: {str(e)[:100]}")
@@ -3441,7 +3467,7 @@ async def _do_buy(cid: int, user: dict, product: str = "pack") -> None:
 
 
 async def _link_help(cid: int) -> None:
-    url = f"{SITE_URL}/?tglink={_make_token('L', cid, 0, 600)}"
+    url = f"{SITE_URL}/?tglink={_make_token('L', cid, 0, LINK_TTL)}"
     await _send(
         cid,
         "🔗 <b>Sayt akkauntini ulash</b> (Google)\n\n1️⃣ Pastdagi tugmani bosing — sayt ochiladi\n2️⃣ Google bilan kiring — ulash <b>o'zi</b> tugaydi ✅\n\n"
@@ -3459,16 +3485,20 @@ def _linked_text(res: dict) -> str:
 async def _do_link(cid: int, user: dict, code: str) -> None:
     res = await asyncio.to_thread(_link_consume_sync, user, code)
     if res.get("ok"):
-        res = await _link_apply(res["tid"], res["user_id"], res["email"])
+        got = res
+        res = await _link_apply(got["tid"], got["user_id"], got["email"])
+        if not res.get("ok"):                                  # v69: one retry (short DB / network hiccup)
+            await asyncio.sleep(1.5)
+            res = await _link_apply(got["tid"], got["user_id"], got["email"])
+        if not res.get("ok"):
+            await asyncio.to_thread(_link_code_restore_sync, got)
     if res.get("ok"):
         await _send(cid, _linked_text(res), kb_main())
-        pend = _state(cid).pop("ref", None)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
-        if pend:
-            await _claim_ref(cid, user, pend, quiet=True)
+        await _claim_pending_ref(cid, user)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
     elif res.get("error") == "db":
-        await _send(cid, "⚙️ Ulashni hozir bajarib bo'lmadi (baza sozlanmagan). Keyinroq urinib ko'ring.")
+        await _send(cid, "⚙️ Ulashni hozir bajarib bo'lmadi. 1 daqiqadan keyin saytdagi o'sha tugmani qayta bosing — kod hali ishlaydi.")
     else:
-        await _send(cid, "❌ Kod noto'g'ri yoki eskirgan (10 daqiqa yashaydi). Saytda «Telegram botni ulash» ni bosib yangi kod oling.")
+        await _send(cid, "❌ Kod noto'g'ri yoki eskirgan (30 daqiqa yashaydi). Saytda «Telegram botni ulash» ni bosib yangi kod oling.")
 
 
 def _ref_api() -> dict:
@@ -3528,6 +3558,40 @@ async def _claim_ref(cid: int, user: dict, code: str, quiet: bool = False) -> No
         await _send(cid, f"ℹ️ {esc(r['error'])}")
 
 
+# v69: a friend's invite code waits until the new user links Google. It used to live ONLY in the chat RAM state
+# (dropped after 3 h idle, on a restart / redeploy, or when many chats push it out) — the inviter lost the bonus.
+# Now it is also kept in the DB (tg_pending_refs, SUPABASE_SCHEMA.sql section 15). Without that table: RAM as before.
+def _ref_pending_save_sync(tid: int, code: str) -> None:
+    sb = _sb()
+    if not sb:
+        return
+    try:
+        sb.table("tg_pending_refs").upsert({"tg_id": int(tid), "code": str(code)[:16], "created_at": _now_iso()}).execute()
+    except Exception as e:
+        _warn("ref-save", f"tg_pending_refs (SUPABASE_SCHEMA.sql 15-bo'lim): {str(e)[:100]}")
+
+
+def _ref_pending_pop_sync(tid: int) -> str:
+    sb = _sb()
+    if not sb:
+        return ""
+    try:
+        r = sb.table("tg_pending_refs").delete().eq("tg_id", int(tid)).execute()
+        rows = r.data or []
+        return str(rows[0].get("code") or "") if rows else ""
+    except Exception:
+        return ""
+
+
+async def _claim_pending_ref(cid: int, user: dict) -> None:
+    """After Google is linked (in the bot OR on the website): count the waiting invite, if there is one."""
+    pend = _state(cid).pop("ref", None)
+    saved = await asyncio.to_thread(_ref_pending_pop_sync, int(user["id"]))
+    pend = pend or saved
+    if pend:
+        await _claim_ref(cid, user, pend, quiet=True)
+
+
 async def _handle_ref_start(cid: int, user: dict, code: str) -> None:
     st = _state(cid)
     code = (code or "").strip().upper()
@@ -3539,6 +3603,7 @@ async def _handle_ref_start(cid: int, user: dict, code: str) -> None:
         return
     if email.endswith("@" + TG_EMAIL_DOMAIN) and not _is_admin(user):
         st["ref"] = code               # Google ulangach (yoki shu paytda) bonus hisoblanadi
+        await asyncio.to_thread(_ref_pending_save_sync, int(user["id"]), code)
         await _send(cid, "🎁 Do'stingiz sizni taklif qildi!\nBonus hisoblanishi uchun avval <b>Google akkauntni ulang</b>.",
                     {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
         return
@@ -3999,6 +4064,12 @@ async def handle_update(data: dict) -> None:
         if cmd == "/start":
             st["ui"] = None
             if not await _saved_lang(int(user["id"])):          # v66: birinchi marta — avval til tanlanadi
+                if arg.lower().startswith("link_"):           # v69: ulash KUTMAYDI — kod faqat RAM'da qolib, restartda yo'qolardi
+                    await _do_link(chat_id, user, arg[5:])
+                    arg = ""
+                elif arg.lower().startswith("ref_"):          # v69: do'st taklifi ham darhol (bazaga yoziladi)
+                    await _handle_ref_start(chat_id, user, arg[4:])
+                    arg = ""
                 st["start_arg"] = arg
                 await _send(chat_id, i18n.PICK_TEXT, i18n.picker_markup())
                 return
@@ -4298,7 +4369,7 @@ async def _web_user(request: Request) -> Optional[Tuple[str, str]]:
 
 @router.post("/api/telegram/link-code")
 async def telegram_link_code(request: Request):
-    """Saytdagi «✈️ Telegram» tugmasi: bir martalik kod (10 daqiqa) + botni ochish havolasi."""
+    """Saytdagi «✈️ Telegram» tugmasi: bir martalik kod (30 daqiqa) + botni ochish havolasi."""
     if not ENABLED:
         return JSONResponse({"error": "telegram_disabled"}, status_code=503)
     me = await _web_user(request)
@@ -4372,7 +4443,7 @@ async def telegram_miniapp_link(request: Request):
     tid = int(user["id"])
     action = str((body or {}).get("action") or "status")
     if action == "link":
-        return JSONResponse({"url": f"{SITE_URL}/?tglink={_make_token('L', tid, 0, 600)}"}, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"url": f"{SITE_URL}/?tglink={_make_token('L', tid, 0, LINK_TTL)}"}, headers={"Cache-Control": "no-store"})
     if action == "unlink":
         ok = await asyncio.to_thread(_unlink_sync, tid)
         return JSONResponse({"ok": bool(ok)} if ok else {"error": "db"}, status_code=200 if ok else 503)
@@ -4385,6 +4456,37 @@ async def telegram_miniapp_link(request: Request):
 
 
 _used_links: "OrderedDict[str, float]" = OrderedDict()
+
+
+def _mark_link_used_sync(key: str, uid: str, email: str) -> Optional[bool]:
+    """v69: «this link was used» is written to the DB, so it holds across ALL workers / instances (before only one
+    worker's RAM knew it — the same link could be used again through another worker). True = marked now,
+    False = already used, None = DB not reachable (then the RAM check alone decides, as before).
+    The marker code contains ':' — the bot strips it from typed codes, so a marker can never be consumed as a code."""
+    sb = _sb()
+    if not sb:
+        return None
+    try:
+        exp = int(str(key).split(".")[3])
+    except Exception:
+        exp = int(time.time()) + LINK_TTL
+    try:
+        sb.table("tg_link_codes").insert({"code": "used:" + str(key).rsplit(".", 1)[-1], "user_id": uid, "email": email,
+                                          "expires_at": datetime.fromtimestamp(exp, timezone.utc).isoformat()}).execute()
+        return True
+    except Exception as e:
+        m = str(e).lower()
+        if "duplicate" in m or "23505" in m or "unique" in m:
+            return False
+        _db_warn(e)
+        return None
+
+
+def _unmark_link_used_sync(key: str) -> None:
+    try:
+        _sb().table("tg_link_codes").delete().eq("code", "used:" + str(key).rsplit(".", 1)[-1]).execute()
+    except Exception:
+        pass
 
 
 @router.post("/api/telegram/link-complete")
@@ -4400,14 +4502,19 @@ async def telegram_link_complete(request: Request):
     ids = _check_token("L", key)
     if not ids:
         return JSONResponse({"error": "expired"}, status_code=410)
-    if key in _used_links:
-        return JSONResponse({"error": "used"}, status_code=409)
     me = await _web_user(request)
     if not me or not me[1]:
         return JSONResponse({"error": "login_required"}, status_code=401)
     if me[1].endswith("@" + TG_EMAIL_DOMAIN):
         return JSONResponse({"error": "already_telegram"}, status_code=400)
-    if key in _used_links:                    # _web_user kutilgan paytda parallel so'rov ishlatib qo'ygan bo'lishi mumkin
+    mark = None if key in _used_links else await asyncio.to_thread(_mark_link_used_sync, key, me[0], me[1])
+    if key in _used_links or mark is False:   # already used (a retry, a parallel request, or another worker)
+        try:
+            cur = await asyncio.to_thread(_linked_sync, ids[0])
+        except Exception:
+            cur = None
+        if cur and str(cur[0]) == me[0]:      # v69: it is linked to THIS account — the earlier answer was just lost
+            return JSONResponse({"ok": True, "already": True}, headers={"Cache-Control": "no-store"})
         return JSONResponse({"error": "used"}, status_code=409)
     _used_links[key] = time.time()            # ishlatishdan OLDIN band qilinadi — bir havola ikki marta ishlamaydi
     while len(_used_links) > 500:
@@ -4415,8 +4522,14 @@ async def telegram_link_complete(request: Request):
     res = await _link_apply(ids[0], me[0], me[1])
     if not res.get("ok"):
         _used_links.pop(key, None)            # xato bo'lsa qayta urinish mumkin
+        if mark:
+            await asyncio.to_thread(_unmark_link_used_sync, key)
         return JSONResponse({"error": res.get("error") or "link_failed"}, status_code=503)
     await _send(ids[0], _linked_text(res), kb_main())
+    try:                                      # v69: the invite bonus also counts when Google is linked from the WEBSITE
+        await _claim_pending_ref(ids[0], {"id": ids[0]})
+    except Exception as e:
+        _warn("ref-web", f"{type(e).__name__}: {str(e)[:100]}")
     return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
@@ -4477,7 +4590,7 @@ async def telegram_deck_file(t: str = "", fmt: str = "pptx"):
     if hit:
         name, data, mime = hit
         return _stream_response(name, io.BytesIO(data), mime, len(data))
-    async with _gen_sem:
+    async with _export_sem:
         imgs = await _fetch_images(deck, (_state(tid).get("imgs") or {}), True)
         name, stream, mime, size = await asyncio.to_thread(decks.export_stream, deck, _img_index(deck, imgs), fmt, lang)
     imgs = None
@@ -4539,7 +4652,7 @@ async def _register_webhook(attempts: int = 4) -> bool:
         return False
     url = f"{SITE_URL}{WEBHOOK_PATH}"
     for attempt in range(attempts):
-        ok = await tg("setWebhook", url=url, secret_token=SECRET, max_connections=20, allowed_updates=ALLOWED)
+        ok = await tg("setWebhook", url=url, secret_token=SECRET, max_connections=60, allowed_updates=ALLOWED)
         if ok:
             await _set_commands()
             print(f"[TG] bot tayyor — webhook: {url}")

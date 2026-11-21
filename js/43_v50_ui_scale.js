@@ -2,7 +2,7 @@
  * Eslatma: documentElement.style.zoom butun sahifaga berilganda
  * position:fixed (loading overlay, pastki panel) va 100vh buziladi.
  * Shuning uchun DEFAULT o‘chirilgan. Kerak bo‘lsa:
- *   localStorage.setItem('ss-ui-scale', 'on'); location.reload();
+ *   ssPref.set('ui-scale', 'on'); location.reload();
  * yoki konsolda: ssSetUiScale(true)
  */
 (function () {
@@ -16,7 +16,7 @@
 
   function enabled() {
     try {
-      var v = localStorage.getItem('ss-ui-scale');
+      var v = window.ssPref ? ssPref.get('ui-scale') : null;
       return v === 'on' || v === '1' || v === 'true';
     } catch (e) { return false; }
   }
@@ -89,11 +89,11 @@
   window.ssSetUiScale = function (on) {
     try {
       if (on === true || on === 'on' || on === 1) {
-        localStorage.setItem('ss-ui-scale', 'on');
+        if (window.ssPref) ssPref.set('ui-scale', 'on');
         apply();
         window.addEventListener('resize', schedule);
       } else {
-        localStorage.setItem('ss-ui-scale', 'off');
+        if (window.ssPref) ssPref.set('ui-scale', 'off');
         clearZoom();
       }
     } catch (e) {}

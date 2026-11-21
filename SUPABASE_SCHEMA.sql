@@ -728,3 +728,17 @@ $$;
 
 revoke all on function public.purge_old_rows(int, int, int, int, int) from public, anon, authenticated;
 grant execute on function public.purge_old_rows(int, int, int, int, int) to service_role;
+
+
+-- ============================================================================
+-- 15) v69: Telegram botdagi do'st taklifi kodi — yangi foydalanuvchi Google'ni ulaguncha kutadi.
+--     Avval faqat server xotirasida (RAM) edi: 3 soatdan keyin yoki server qayta ishga tushganda yo'qolib,
+--     taklif qilgan odam bonusni olmay qolardi. Qayta ishga tushirish xavfsiz.
+-- ============================================================================
+create table if not exists public.tg_pending_refs (
+  tg_id      bigint primary key,
+  code       text   not null,
+  created_at timestamptz not null default now()
+);
+alter table public.tg_pending_refs enable row level security;
+revoke all on public.tg_pending_refs from anon, authenticated;

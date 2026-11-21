@@ -354,8 +354,11 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             print(f"[FEEDBACK POST] {str(e)[:200]}")
             return _json({"error": "Fikrlar jadvallari yaratilmagan"}, 503)
         _last_post_at[uid] = now
-        if len(_last_post_at) > 5000:
-            _last_post_at.clear()
+        if len(_last_post_at) > 5000:           # v69: drop only OLD entries (before: .clear() reset everyone's cooldown)
+            for k in [k for k, t in list(_last_post_at.items()) if now - t > POST_COOLDOWN_SEC]:
+                _last_post_at.pop(k, None)
+            while len(_last_post_at) > 5000:
+                _last_post_at.pop(next(iter(_last_post_at)))
         return {"post": _shape(row, {}, set(), uid)}
 
     def _like_count(sb, pid: str) -> int:
@@ -413,6 +416,9 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
 
             likes = await asyncio.to_thread(_like_count, sb, pid)
         except Exception as e:
+            m = str(e).lower()
+            if "23503" in m or "foreign key" in m:           # v69: the post was deleted — a clear 404, not «server error»
+                return _json({"error": "Izoh topilmadi (o'chirilgan bo'lishi mumkin)"}, 404)
             print(f"[FEEDBACK LIKE] {str(e)[:200]}")
             return _json({"error": "Layk saqlanmadi"}, 503)
         return {"liked": liked, "likes": likes}

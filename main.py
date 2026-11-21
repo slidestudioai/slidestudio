@@ -736,11 +736,27 @@ ws_lock = threading.Lock()
 def _sk(uid: str, email: str) -> str:
     return uid or email or f"anon-{int(time.time())}"
 
+MAX_SESSIONS_RAM = max(1000, _env_int("MAX_SESSIONS_RAM", 20000))
+
+
+def _trim_sessions_locked(now: float) -> None:
+    """Caller holds sessions_lock. Drops idle sessions (1 h+), then the least recently active ones (~1 KB each)."""
+    for k in [k for k, v in active_sessions.items() if now - v.get("last_active", now) > 3600 and not v.get("blocked")]:
+        active_sessions.pop(k, None)
+    if len(active_sessions) >= MAX_SESSIONS_RAM:
+        old = sorted(active_sessions.items(), key=lambda kv: kv[1].get("last_active", 0))
+        for k, v in old[:max(1, len(old) // 4)]:
+            if not v.get("blocked"):
+                active_sessions.pop(k, None)
+
+
 def register_session(uid: str, email: str, model: str) -> str:
     key = _sk(uid, email)
     with sessions_lock:
         s = active_sessions.get(key)
         if not s:
+            if len(active_sessions) >= MAX_SESSIONS_RAM:      # v69: hard cap — an ad campaign brings tens of thousands a day
+                _trim_sessions_locked(time.time())
             s = {"user_id": uid, "email": email or "?", "connected_at": time.time(),
                  "message_count": 0, "blocked": False, "tokens_used": 0}
             active_sessions[key] = s
@@ -1328,8 +1344,9 @@ async def _housekeeping_loop():
                 _processed_orders.clear()
             with _HOST_LOCK:
                 if len(_HOST_SEM) > 300:
-                    _HOST_SEM.clear()
-                    _HOST_LAST.clear()
+                    _prune_hosts_locked(now)         # v69: only idle hosts (before: .clear() also dropped busy ones)
+                for h in [h for h, t in _HOST_429.items() if now - t > 600]:
+                    _HOST_429.pop(h, None)
             with _RL_LOCK:
                 for k in [k for k, v in _RL.items() if not v or now - v[-1] > 120]:
                     _RL.pop(k, None)
@@ -1742,7 +1759,7 @@ async def _dodo_request(method: str, path: str, api_key: str, base: str, body: d
 async def _payment_user_from_token(payload: Dict[str, Any]):
     """(user_id, email, error_response). Foydalanuvchi FAQAT Supabase token orqali aniqlanadi —
     mijoz yuborgan user_id ga ishonilmaydi (boshqa akkauntga yozib yuborish xatosidan himoya)."""
-    token = (payload.get("token") or "").strip()
+    token = str(payload.get("token") or "").strip()     # a number / list in the body must not crash with 500
     if not token or token == "dev-token" or not supabase:
         return None, "", JSONResponse({"error": "To'lov uchun avval tizimga kiring."}, status_code=401)
     try:
@@ -1754,7 +1771,7 @@ async def _payment_user_from_token(payload: Dict[str, Any]):
     claimed = str(payload.get("user_id") or "").strip()
     if claimed and claimed != str(user_res.user.id):
         return None, "", JSONResponse({"error": "user_id sessiyaga mos emas."}, status_code=403)
-    return str(user_res.user.id), (user_res.user.email or payload.get("email") or "").strip(), None
+    return str(user_res.user.id), str(user_res.user.email or payload.get("email") or "").strip(), None
 
 
 @app.post("/api/create-checkout")
@@ -1762,7 +1779,7 @@ async def _payment_user_from_token(payload: Dict[str, Any]):
 async def create_checkout(payload: Dict[str, Any] = None):
     """Dodo Payments checkout session. Body: {token, amount | net_amount | package, return_url?}.
     amount — dollarda (kamida $1). Javob: {checkout_url, session_id, pages, price_usd, quote}."""
-    payload = payload or {}
+    payload = payload if isinstance(payload, dict) else {}
     user_id, user_email, err_resp = await _payment_user_from_token(payload)
     if err_resp is not None:
         return err_resp
@@ -1936,10 +1953,20 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     return_url = _safe_return_url(d["base_url"], return_url_hint)
     if return_url:
         body["return_url"] = return_url + "/?payment=success"
-    try:
-        res = await _dodo_request("POST", "/checkouts", d["api_key"], d["api_base"], body)
-    except Exception as e:
-        return 502, {"error": f"Dodo Payments ga ulanib bo'lmadi: {type(e).__name__}: {str(e)[:200]}"}
+    res: Dict[str, Any] = {}
+    for _attempt in range(2):          # v69: one retry on a network error / 5xx (an unpaid extra session costs nothing)
+        try:
+            res = await _dodo_request("POST", "/checkouts", d["api_key"], d["api_base"], body)
+        except Exception as e:
+            if _attempt == 0:
+                await asyncio.sleep(1.0)
+                continue
+            print(f"[DODO CHECKOUT] network: {type(e).__name__}: {str(e)[:200]}", flush=True)
+            return 502, {"error": "To'lov tizimiga ulanib bo'lmadi. Birozdan keyin qayta urinib ko'ring."}
+        if int(res.get("status") or 0) >= 500 and _attempt == 0:
+            await asyncio.sleep(1.0)
+            continue
+        break
     if "json" in res:
         js = res["json"] or {}
         url = js.get("checkout_url") or js.get("url")
@@ -2464,6 +2491,16 @@ def _sniff_image_mime(data: bytes, fallback: str = "") -> str:
         return fallback
     return ""
 
+def _proxy_url_problem(url: str) -> str:
+    """'' if the address may be fetched, else the error text (scheme, host, private / internal address — SSRF)."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return "Noto'g'ri URL"
+    if not _is_public_host(parsed.hostname):
+        return "Bu manzilga ruxsat yo'q"
+    return ""
+
+
 def _fetch_image_sync_impl(url: str) -> dict:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -2542,9 +2579,14 @@ def _prune_hosts_locked(now: float) -> None:
     for h in [h for h, t in _HOST_LAST.items() if now - t > _HOST_IDLE]:
         _HOST_LAST.pop(h, None)
         _HOST_SEM.pop(h, None)
+        _HOST_429.pop(h, None)
+
+_HOST_429: Dict[str, float] = {}      # host -> last time it answered 429 (only then requests are spaced out)
+
 
 def _host_slot(host: str):
-    """Bir xostga bir vaqtda ko'pi bilan 3 ta so'rov va so'rovlar orasida >= 0.2 s (429 ni oldini oladi)."""
+    """Bir xostga bir vaqtda ko'pi bilan 3 ta so'rov. v69: so'rovlar orasidagi 0.2 s pauza FAQAT oxirgi 2 daqiqada 429
+    bergan xostga (avval HAR bir xostga qo'yilardi: bitta saytdan sekundiga 5 ta rasm, qolgani navbatda 20 s kutib 503)."""
     with _HOST_LOCK:
         sem = _HOST_SEM.get(host)
         if sem is None:
@@ -2554,9 +2596,11 @@ def _host_slot(host: str):
             _HOST_SEM[host] = sem
     sem.acquire()
     with _HOST_LOCK:
-        last = _HOST_LAST.get(host, 0.0)
-        wait = 0.2 - (time.time() - last)
-        _HOST_LAST[host] = time.time() + max(0.0, wait)
+        now = time.time()
+        wait = 0.0
+        if now - _HOST_429.get(host, 0.0) < 120:
+            wait = 0.2 - (now - _HOST_LAST.get(host, 0.0))
+        _HOST_LAST[host] = now + max(0.0, wait)
     if wait > 0:
         time.sleep(wait)
     return sem
@@ -2595,6 +2639,9 @@ def _fetch_with_backoff(url: str) -> dict:
         if not res.get("error"):
             return res
         st = int(res.get("status") or 0)
+        if st == 429:
+            with _HOST_LOCK:
+                _HOST_429[host] = time.time()
         if st in (429, 503) or "timed out" in str(res.get("error")).lower():
             delay = min(6.0, max(float(res.get("retry_after") or 0), 1.2 * (attempt + 1)))
             time.sleep(delay)
@@ -2687,6 +2734,13 @@ async def proxy_image(url: str, raw: int = 0):
             pass
     res = _cache_get(url)                     # RAM keshida bo'lsa navbat kutilmaydi
     if not res:
+        # v69: a forbidden / malformed address is refused BEFORE the download queue (6 slots). Before it waited there
+        # behind real downloads (up to 20 s) — a few such requests made every picture on the site slow.
+        bad = await asyncio.to_thread(_proxy_url_problem, url)
+        if bad:
+            res = {"error": bad}
+            _cache_put(url, res)
+    if not res:
         await _proxy_slot(_PROXY_IMG_SEM)
         try:
             res = await asyncio.to_thread(_fetch_image_sync, url)
@@ -2695,7 +2749,7 @@ async def proxy_image(url: str, raw: int = 0):
     if res.get("error"):
         if raw:
             raise HTTPException(status_code=400, detail=res["error"])
-        return JSONResponse({"error": res["error"]}, status_code=200)
+        return JSONResponse({"error": res["error"]}, status_code=400)     # v69: an error is not «200 OK» (monitoring saw no errors)
     data = res.get("data") or b""
     ctype = res.get("content_type") or "image/png"
     if raw:
@@ -3066,7 +3120,7 @@ async def media_search(provider: str = "image", q: str = "", limit: int = 24, pa
         payload = await asyncio.to_thread(media_search_impl, kind, q, limit, page)
     except Exception as e:
         print(f"[MEDIA] qidiruv xatosi: {e}")
-        return JSONResponse({"error": f"Qidiruv xatosi: {e}", "results": []})
+        return JSONResponse({"error": "Qidiruv xatosi", "results": []})     # exception text stays in the log only
     if not payload.get("results"):
         payload["warning"] = "no_results_check_api_keys"
         print(f"[MEDIA] {kind} '{q}' natija yo'q. Xatolar: {payload.get('errors')}. "
