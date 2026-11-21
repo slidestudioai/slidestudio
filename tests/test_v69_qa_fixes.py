@@ -161,3 +161,143 @@ def test_checkout_retries_once_on_dodo_5xx(monkeypatch):
     monkeypatch.setattr(main.asyncio, "sleep", _no_sleep)
     code, data = asyncio.run(main._build_checkout("u1", "a@x.com", "", "pack"))
     assert code == 200 and data["checkout_url"].startswith("https://") and len(calls) == 2
+
+
+# ---------------------------------------------------------------------------------------------
+# Live site under an ad campaign: the server must not run out of RAM, nothing may grow without a limit
+# ---------------------------------------------------------------------------------------------
+def test_worker_count_follows_ram_and_cpu():
+    from backend.gunicorn_conf import pick_workers
+    assert pick_workers(512, 0.1) == 2           # Render 512 MB: 2 workers (before: always 4 -> out of memory)
+    assert pick_workers(256, 1) == 1
+    assert pick_workers(2048, 1) == 2            # 1 CPU: no point in more
+    assert pick_workers(4096, 2) == 4
+    assert pick_workers(65536, 32) == 8          # upper cap
+
+
+def test_web_concurrency_overrides(monkeypatch):
+    import importlib
+    from backend import gunicorn_conf
+    monkeypatch.setenv("WEB_CONCURRENCY", "3")
+    assert importlib.reload(gunicorn_conf).workers == 3
+    monkeypatch.delenv("WEB_CONCURRENCY")
+    importlib.reload(gunicorn_conf)
+
+
+def test_sessions_in_ram_have_a_hard_cap(monkeypatch):
+    monkeypatch.setattr(main, "MAX_SESSIONS_RAM", 1000)
+    main.active_sessions.clear()
+    for i in range(5000):
+        main.register_session(f"u{i}", f"u{i}@x.com", "deepseek-chat")
+    assert len(main.active_sessions) <= 1000
+    assert "u4999" in main.active_sessions       # the newest is kept
+    main.active_sessions.clear()
+
+
+def test_bot_user_locks_never_drop_a_held_lock(monkeypatch):
+    monkeypatch.setitem(tg._deps, "user_lock", None)
+    tg._ulocks.clear()
+
+    async def run():
+        held = tg._ulock("busy-user")
+        await held.acquire()
+        for i in range(3500):                    # many other users -> eviction runs
+            tg._ulock(f"u{i}")
+        same = tg._ulock("busy-user")
+        held.release()
+        return same is held
+    assert asyncio.run(run()) is True            # before: .clear() gave a NEW lock -> two writers at once
+    assert len(tg._ulocks) <= 3001
+    tg._ulocks.clear()
+
+
+def test_invite_code_waits_in_db_until_google_is_linked(sb, monkeypatch):
+    """/start ref_CODE from a Telegram-only user: the code is saved in the DB (survives a restart) and is counted
+    after linking — also when Google is linked from the WEBSITE."""
+    claimed = []
+
+    async def fake_send(*a, **k):
+        return None
+
+    async def ensure_uid(user):
+        return ("tg-acc", "tg777@t.me")
+
+    async def fake_claim(cid, user, code, quiet=False):
+        claimed.append(code)
+    monkeypatch.setattr(tg, "_send", fake_send)
+    monkeypatch.setattr(tg, "_ensure_uid", ensure_uid)
+    monkeypatch.setattr(tg, "_claim_ref", fake_claim)
+    asyncio.run(tg._handle_ref_start(777, {"id": 777}, "ABCD2345"))
+    assert sb.tables["tg_pending_refs"][0]["code"] == "ABCD2345"
+    tg._chats.pop(777, None)                     # restart / RAM state gone
+    asyncio.run(tg._claim_pending_ref(777, {"id": 777}))
+    assert claimed == ["ABCD2345"]
+    assert not sb.tables.get("tg_pending_refs")  # used once
+
+
+def test_link_token_single_use_across_workers(sb, client, monkeypatch):
+    """Another worker does not know this worker's RAM: the «used» mark is in the DB."""
+    monkeypatch.setattr(tg, "ENABLED", True)
+    tok = tg._make_token("L", 4343, 0, 600)
+
+    async def me(request):
+        return ("attacker-u", "evil@x.com")
+    monkeypatch.setattr(tg, "_web_user", me)
+    monkeypatch.setattr(tg, "_linked_sync", lambda tid: ("victim-u", "v@x.com"))
+    assert tg._mark_link_used_sync(tok, "victim-u", "v@x.com") is True      # used by the owner on worker A
+    tg._used_links.pop(tok, None)                                           # worker B: empty RAM
+    r = client.post("/api/telegram/link-complete", json={"token": "t", "link": tok})
+    assert r.status_code == 409
+
+
+def test_like_on_deleted_post_is_404(sb, client, monkeypatch):
+    import uuid as _uuid
+    from types import SimpleNamespace
+
+    class FK(Exception):
+        pass
+    monkeypatch.setattr(sb, "auth", SimpleNamespace(get_user=lambda t: SimpleNamespace(user=SimpleNamespace(id="u1", email="a@x.com"))), raising=False)
+    real_table = sb.table
+
+    def table(name):
+        t = real_table(name)
+        if name == "feedback_likes":
+            orig = t.insert
+            def ins(row):
+                raise FK('insert or update on table "feedback_likes" violates foreign key constraint (23503)')
+            t.insert = ins
+        return t
+    monkeypatch.setattr(sb, "table", table)
+    r = client.post("/api/feedback/like", json={"token": "tok", "id": str(_uuid.uuid4())})
+    assert r.status_code == 404
+
+
+def test_proxy_image_error_is_not_200(client):
+    r = client.get("/api/proxy-image?url=http://127.0.0.1/x.png")
+    assert r.status_code == 400 and "error" in r.json()
+
+
+def test_forbidden_proxy_url_does_not_wait_in_the_download_queue(client, monkeypatch):
+    """All 6 download slots are busy (slow real downloads): a forbidden address must still be refused at once."""
+    import time as _t
+    sem = asyncio.Semaphore(0)                       # nothing free
+    monkeypatch.setattr(main, "_PROXY_IMG_SEM", sem)
+    monkeypatch.setattr(main, "PROXY_QUEUE_TIMEOUT", 5.0)
+    t0 = _t.time()
+    r = client.get("/api/proxy-image?url=http://10.0.0.5/secret.png")
+    assert r.status_code == 400 and _t.time() - t0 < 2
+
+
+def test_no_pause_between_requests_to_a_host_without_429():
+    import time as _t
+    main._HOST_429.pop("cdn.example.org", None)
+    t0 = _t.time()
+    for _ in range(10):
+        main._host_slot("cdn.example.org").release()
+    assert _t.time() - t0 < 0.5                       # before: 10 x 0.2 s = 2 s for every host
+    main._HOST_429["cdn.example.org"] = _t.time()     # the host said 429 -> requests are spaced out again
+    t0 = _t.time()
+    for _ in range(3):
+        main._host_slot("cdn.example.org").release()
+    assert _t.time() - t0 >= 0.35
+    main._HOST_429.pop("cdn.example.org", None)

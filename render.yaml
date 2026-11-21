@@ -5,7 +5,8 @@ services:
     plan: free          # bepul reja uxlab qoladi; doimiy ishlashi uchun 'starter' ga o'zgartiring
     healthCheckPath: /healthz
     autoDeploy: true
-    startCommand: gunicorn main:app --worker-class backend.worker.SlideStudioWorker --workers 4 --worker-connections 1000 --keep-alive 5 --timeout 120 --graceful-timeout 30 --bind 0.0.0.0:8080 --log-level warning --access-logfile -
+    # v69: worker count is picked from the instance's RAM/CPU (backend/gunicorn_conf.py); WEB_CONCURRENCY overrides
+    startCommand: gunicorn main:app -c backend/gunicorn_conf.py
     envVars:
       - key: AI_API_KEY
         sync: false

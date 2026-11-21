@@ -11,7 +11,8 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 UNIQUE_KEYS = {"payment_events": "order_id", "user_usage": "user_id", "tg_link_codes": "code",
-               "referrals": "invitee_id", "referral_codes": "user_id", "tg_prefs": "tg_id"}
+               "referrals": "invitee_id", "referral_codes": "user_id", "tg_prefs": "tg_id",
+               "tg_pending_refs": "tg_id"}
 
 
 class FakeAPIError(Exception):

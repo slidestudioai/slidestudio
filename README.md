@@ -47,6 +47,12 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 
 > Render **free** reja 15 daqiqa ishlatilmasa uxlab qoladi. Doimiy ishlashi uchun `render.yaml` da `plan: starter` qiling.
 
+> **Yangilashda:** `SUPABASE_SCHEMA.sql` ni Supabase SQL Editor'da qayta ishga tushiring (xavfsiz — faqat yangi jadval/ustun qo'shadi).
+> v69: `tg_pending_refs` jadvali (botdagi do'st taklifi bonusi server qayta ishga tushganda yo'qolmasligi uchun).
+>
+> **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida
+> `[GUNICORN] RAM limit ... -> N worker(s)` qatori). Qo'lda: `WEB_CONCURRENCY`.
+
 ## 5. Telegram bot (ixtiyoriy)
 @BotFather → `/newbot` → tokenni `TELEGRAM_BOT_TOKEN` ga yozing. `PUBLIC_BASE_URL` https bo'lsa webhook avtomatik o'rnatiladi.
 Admin bo'lish uchun botga `/id` yozing va `ADMIN_TG_IDS` + `ADMIN_EMAILS` ni to'ldiring (ikkalasi ham mos kelishi shart).

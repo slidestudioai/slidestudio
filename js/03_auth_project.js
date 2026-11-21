@@ -529,8 +529,12 @@
       try {
         if (typeof localStorage !== 'undefined') {
           Object.keys(localStorage).forEach(function(k) {
-            if (k.startsWith('sb-') || k.startsWith('ss-auth')) {
-              localStorage.removeItem(k);
+            // v69: the site language and small UI preferences stay after logout (they are not personal);
+            // the session, the typed draft and pending tokens are removed
+            var keep = k === 'ss-auth-v39-lang' || (k.startsWith('ss-auth-v39-p-') && k !== 'ss-auth-v39-p-draft');
+            // (plain localStorage.removeItem is a no-op after the storage lock in index.html — the allowed adapter is used)
+            if ((k.startsWith('sb-') || k.startsWith('ss-auth')) && !keep) {
+              try { if (window.__ssAuthStorage) window.__ssAuthStorage.removeItem(k); } catch (_) {}
             }
           });
         }

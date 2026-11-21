@@ -638,8 +638,9 @@ def _ulock(uid: str) -> asyncio.Lock:
         return shared(str(uid))
     lk = _ulocks.get(uid)
     if lk is None:
-        if len(_ulocks) > 3000:
-            _ulocks.clear()
+        if len(_ulocks) > 3000:                   # v69: only FREE locks are dropped (before: .clear() also dropped held ones)
+            for k in [k for k, v in list(_ulocks.items()) if not v.locked()][:1500]:
+                _ulocks.pop(k, None)
         lk = _ulocks[uid] = asyncio.Lock()
     return lk
 
@@ -3493,9 +3494,7 @@ async def _do_link(cid: int, user: dict, code: str) -> None:
             await asyncio.to_thread(_link_code_restore_sync, got)
     if res.get("ok"):
         await _send(cid, _linked_text(res), kb_main())
-        pend = _state(cid).pop("ref", None)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
-        if pend:
-            await _claim_ref(cid, user, pend, quiet=True)
+        await _claim_pending_ref(cid, user)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
     elif res.get("error") == "db":
         await _send(cid, "⚙️ Ulashni hozir bajarib bo'lmadi. 1 daqiqadan keyin saytdagi o'sha tugmani qayta bosing — kod hali ishlaydi.")
     else:
@@ -3559,6 +3558,40 @@ async def _claim_ref(cid: int, user: dict, code: str, quiet: bool = False) -> No
         await _send(cid, f"ℹ️ {esc(r['error'])}")
 
 
+# v69: a friend's invite code waits until the new user links Google. It used to live ONLY in the chat RAM state
+# (dropped after 3 h idle, on a restart / redeploy, or when many chats push it out) — the inviter lost the bonus.
+# Now it is also kept in the DB (tg_pending_refs, SUPABASE_SCHEMA.sql section 15). Without that table: RAM as before.
+def _ref_pending_save_sync(tid: int, code: str) -> None:
+    sb = _sb()
+    if not sb:
+        return
+    try:
+        sb.table("tg_pending_refs").upsert({"tg_id": int(tid), "code": str(code)[:16], "created_at": _now_iso()}).execute()
+    except Exception as e:
+        _warn("ref-save", f"tg_pending_refs (SUPABASE_SCHEMA.sql 15-bo'lim): {str(e)[:100]}")
+
+
+def _ref_pending_pop_sync(tid: int) -> str:
+    sb = _sb()
+    if not sb:
+        return ""
+    try:
+        r = sb.table("tg_pending_refs").delete().eq("tg_id", int(tid)).execute()
+        rows = r.data or []
+        return str(rows[0].get("code") or "") if rows else ""
+    except Exception:
+        return ""
+
+
+async def _claim_pending_ref(cid: int, user: dict) -> None:
+    """After Google is linked (in the bot OR on the website): count the waiting invite, if there is one."""
+    pend = _state(cid).pop("ref", None)
+    saved = await asyncio.to_thread(_ref_pending_pop_sync, int(user["id"]))
+    pend = pend or saved
+    if pend:
+        await _claim_ref(cid, user, pend, quiet=True)
+
+
 async def _handle_ref_start(cid: int, user: dict, code: str) -> None:
     st = _state(cid)
     code = (code or "").strip().upper()
@@ -3570,6 +3603,7 @@ async def _handle_ref_start(cid: int, user: dict, code: str) -> None:
         return
     if email.endswith("@" + TG_EMAIL_DOMAIN) and not _is_admin(user):
         st["ref"] = code               # Google ulangach (yoki shu paytda) bonus hisoblanadi
+        await asyncio.to_thread(_ref_pending_save_sync, int(user["id"]), code)
         await _send(cid, "🎁 Do'stingiz sizni taklif qildi!\nBonus hisoblanishi uchun avval <b>Google akkauntni ulang</b>.",
                     {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
         return
@@ -4033,6 +4067,9 @@ async def handle_update(data: dict) -> None:
                 if arg.lower().startswith("link_"):           # v69: ulash KUTMAYDI — kod faqat RAM'da qolib, restartda yo'qolardi
                     await _do_link(chat_id, user, arg[5:])
                     arg = ""
+                elif arg.lower().startswith("ref_"):          # v69: do'st taklifi ham darhol (bazaga yoziladi)
+                    await _handle_ref_start(chat_id, user, arg[4:])
+                    arg = ""
                 st["start_arg"] = arg
                 await _send(chat_id, i18n.PICK_TEXT, i18n.picker_markup())
                 return
@@ -4421,6 +4458,37 @@ async def telegram_miniapp_link(request: Request):
 _used_links: "OrderedDict[str, float]" = OrderedDict()
 
 
+def _mark_link_used_sync(key: str, uid: str, email: str) -> Optional[bool]:
+    """v69: «this link was used» is written to the DB, so it holds across ALL workers / instances (before only one
+    worker's RAM knew it — the same link could be used again through another worker). True = marked now,
+    False = already used, None = DB not reachable (then the RAM check alone decides, as before).
+    The marker code contains ':' — the bot strips it from typed codes, so a marker can never be consumed as a code."""
+    sb = _sb()
+    if not sb:
+        return None
+    try:
+        exp = int(str(key).split(".")[3])
+    except Exception:
+        exp = int(time.time()) + LINK_TTL
+    try:
+        sb.table("tg_link_codes").insert({"code": "used:" + str(key).rsplit(".", 1)[-1], "user_id": uid, "email": email,
+                                          "expires_at": datetime.fromtimestamp(exp, timezone.utc).isoformat()}).execute()
+        return True
+    except Exception as e:
+        m = str(e).lower()
+        if "duplicate" in m or "23505" in m or "unique" in m:
+            return False
+        _db_warn(e)
+        return None
+
+
+def _unmark_link_used_sync(key: str) -> None:
+    try:
+        _sb().table("tg_link_codes").delete().eq("code", "used:" + str(key).rsplit(".", 1)[-1]).execute()
+    except Exception:
+        pass
+
+
 @router.post("/api/telegram/link-complete")
 async def telegram_link_complete(request: Request):
     """Botdagi «Saytda ulash» havolasi (?tglink=TOKEN): sayt Google bilan kirgach shu yerga murojaat qiladi — ulash o'zi tugaydi."""
@@ -4439,7 +4507,8 @@ async def telegram_link_complete(request: Request):
         return JSONResponse({"error": "login_required"}, status_code=401)
     if me[1].endswith("@" + TG_EMAIL_DOMAIN):
         return JSONResponse({"error": "already_telegram"}, status_code=400)
-    if key in _used_links:                    # already used (a retry, or a parallel request while _web_user waited)
+    mark = None if key in _used_links else await asyncio.to_thread(_mark_link_used_sync, key, me[0], me[1])
+    if key in _used_links or mark is False:   # already used (a retry, a parallel request, or another worker)
         try:
             cur = await asyncio.to_thread(_linked_sync, ids[0])
         except Exception:
@@ -4453,8 +4522,14 @@ async def telegram_link_complete(request: Request):
     res = await _link_apply(ids[0], me[0], me[1])
     if not res.get("ok"):
         _used_links.pop(key, None)            # xato bo'lsa qayta urinish mumkin
+        if mark:
+            await asyncio.to_thread(_unmark_link_used_sync, key)
         return JSONResponse({"error": res.get("error") or "link_failed"}, status_code=503)
     await _send(ids[0], _linked_text(res), kb_main())
+    try:                                      # v69: the invite bonus also counts when Google is linked from the WEBSITE
+        await _claim_pending_ref(ids[0], {"id": ids[0]})
+    except Exception as e:
+        _warn("ref-web", f"{type(e).__name__}: {str(e)[:100]}")
     return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 

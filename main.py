@@ -736,11 +736,27 @@ ws_lock = threading.Lock()
 def _sk(uid: str, email: str) -> str:
     return uid or email or f"anon-{int(time.time())}"
 
+MAX_SESSIONS_RAM = max(1000, _env_int("MAX_SESSIONS_RAM", 20000))
+
+
+def _trim_sessions_locked(now: float) -> None:
+    """Caller holds sessions_lock. Drops idle sessions (1 h+), then the least recently active ones (~1 KB each)."""
+    for k in [k for k, v in active_sessions.items() if now - v.get("last_active", now) > 3600 and not v.get("blocked")]:
+        active_sessions.pop(k, None)
+    if len(active_sessions) >= MAX_SESSIONS_RAM:
+        old = sorted(active_sessions.items(), key=lambda kv: kv[1].get("last_active", 0))
+        for k, v in old[:max(1, len(old) // 4)]:
+            if not v.get("blocked"):
+                active_sessions.pop(k, None)
+
+
 def register_session(uid: str, email: str, model: str) -> str:
     key = _sk(uid, email)
     with sessions_lock:
         s = active_sessions.get(key)
         if not s:
+            if len(active_sessions) >= MAX_SESSIONS_RAM:      # v69: hard cap — an ad campaign brings tens of thousands a day
+                _trim_sessions_locked(time.time())
             s = {"user_id": uid, "email": email or "?", "connected_at": time.time(),
                  "message_count": 0, "blocked": False, "tokens_used": 0}
             active_sessions[key] = s
@@ -1328,8 +1344,9 @@ async def _housekeeping_loop():
                 _processed_orders.clear()
             with _HOST_LOCK:
                 if len(_HOST_SEM) > 300:
-                    _HOST_SEM.clear()
-                    _HOST_LAST.clear()
+                    _prune_hosts_locked(now)         # v69: only idle hosts (before: .clear() also dropped busy ones)
+                for h in [h for h, t in _HOST_429.items() if now - t > 600]:
+                    _HOST_429.pop(h, None)
             with _RL_LOCK:
                 for k in [k for k, v in _RL.items() if not v or now - v[-1] > 120]:
                     _RL.pop(k, None)
@@ -2474,6 +2491,16 @@ def _sniff_image_mime(data: bytes, fallback: str = "") -> str:
         return fallback
     return ""
 
+def _proxy_url_problem(url: str) -> str:
+    """'' if the address may be fetched, else the error text (scheme, host, private / internal address — SSRF)."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return "Noto'g'ri URL"
+    if not _is_public_host(parsed.hostname):
+        return "Bu manzilga ruxsat yo'q"
+    return ""
+
+
 def _fetch_image_sync_impl(url: str) -> dict:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -2552,9 +2579,14 @@ def _prune_hosts_locked(now: float) -> None:
     for h in [h for h, t in _HOST_LAST.items() if now - t > _HOST_IDLE]:
         _HOST_LAST.pop(h, None)
         _HOST_SEM.pop(h, None)
+        _HOST_429.pop(h, None)
+
+_HOST_429: Dict[str, float] = {}      # host -> last time it answered 429 (only then requests are spaced out)
+
 
 def _host_slot(host: str):
-    """Bir xostga bir vaqtda ko'pi bilan 3 ta so'rov va so'rovlar orasida >= 0.2 s (429 ni oldini oladi)."""
+    """Bir xostga bir vaqtda ko'pi bilan 3 ta so'rov. v69: so'rovlar orasidagi 0.2 s pauza FAQAT oxirgi 2 daqiqada 429
+    bergan xostga (avval HAR bir xostga qo'yilardi: bitta saytdan sekundiga 5 ta rasm, qolgani navbatda 20 s kutib 503)."""
     with _HOST_LOCK:
         sem = _HOST_SEM.get(host)
         if sem is None:
@@ -2564,9 +2596,11 @@ def _host_slot(host: str):
             _HOST_SEM[host] = sem
     sem.acquire()
     with _HOST_LOCK:
-        last = _HOST_LAST.get(host, 0.0)
-        wait = 0.2 - (time.time() - last)
-        _HOST_LAST[host] = time.time() + max(0.0, wait)
+        now = time.time()
+        wait = 0.0
+        if now - _HOST_429.get(host, 0.0) < 120:
+            wait = 0.2 - (now - _HOST_LAST.get(host, 0.0))
+        _HOST_LAST[host] = now + max(0.0, wait)
     if wait > 0:
         time.sleep(wait)
     return sem
@@ -2605,6 +2639,9 @@ def _fetch_with_backoff(url: str) -> dict:
         if not res.get("error"):
             return res
         st = int(res.get("status") or 0)
+        if st == 429:
+            with _HOST_LOCK:
+                _HOST_429[host] = time.time()
         if st in (429, 503) or "timed out" in str(res.get("error")).lower():
             delay = min(6.0, max(float(res.get("retry_after") or 0), 1.2 * (attempt + 1)))
             time.sleep(delay)
@@ -2697,6 +2734,13 @@ async def proxy_image(url: str, raw: int = 0):
             pass
     res = _cache_get(url)                     # RAM keshida bo'lsa navbat kutilmaydi
     if not res:
+        # v69: a forbidden / malformed address is refused BEFORE the download queue (6 slots). Before it waited there
+        # behind real downloads (up to 20 s) — a few such requests made every picture on the site slow.
+        bad = await asyncio.to_thread(_proxy_url_problem, url)
+        if bad:
+            res = {"error": bad}
+            _cache_put(url, res)
+    if not res:
         await _proxy_slot(_PROXY_IMG_SEM)
         try:
             res = await asyncio.to_thread(_fetch_image_sync, url)
@@ -2705,7 +2749,7 @@ async def proxy_image(url: str, raw: int = 0):
     if res.get("error"):
         if raw:
             raise HTTPException(status_code=400, detail=res["error"])
-        return JSONResponse({"error": res["error"]}, status_code=200)
+        return JSONResponse({"error": res["error"]}, status_code=400)     # v69: an error is not «200 OK» (monitoring saw no errors)
     data = res.get("data") or b""
     ctype = res.get("content_type") or "image/png"
     if raw:
