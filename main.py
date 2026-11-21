@@ -1742,7 +1742,7 @@ async def _dodo_request(method: str, path: str, api_key: str, base: str, body: d
 async def _payment_user_from_token(payload: Dict[str, Any]):
     """(user_id, email, error_response). Foydalanuvchi FAQAT Supabase token orqali aniqlanadi —
     mijoz yuborgan user_id ga ishonilmaydi (boshqa akkauntga yozib yuborish xatosidan himoya)."""
-    token = (payload.get("token") or "").strip()
+    token = str(payload.get("token") or "").strip()     # a number / list in the body must not crash with 500
     if not token or token == "dev-token" or not supabase:
         return None, "", JSONResponse({"error": "To'lov uchun avval tizimga kiring."}, status_code=401)
     try:
@@ -1754,7 +1754,7 @@ async def _payment_user_from_token(payload: Dict[str, Any]):
     claimed = str(payload.get("user_id") or "").strip()
     if claimed and claimed != str(user_res.user.id):
         return None, "", JSONResponse({"error": "user_id sessiyaga mos emas."}, status_code=403)
-    return str(user_res.user.id), (user_res.user.email or payload.get("email") or "").strip(), None
+    return str(user_res.user.id), str(user_res.user.email or payload.get("email") or "").strip(), None
 
 
 @app.post("/api/create-checkout")
@@ -1762,7 +1762,7 @@ async def _payment_user_from_token(payload: Dict[str, Any]):
 async def create_checkout(payload: Dict[str, Any] = None):
     """Dodo Payments checkout session. Body: {token, amount | net_amount | package, return_url?}.
     amount — dollarda (kamida $1). Javob: {checkout_url, session_id, pages, price_usd, quote}."""
-    payload = payload or {}
+    payload = payload if isinstance(payload, dict) else {}
     user_id, user_email, err_resp = await _payment_user_from_token(payload)
     if err_resp is not None:
         return err_resp
@@ -3066,7 +3066,7 @@ async def media_search(provider: str = "image", q: str = "", limit: int = 24, pa
         payload = await asyncio.to_thread(media_search_impl, kind, q, limit, page)
     except Exception as e:
         print(f"[MEDIA] qidiruv xatosi: {e}")
-        return JSONResponse({"error": f"Qidiruv xatosi: {e}", "results": []})
+        return JSONResponse({"error": "Qidiruv xatosi", "results": []})     # exception text stays in the log only
     if not payload.get("results"):
         payload["warning"] = "no_results_check_api_keys"
         print(f"[MEDIA] {kind} '{q}' natija yo'q. Xatolar: {payload.get('errors')}. "
