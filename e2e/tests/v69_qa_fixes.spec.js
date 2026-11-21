@@ -77,7 +77,8 @@ test('ingliz tilida jadval paneli va animatsiya nomlari tarjima qilingan', async
   const r = await page.evaluate(() => {
     const miss = [];
     ['Katak foni', 'Zebra rangi', 'Chegara rangi', 'Shrift:', 'Ranglarni tiklash', 'Tanlangan katak (2-qator, 3-ustun)',
-      'Chiziq va ulagichlar (18)', 'To\'lov yakunlanmadi. Qaytadan urinib ko\'ring.'].forEach((s) => { if (SSI18n.t(s) === s) miss.push(s); });
+      'Chiziq va ulagichlar (18)', 'To\'lov yakunlanmadi. Qaytadan urinib ko\'ring.',
+      '«tabiat» — 6 ta natija topildi, eng mosi tanlanmoqda', 'Internetdan rasm qidirilmoqda: «tabiat»…', '3 ta qidiruv', '−4.6 varaq'].forEach((s) => { if (SSI18n.t(s) === s) miss.push(s); });
     SS_FX.list.forEach((e) => { if (SSI18n.t(e[2]) === e[2]) miss.push(e[2]); });
     return miss;
   });
