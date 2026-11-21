@@ -345,7 +345,7 @@
       }
       try { if (!opts.ai && typeof recordGlobalState === 'function') recordGlobalState(); } catch (e) {}
       try { if (typeof renderSidebar === 'function') renderSidebar(); } catch (e) {}
-      if (!opts.silent) toast('«' + T.label + '» mavzusi ' + (list.length > 1 ? 'hamma slaydlarga' : 'shu slaydga') + ' qo\'llandi');
+      if (!opts.silent) toast('«' + (window.SSI18n ? SSI18n.t(T.label) : T.label) + '» mavzusi ' + (list.length > 1 ? 'hamma slaydlarga' : 'shu slaydga') + ' qo\'llandi');
       return true;
     } finally { busy = false; }
   }
