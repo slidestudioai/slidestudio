@@ -81,11 +81,11 @@
 
   function showAnnouncement(text) {
     try {
-      var key = 'ssAnn:' + text;
-      if (sessionStorage.getItem(key) || $('ssAnn')) return;
+      var key = 'ann:' + String(text).length + ':' + String(text).slice(0, 40);
+      if ((window.ssPref && ssPref.get(key)) || $('ssAnn')) return;
       var d = document.createElement('div'); d.id = 'ssAnn';
       d.innerHTML = '<span>📢 ' + esc(text) + '</span><button type="button" aria-label="Yopish">×</button>';
-      d.querySelector('button').onclick = function () { try { sessionStorage.setItem(key, '1'); } catch (e) {} d.remove(); };
+      d.querySelector('button').onclick = function () { try { if (window.ssPref) ssPref.set(key, '1'); } catch (e) {} d.remove(); };
       document.body.appendChild(d);
     } catch (e) {}
   }

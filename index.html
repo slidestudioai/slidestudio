@@ -53,6 +53,13 @@
       };
     }
     try { window.sessionStorage.clear(); } catch(e) {}
+    // v69: small user PREFERENCES (language, UI scale, a closed hint...) — never slide/media data. Plain localStorage
+    // is a silent no-op after this lock, so modules that used it never remembered anything; they use this instead.
+    window.ssPref = {
+      get: function(k){ try { return window.__ssAuthStorage.getItem(AUTH_PREFIX + '-p-' + k); } catch(e) { return null; } },
+      set: function(k, v){ try { window.__ssAuthStorage.setItem(AUTH_PREFIX + '-p-' + k, String(v)); } catch(e) {} },
+      del: function(k){ try { window.__ssAuthStorage.removeItem(AUTH_PREFIX + '-p-' + k); } catch(e) {} }
+    };
     // 3) qolgan kod uchun Storage — jim "bo'sh" (v38 qulfi saqlanadi)
     try {
       if (P) {

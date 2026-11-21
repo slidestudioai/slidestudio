@@ -435,6 +435,12 @@
       } else {
         // telefon: shu oynada Dodo sahifasiga o'tiladi — avval slaydlar saqlanadi (qaytganda tiklanadi)
         try { if (window.ssPersistNow) await Promise.race([window.ssPersistNow(), new Promise(function (r) { setTimeout(r, 2500); })]); } catch (_) {}
+        // v69: balance BEFORE paying is remembered — after the return the site waits until the credits really arrive
+        try {
+          var st0 = balanceState();
+          window.__ssAuthStorage.setItem('ss-auth-v39-pay', JSON.stringify({      // plain localStorage is locked (index.html v39) at: Date.now(), expected: expected,
+            beforePaid: st0 ? (st0.paid_credits | 0) : 0, beforeTotal: st0 && typeof st0.total === 'number' ? st0.total : null }));
+        } catch (_) {}
         window.location.href = data.checkout_url;        // keyin /?payment=success
       }
     } catch (err) {
@@ -504,10 +510,20 @@
       toast("To'lov yakunlanmadi. Qaytadan urinib ko'ring.", true);
       return;
     }
-    // Balans hali yuklanmagan bo'lishi mumkin (sahifa yangi ochildi) — bir necha marta yangilaymiz,
-    // webhook odatda bir necha soniyada keladi.
+    // v69: phone (same tab) — before, the balance was checked only for 40 s; if the bank / webhook was slower the user
+    // saw nothing. Now the same watcher as on a computer runs (up to 5 min) and says «+N credits added» when they arrive.
+    var saved = null;
+    try { saved = JSON.parse(window.__ssAuthStorage.getItem('ss-auth-v39-pay') || 'null'); window.__ssAuthStorage.removeItem('ss-auth-v39-pay'); } catch (_) {}
+    if (saved && Date.now() - (saved.at || 0) < 2 * 3600 * 1000) {
+      toast("✅ To'lov qabul qilindi. Kreditlar qo'shilmoqda…");
+      watch = { id: ++pollToken, expected: saved.expected || 0, win: null, fast: true,
+                beforePaid: saved.beforePaid | 0, beforeTotal: typeof saved.beforeTotal === 'number' ? saved.beforeTotal : null,
+                started: Date.now(), closedAt: Date.now() };
+      setTimeout(function () { tick(watch && watch.id); }, 1500);
+      return;
+    }
     toast("✅ To'lov qabul qilindi. Kreditlar bir necha soniyada qo'shiladi.");
-    [1500, 5000, 10000, 20000, 40000].forEach(function (ms) {
+    [1500, 5000, 10000, 20000, 40000, 80000, 150000].forEach(function (ms) {
       setTimeout(function () { refreshBalance(); }, ms);
     });
   }

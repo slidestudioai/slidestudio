@@ -34,8 +34,18 @@
     if (/^en/.test(c)) return 'en';
     return null;
   }
-  function lsGet() { try { return localStorage.getItem('ss-lang'); } catch (e) { return null; } }
-  function lsSet(v) { try { localStorage.setItem('ss-lang', v); } catch (e) {} }
+  // v69: index.html's storage lock (v39) deletes every key except 'ss-auth-v39*' on load and turns setItem into a no-op,
+  // so the old 'ss-lang' key never survived a reload — the site went back to English every time. The choice is kept
+  // under an allowed key; the raw Storage methods are taken now (this file runs BEFORE the lock).
+  var LANG_KEY = 'ss-auth-v39-lang', SP = window.Storage && window.Storage.prototype;
+  var rawGet = SP && SP.getItem, rawSet = SP && SP.setItem;
+  function lsGet() {
+    try { return rawGet.call(localStorage, LANG_KEY) || rawGet.call(localStorage, 'ss-lang'); } catch (e) { return null; }
+  }
+  function lsSet(v) {
+    try { if (window.__ssAuthStorage) { window.__ssAuthStorage.setItem(LANG_KEY, v); return; } } catch (e) {}
+    try { rawSet.call(localStorage, LANG_KEY, v); } catch (e) {}
+  }
   function detect() {
     var q = null;
     try { q = new URLSearchParams(location.search).get('lang'); } catch (e) {}

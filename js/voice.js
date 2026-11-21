@@ -13,8 +13,8 @@
   window.__ssVoice = true;
 
   function toast(m, k) { try { if (typeof showToast === 'function') showToast(m, k || 'success'); } catch (e) {} }
-  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function lsGet(k) { try { return window.ssPref ? ssPref.get(k) : null; } catch (e) { return null; } }   // v69: plain localStorage is locked (index.html)
+  function lsSet(k, v) { try { if (window.ssPref) ssPref.set(k, v); } catch (e) {} }
 
   var css = document.createElement('style');
   css.textContent = [

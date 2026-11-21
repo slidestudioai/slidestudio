@@ -49,7 +49,7 @@
     c.__ssTouchEdit = true;
     var up = c.upperCanvasEl;
     var start = null, last = { t: null, time: 0 }, hinted = false;
-    try { hinted = localStorage.getItem('ssTouchEditHint') === '1'; } catch (e) {}
+    try { hinted = !!(window.ssPref && ssPref.get('touchEditHint') === '1'); } catch (e) {}
 
     up.addEventListener('touchstart', function (e) {
       if (!e.touches || e.touches.length !== 1) { start = null; return; }
@@ -75,7 +75,7 @@
       }
       if (!hinted) {
         hinted = true;
-        try { localStorage.setItem('ssTouchEditHint', '1'); } catch (er) {}
+        try { if (window.ssPref) ssPref.set('touchEditHint', '1'); } catch (er) {}
         toast("Matnni o'zgartirish uchun unga yana bir marta bosing");
       }
     }, { passive: true, capture: false });

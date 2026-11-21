@@ -1936,10 +1936,20 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
     return_url = _safe_return_url(d["base_url"], return_url_hint)
     if return_url:
         body["return_url"] = return_url + "/?payment=success"
-    try:
-        res = await _dodo_request("POST", "/checkouts", d["api_key"], d["api_base"], body)
-    except Exception as e:
-        return 502, {"error": f"Dodo Payments ga ulanib bo'lmadi: {type(e).__name__}: {str(e)[:200]}"}
+    res: Dict[str, Any] = {}
+    for _attempt in range(2):          # v69: one retry on a network error / 5xx (an unpaid extra session costs nothing)
+        try:
+            res = await _dodo_request("POST", "/checkouts", d["api_key"], d["api_base"], body)
+        except Exception as e:
+            if _attempt == 0:
+                await asyncio.sleep(1.0)
+                continue
+            print(f"[DODO CHECKOUT] network: {type(e).__name__}: {str(e)[:200]}", flush=True)
+            return 502, {"error": "To'lov tizimiga ulanib bo'lmadi. Birozdan keyin qayta urinib ko'ring."}
+        if int(res.get("status") or 0) >= 500 and _attempt == 0:
+            await asyncio.sleep(1.0)
+            continue
+        break
     if "json" in res:
         js = res["json"] or {}
         url = js.get("checkout_url") or js.get("url")
