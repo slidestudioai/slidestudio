@@ -536,6 +536,7 @@ window.SS_I18N = {
     "Bu qurilmada saqlangan slaydlaringiz ham o'chiriladi.": ["Слайды, сохранённые на этом устройстве, тоже будут удалены.", "The slides saved on this device will be deleted too."],
     "Oldingi ishingiz tiklandi ✅": ["Ваша прошлая работа восстановлена ✅", "Your previous work was restored ✅"],
     /* ---------- toast xabarlari ---------- */
+    "olingan bonus varaq": ["бонусных страниц получено", "bonus pages received"],
     "Telegram botni ulash": ["Подключить Telegram-бота", "Connect the Telegram bot"],
     "Google Telegram ichidagi brauzerda kirishga ruxsat bermaydi. Yuqoridagi ⋮ (yoki ⋯) tugmasini bosing → «Brauzerda ochish». Ulash o'sha yerda o'zi tugaydi.": ["Google не разрешает вход во встроенном браузере Telegram. Нажмите ⋮ (или ⋯) вверху → «Открыть в браузере». Привязка завершится там сама.", "Google does not allow sign-in inside Telegram's built-in browser. Tap ⋮ (or ⋯) at the top → “Open in browser”. Linking will finish there by itself."],
     "Ulash uchun Google bilan kiring — qolgani o'zi bajariladi.": ["Войдите через Google — остальное произойдёт само.", "Sign in with Google — the rest happens by itself."],
@@ -752,6 +753,15 @@ window.SS_I18N = {
     "Oltin (elegant)": ["Золото (элегантный)", "Gold (elegant)"]
   },
   patterns: [
+    ["^−([\\d.,]+) varaq$", "−$1 стр.", "−$1 pages"],
+    ["^Balans: faqat ([\\d.,]+) varaq qoldi — shuncha slayd yaratiladi\\.$", "На балансе осталось только $1 стр. — будет создано столько слайдов.", "Only $1 pages left — that many slides will be created."],
+    ["^✅ \\+(\\d+) varaq qo'shildi!$", "✅ Начислено +$1 стр.!", "✅ +$1 pages added!"],
+    ["^(\\d+) ta qidiruv$", "Поисков: $1", "$1 searches"],
+    ["^«(.+)» — (\\d+) ta natija topildi, eng mosi tanlanmoqda$", "«$1» — найдено: $2, выбираем лучшее", "«$1» — $2 results found, picking the best one"],
+    ["^«(.+)» — hech narsa topilmadi, boshqacha qidirilmoqda$", "«$1» — ничего не найдено, ищем по-другому", "«$1» — nothing found, trying another search"],
+    ["^Internetdan rasm qidirilmoqda: «(.+)»…$", "Ищем фото в интернете: «$1»…", "Searching the web for photos: «$1»…"],
+    ["^GIF qidirilmoqda: «(.+)»…$", "Ищем GIF: «$1»…", "Searching for GIFs: «$1»…"],
+    ["^Video qidirilmoqda: «(.+)»…$", "Ищем видео: «$1»…", "Searching for videos: «$1»…"],
     ["^HTML yuklandi — matn belgilanadi, animatsiyalar va tugmalar oflayn ishlaydi \\((\\d+) ta shrift internet orqali yuklanadi\\)$", "HTML скачан — текст выделяется, анимации и кнопки работают офлайн ($1 шрифт(а) загружается из интернета)", "HTML downloaded — text can be selected, animations and buttons work offline ($1 fonts load from the internet)"],
     ["^Tanlangan katak \\((\\d+)-qator, (\\d+)-ustun\\)$", "Выбранная ячейка (строка $1, столбец $2)", "Selected cell (row $1, column $2)"],
     ["^Chiziq va ulagichlar \\((\\d+)\\)$", "Линии и соединители ($1)", "Lines and connectors ($1)"],
