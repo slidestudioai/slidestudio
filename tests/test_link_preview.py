@@ -17,7 +17,7 @@ def _page(client, monkeypatch, base):
 def test_preview_tags_are_english_and_absolute(client, monkeypatch):
     html = _page(client, monkeypatch, "https://slidestudio.example")
     meta = dict(re.findall(r'<meta (?:property|name)="((?:og|twitter):[\w:]+)" content="([^"]*)"', html))
-    assert meta["og:title"] == "Slide Studio — AI Presentation Maker"
+    assert meta["og:title"] == "SlideStudio — AI Presentation Maker"
     assert meta["og:description"].startswith("Describe your topic")
     assert meta["og:image"] == "https://slidestudio.example/og-image.png"
     assert meta["twitter:card"] == "summary_large_image"

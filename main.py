@@ -1477,7 +1477,7 @@ def _index_response():
         return HTMLResponse("<h2>Slide Studio ishlamoqda. index.html topilmadi.</h2>")
     return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return _index_response()
 
@@ -3154,14 +3154,15 @@ except Exception as _cm_err:
 
 PUBLIC_STATIC_FILES = {
         "index.html", "styles.css", "mobile.css", "v38.css", "v39.css", "v40.css", "v54.css", "topup.css", "v68.css",
-        "favicon.ico", "logo.png", "manifest.json", "og-image.png",
-        "terms.html", "privacy.html", "refund.html",
+        "favicon.ico", "favicon.svg", "favicon-48x48.png", "favicon-96x96.png", "apple-touch-icon.png",
+        "icon-192.png", "icon-512.png", "logo.png", "manifest.json", "og-image.png",
+        "terms.html", "privacy.html", "refund.html", "about.html",
     }
 
 # ---- SEO: robots.txt and sitemap.xml ----
 # The site address comes from PUBLIC_BASE_URL / RENDER_EXTERNAL_URL (Render sets the latter itself); without it, from
 # the request. So the files stay right when the address changes or a custom domain is added.
-SEO_PAGES = [("/", "daily", "1.0"), ("/terms.html", "yearly", "0.3"), ("/privacy.html", "yearly", "0.3"), ("/refund.html", "yearly", "0.3")]
+SEO_PAGES = [("/", "daily", "1.0"), ("/about.html", "monthly", "0.8"), ("/terms.html", "yearly", "0.3"), ("/privacy.html", "yearly", "0.3"), ("/refund.html", "yearly", "0.3")]
 
 
 def _site_base(request: Request) -> str:
@@ -3175,7 +3176,7 @@ def _site_base(request: Request) -> str:
     return f"{'https' if proto == 'https' else 'http'}://{host}"
 
 
-@app.get("/robots.txt")
+@app.api_route("/robots.txt", methods=["GET", "HEAD"])
 def robots_txt(request: Request):
     base = _site_base(request)
     body = ("User-agent: *\n"
@@ -3190,7 +3191,7 @@ def robots_txt(request: Request):
     return Response(body, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
 
 
-@app.get("/sitemap.xml")
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"])
 def sitemap_xml(request: Request):
     from xml.sax.saxutils import escape as _x
     base = _site_base(request)
@@ -3207,13 +3208,23 @@ def sitemap_xml(request: Request):
     return Response(xml, media_type="application/xml; charset=utf-8", headers={"Cache-Control": "public, max-age=3600"})
 
 
-@app.get("/{filename}")
-def static_file(filename: str):
+@app.get("/about")
+def about_redirect():
+    return RedirectResponse("/about.html", status_code=301)
+
+
+@app.api_route("/{filename}", methods=["GET", "HEAD"])
+def static_file(filename: str, request: Request):
     if filename not in PUBLIC_STATIC_FILES:
         raise HTTPException(404, "Fayl topilmadi")
     if filename == "index.html":
         return _index_response()
     path = os.path.join(BASE_DIR, filename)
+    if filename == "about.html" and os.path.isfile(path):
+        # canonical / og:url must be ABSOLUTE -> the same site address as robots.txt and sitemap.xml
+        with open(path, encoding="utf-8") as fh:
+            html = fh.read().replace("__SS_BASE__", _site_base(request))
+        return HTMLResponse(html, headers={"Cache-Control": "public, max-age=3600"})
     if os.path.isfile(path):
         return FileResponse(path)
     raise HTTPException(404, "Fayl topilmadi")
