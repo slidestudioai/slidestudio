@@ -119,6 +119,19 @@
 
 /* ---------- Telegram to'liq ekran: chelka / Telegram tugmalari ostida qolmasin ---------- */
 body.tg-inset { padding-top: var(--tg-inset-top, 0px); padding-bottom: var(--tg-inset-bottom, 0px); box-sizing: border-box; }
+/* v73: to'liq ekrandagi panellar (fixed, top:0) body bo'shlig'ini olmaydi — ularning sarlavhasi Telegram «Orqaga / Yopish»,
+   «⌄ ⋮» tugmalari va telefon chelkasi ostida qolardi. Fon tugmalar ortigacha boradi, ichidagi narsa esa pastdan boshlanadi. */
+html.in-telegram, html.in-telegram body { overflow: hidden; overscroll-behavior: none; }
+@media (max-width: 768px) {
+  body.tg-inset .sidebar,
+  body.tg-inset .ai-sidebar { padding-top: var(--tg-inset-top, 0px) !important; padding-bottom: var(--tg-inset-bottom, 0px) !important; box-sizing: border-box; }
+  body.tg-inset .ai-sidebar { border-radius: 0 !important; }
+}
+body.tg-inset .ssset-ov,
+body.tg-inset #ssCw,
+body.tg-inset .swal2-container { padding-top: calc(var(--tg-inset-top, 0px) + 6px) !important; padding-bottom: var(--tg-inset-bottom, 0px) !important; box-sizing: border-box; }
+body.tg-inset #presentationOverlay { padding-top: var(--tg-inset-top, 0px); padding-bottom: var(--tg-inset-bottom, 0px); box-sizing: border-box; }
+
 
 /* ---------- v54.1: akkaunt holatiga qarab yuqori panel (kompyuter + telefon) ---------- */
 body.ss-auth-out #ssQuota,

@@ -85,3 +85,16 @@ def test_admin_entry_accepts_telegram_account_of_linked_admin(sb, monkeypatch):
     assert admin_core.check_admin_user("u-tg", "tg777@t.me")["ok"] is False        # admin emailiga ulanmagan
     sb.tables["tg_links"] = [{"tg_id": 777, "user_id": "u-google", "email": "boss@x.uz"}]
     assert admin_core.check_admin_user("u-google", "boss@x.uz")["ok"] is True       # eski yo'l ham ishlaydi
+
+
+def test_search_rows_default_one_by_one(monkeypatch):
+    """Standart: qatorlar AI tartibida BIRMA-BIR (start1, done1, start2, done2 …), hech biri bir zumda yopirilmaydi."""
+    monkeypatch.setattr(main, "_search_images_sync", lambda q, k, n: [{"url": "https://img.example/" + q + ".jpg"}])
+    monkeypatch.setattr(main, "SEARCH_VERIFY_IMAGES", False)
+    ws = _WS()
+    asyncio.run(main._search_batch(ws, [(f"q{i}", "photo") for i in range(4)]))
+    ev = [(t, p) for t, p in ws.events if p["type"].startswith("search_")]
+    assert [p["type"] for _, p in ev] == ["search_start", "search_done"] * 4
+    assert [p["query"] for _, p in ev if p["type"] == "search_done"] == ["q0", "q1", "q2", "q3"]
+    done_t = [t for t, p in ev if p["type"] == "search_done"]
+    assert all(b - a >= main.SEARCH_STAGGER * 0.8 for a, b in zip(done_t, done_t[1:]))
