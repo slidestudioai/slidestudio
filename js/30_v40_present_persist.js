@@ -250,6 +250,26 @@
     return JSON.stringify(p);
   }
 
+  /** v72: muharrir hali boshlang'ich holatda — bitta slayd, faqat «Sarlavha kiriting» kabi namuna matn, oq fon.
+   *  Bunday holat saqlanmaydi (chiqishdan keyin yoki yangi akkauntda «bo'sh slayd» qoralama bo'lib qolmasin). */
+  function isPristineDeck() {
+    try {
+      if (!Array.isArray(slides) || slides.length !== 1) return false;
+      var ph = function (s) { s = String(s == null ? '' : s).trim(); return !s || !!(window.SSI18n && SSI18n.isPlaceholder && SSI18n.isPlaceholder(s)); };
+      if (typeof projectTitle === 'string' && !ph(projectTitle)) return false;
+      if (slides[0].transition) return false;
+      var p = JSON.parse(slides[0].json || '{}');
+      if (p.backgroundImage || p.backgroundGif || p.backgroundVideo) return false;
+      var bg = String(p.background || '#ffffff').replace(/\s+/g, '').toLowerCase();
+      if (['#ffffff', '#fff', 'white', 'rgb(255,255,255)', ''].indexOf(bg) < 0) return false;
+      return (p.objects || []).every(function (o) {
+        return !o || ((o.type === 'textbox' || o.type === 'i-text' || o.type === 'text') && ph(o.text));
+      });
+    } catch (e) { return false; }
+  }
+  window.ssIsPristineDeck = isPristineDeck;
+  var savedKeys = {};                 // shu sessiyada haqiqatan saqlangan qoralamalar (faqat shularni o'chirish mumkin)
+
   var lastSavedSig = '', saving = false;
   function aiBusy() { return !!(window.isAiApplyingCommands || window.isAiStreaming || safe(function () { return isAiApplyingCommands || isAiStreaming; }, false)); }
   function canvasBusy() { return safe(function () { return !!(canvas && (canvas._currentTransform || (canvas.getActiveObject && canvas.getActiveObject() && canvas.getActiveObject().isEditing))); }, false) || safe(function () { return !!_switchBusy; }, false); }
@@ -268,6 +288,12 @@
       var key = draftKey();
       var list = slides, sig = key + '|' + slideSig() + '|' + (typeof projectTitle === 'string' ? projectTitle : '') + '|' + activeIndex;
       if (sig === lastSavedSig) return;
+      if (isPristineDeck()) {
+        // foydalanuvchi o'zi hammasini tozalagan bo'lsa — eski qoralama ham qolmasin; boshqa holatda hech narsa yozilmaydi
+        if (savedKeys[key]) { await idbDel(key); delete savedKeys[key]; }
+        lastSavedSig = sig;
+        return;
+      }
       var out = [];
       blobSeen = new Set();
       for (var i = 0; i < list.length; i++) {
@@ -277,6 +303,7 @@
       if (window.__ssUserLogout) return;
       pruneBlobMap();
       await idbPut(key, { v: 2, owner: key, title: projectTitle, activeIndex: activeIndex, slides: out, savedAt: Date.now() });
+      savedKeys[key] = true;
       lastSavedSig = sig;
     } catch (e) { console.warn('[v40] saqlash:', e); }
     finally { saving = false; blobSeen = null; }

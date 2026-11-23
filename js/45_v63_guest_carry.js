@@ -27,6 +27,8 @@
     try { saveCurrentSlideState({ force: true }); } catch (e) {}
     try {
       if (!Array.isArray(slides) || !slides.length) return true;
+      // v72: tegilmagan boshlang'ich slayd olib o'tilmaydi — aks holda u akkauntning o'z saqlangan ishini bosib ketardi
+      if (window.ssIsPristineDeck && window.ssIsPristineDeck()) { try { st.removeItem(KEY); } catch (e) {} return true; }
       var data = {
         v: 1, at: Date.now(),
         title: (typeof projectTitle === 'string') ? projectTitle : '',
