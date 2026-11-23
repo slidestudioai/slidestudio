@@ -141,7 +141,11 @@
     on('ssOut', function () { closeSettings(); try { handleLogout(); } catch (e) {} });
     on('ssTools', function () {
       closeSettings();
-      try { if (typeof toggleSidebarMenu === 'function' && window.innerWidth <= 900) { var sb = $('sidebar'); if (sb && !sb.classList.contains('open')) toggleSidebarMenu(); } } catch (e) {}
+      try {                                          // v75: telefonda drawer ochiladi, kattaroq ekranda yig'ilgan panel yoyiladi
+        var sb = $('sidebar');                       // (avval 769–900px da toggleSidebarMenu panelni YIG'IB qo'yardi)
+        if (sb && window.innerWidth <= 768) { if (!sb.classList.contains('open') && typeof toggleSidebarMenu === 'function') toggleSidebarMenu(); }
+        else if (sb && sb.classList.contains('collapsed')) { sb.classList.remove('collapsed'); setTimeout(function () { try { fitCanvasToScreen(); } catch (e) {} }, 300); }
+      } catch (e) {}
       try { if (oldOpen) oldOpen(); } catch (e) { toast('Asboblar oynasini ochib bo\u2018lmadi', 'error'); console.warn('[v47] oldOpen', e); }
     });
     on('ssSupport', function () { closeSettings(); if (window.ssOpenSupport) window.ssOpenSupport(); else toast('Yordam oynasini ochib bo\u2018lmadi', 'error'); });

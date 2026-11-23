@@ -238,3 +238,9 @@ textarea[data-fabric="textarea"] { position: fixed !important; left: 0 !importan
   .tb-btn .material-symbols-outlined { font-size: 17px !important; }
   .ai-msg { font-size: 13px !important; padding: 10px 12px !important; }
 }
+
+/* v75: tor panelda uzun tugma («🔗 Google akkauntni ulash» kabi) matnni 5 qatorga ezib qo'ymasin —
+   joy yetmasa tugma o'z qatoriga tushadi, matn esa to'liq kenglikda qoladi */
+.ss-set-row { flex-wrap: wrap; }
+.ss-set-row > span:first-child { flex: 1 1 150px; }
+.ss-set-row .ss-set-btn { max-width: 100%; white-space: normal; text-align: center; }
