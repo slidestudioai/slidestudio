@@ -2949,7 +2949,7 @@ async def _verify_image_results(res: list, kind: str) -> list:
     if not SEARCH_VERIFY_IMAGES or kind not in ("photo", "image") or not res:
         return res
     if _VERIFY_SEM is None:
-        _VERIFY_SEM = asyncio.Semaphore(8)
+        _VERIFY_SEM = asyncio.Semaphore(16)      # v73: 8 edi — 6–7 qidiruvning ~40 havolasi navbatda turardi
     head = [x for x in res[:SEARCH_VERIFY_FIRST] if isinstance(x, dict) and x.get("url")]
     rest = [x for x in res[SEARCH_VERIFY_FIRST:]]
 
@@ -3041,7 +3041,25 @@ async def _search_batch(websocket, jobs: List[Tuple[str, str]], client_search: b
     tasks = [asyncio.ensure_future(with_retry(q, k, pre.get(i))) for i, (q, k) in enumerate(jobs)]
     results: List[list] = [[] for _ in jobs]
     try:
-        for i, (q, k) in enumerate(jobs):
+        if not stagger:
+            # v73: hamma qator birdan «qidirilmoqda», har biri TUGASHI BILAN «topildi» bo'ladi. Avval 1-qator o'zi tugaguncha
+            # (tekshiruv + qayta urinish bilan) turib qolardi, qolganlari esa keyin bir zumda chiqardi — «birinchisi sekin».
+            for i, (q, k) in enumerate(jobs):
+                await ev({"type": "search_start", "query": q, "kind": k, "n": n0 + i + 1})
+            idx = {t: i for i, t in enumerate(tasks)}
+            pending = set(tasks)
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for t in done:
+                    i = idx[t]
+                    try:
+                        r = t.result()
+                    except Exception:
+                        r = []
+                    results[i] = r if isinstance(r, list) else []
+                    q, k = jobs[i]
+                    await ev({"type": "search_done", "query": q, "kind": k, "count": len(results[i])})
+        for i, (q, k) in enumerate(jobs if stagger else []):
             await ev({"type": "search_start", "query": q, "kind": k, "n": n0 + i + 1})
             t0 = time.monotonic()
             try:
@@ -3468,6 +3486,48 @@ class _Turn:
         self.finish_reason = None
         self.client_gone = False
         self.n_searches = 0
+
+
+_SLIDE_NOUN_RE = _re.compile(r"(slayd|slide|слайд|taqdimot|prezentats|presentation|презентац|krossvord|crossword|кроссворд)", _re.I)
+_SLIDE_VERB_RE = _re.compile(
+    r"(\b(qilib\s*ber|yasa|yarat|tayyorla|o['‘’ʻ]?zgartir|qo['‘’ʻ]?sh|almashtir|tahrirla|o['‘’ʻ]?chir)\w*|"
+    r"\b(make|create|add|edit|change|replace|delete)\b|сдела|созда|добав|измени|замени|удали)", _re.I)
+
+
+def _wants_slide_work(prompt: str, deck_state: Any = None) -> bool:
+    """v73: bu xabar slayd yaratadi / o'zgartiradi (yoki rasm qidiradi)mi? Balans 1 varaqdan kam bo'lsa — oldindan rad.
+    Oddiy savol (oxiri «?» va slayd so'zi yo'q) — rad etilmaydi, savol-javob baribir ishlaydi."""
+    p = (prompt or "").strip()
+    if not p:
+        return False
+    try:
+        if _turn_may_search(p) or _is_multi_slide_request(p) or _new_deck_topic(p, deck_state):
+            return True
+    except Exception:
+        pass
+    if _SLIDE_NOUN_RE.search(p) and not (p.endswith("?") and not _SLIDE_VERB_RE.search(p)):
+        return True
+    return bool(_SLIDE_VERB_RE.search(p)) and not p.endswith("?")
+
+
+async def _refuse_low_balance(websocket, usage: dict, bill_mode: str, mode: str, prompt: str, deck_state: Any) -> bool:
+    """v73: 1 varaqdan kam balans bilan slayd so'ralsa — AI chaqirilmaydi va rasm qidirilmaydi (avval AI 6–7 ta pullik
+    qidiruvdan keyin «balans yo'q» derdi). Oddiy savol-javob baribir ishlaydi. True — rad etildi (xabar yuborildi)."""
+    if is_unlimited(usage) or mode == "plan":
+        return False
+    bal_units = total_credits(usage)
+    if bal_units // MODES[bill_mode]["page"] >= 1 or not _wants_slide_work(prompt or "", deck_state):
+        return False
+    _metrics.inc("ai_turns_total", {"result": "limit"})
+    await websocket.send_json({
+        "type": "error",
+        "code": "LIMIT_EXCEEDED",
+        "message": (f"Balansingizda {bal_units / MODES[bill_mode]['page']:.2f} varaq bor — yangi yoki o'zgartirilgan slayd uchun "
+                    f"kamida 1 varaq kerak. 24 soat kuting yoki ${topup_gross_cents(pack_pages()) / 100:.2f} ga "
+                    f"{pack_pages()} Tez-varaq sotib oling. Oddiy savol berishingiz mumkin."),
+        **usage_payload(usage),
+    })
+    return True
 
 
 async def _run_ai_turn(websocket, t: "_Turn", *, api_key: str, model: str, mode: str, prompt: str, user_content: str,
@@ -4002,6 +4062,8 @@ async def ws_chat(websocket: WebSocket):
                     })
                     continue
                 bal = bal_units // MODES[bill_mode]["page"]       # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
+                if await _refuse_low_balance(websocket, usage, bill_mode, mode, prompt, deck_state):
+                    continue
                 session_key = register_session(uid, email, model)
                 if is_blocked(session_key):
                     await websocket.send_json({"type": "error", "message": "Sessiya bloklangan."})

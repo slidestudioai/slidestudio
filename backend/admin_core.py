@@ -154,8 +154,16 @@ def check_admin_tg(tg_id: Any) -> Dict[str, Any]:
 
 
 def check_admin_user(uid: str, email: str) -> Dict[str, Any]:
-    """Sayt uchun: Google akkaunt admin emaili VA unga ulangan Telegram admin ID."""
+    """Sayt uchun: Google akkaunt admin emaili VA unga ulangan Telegram admin ID.
+    v73: Telegram Mini App ba'zan Telegram akkaunti (tg<ID>@t.me) bilan kiradi — o'sha Telegram ID admin bo'lsa va
+    admin Google emailiga ulangan bo'lsa (botdagi «admin» bilan bir xil shart), u ham qabul qilinadi."""
     e = (email or "").strip().lower()
+    m = re.fullmatch(r"tg(\d+)@t\.me", e)
+    if m:
+        chk = check_admin_tg(int(m.group(1)))
+        if chk.get("ok"):
+            return {"ok": True, "reason": "ok", "email": chk["email"], "tg_id": int(m.group(1))}
+        return {"ok": False, "reason": chk.get("reason") or "not_admin"}
     if not e or e not in admin_emails():
         return {"ok": False, "reason": "not_admin"}
     row = _linked_row_by_uid(uid)

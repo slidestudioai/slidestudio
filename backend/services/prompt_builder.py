@@ -280,7 +280,7 @@ def ai_balance_rules(usage: dict, bill_mode: str) -> str:
         f"FAQAT {bal} tasini yarating, PART A da aniq ayting: "
         f"\"Balansingizda {bal} varaq qoldi, shuning uchun {bal} ta slayd yaratdim. "
         f"Qolganini sotib olgach davom ettirish mumkin.\"\n"
-        f"  • Balans 0 bo'lsa hech qanday action yozmang.\n"
+        f"  • Balans 0 bo'lsa hech qanday action yozmang va search_images ni CHAQIRMANG (qidiruv ham pullik) — darhol PART A da balans yetmasligini ayting.\n"
         f"  • Yangi slayd qo'shish: har slayd uchun alohida \"insert_slide\" (mazmun bilan). \"create_slides\" faqat foydalanuvchi BO'SH varaq so'raganda.\n"
     )
     if bal <= 3:
