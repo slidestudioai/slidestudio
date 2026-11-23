@@ -88,6 +88,21 @@
     }
   } catch (e) {}
   if (document.body) applyInsets(); else document.addEventListener('DOMContentLoaded', applyInsets, { once: true });
+  // v73: klaviatura ochilganda Telegram WebView sahifani yuqoriga suradi va yopilgach qaytarmaydi — yuqori panel
+  // Telegram tugmalari ostida qolardi. Sahifa o'zi hech qachon surilmaydi (panellar ichida surish bor), shuning uchun
+  // klaviatura yopilganda / o'lcham o'zgarganda tepaga qaytariladi.
+  function unscroll() {
+    try {
+      var ae = document.activeElement;
+      if (ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName) && window.visualViewport && window.visualViewport.height < window.innerHeight * 0.85) return;   // klaviatura hali ochiq
+      if (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop) {
+        window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+      }
+    } catch (e) {}
+  }
+  document.addEventListener('focusout', function () { setTimeout(unscroll, 120); setTimeout(unscroll, 450); }, true);
+  try { if (window.visualViewport) window.visualViewport.addEventListener('resize', function () { setTimeout(unscroll, 150); }); } catch (e) {}
+  window.addEventListener('scroll', function () { setTimeout(unscroll, 300); }, { passive: true });
 
   // ---- Orqaga tugmasi
   function openPanel() {

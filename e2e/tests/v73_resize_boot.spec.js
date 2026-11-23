@@ -91,3 +91,28 @@ test('server javob bermasa ham muharrir ochiladi (slaydlar ro\'yxati va AI panel
   await openEditor(page);                                         // helpers: slaydlar paydo bo'lishini kutadi
   await expect(page.locator('#sidebar .slide-item').first()).toBeVisible({ timeout: 20_000 });
 });
+
+test.describe('Telegram Mini App (to\'liq ekran)', () => {
+  test.use({ viewport: { width: 412, height: 860 }, isMobile: true, hasTouch: true });
+  test('AI paneli, chap panel va yuqori qator Telegram tugmalari ostida qolmaydi; sahifa surilib qolmaydi', async ({ page }) => {
+    await page.addInitScript(() => {
+      const noop = () => {};
+      window.Telegram = { WebApp: { initData: 'query_id=x&hash=x', initDataUnsafe: {}, version: '8.0', platform: 'android', ready: noop, expand: noop,
+        requestFullscreen: noop, isFullscreen: true, isVersionAtLeast: () => true, onEvent: noop, offEvent: noop,
+        safeAreaInset: { top: 40, bottom: 16 }, contentSafeAreaInset: { top: 46, bottom: 0 }, BackButton: { show: noop, hide: noop, onClick: noop },
+        disableVerticalSwipes: noop, enableClosingConfirmation: noop, openLink: noop, themeParams: {}, colorScheme: 'light' } };
+    });
+    await openEditor(page);
+    const top = (sel) => page.evaluate((s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect().top : -1; }, sel);
+    expect(await top('.header-actions')).toBeGreaterThanOrEqual(86);
+    await page.evaluate(() => toggleAISidebar(true));
+    await page.waitForTimeout(500);
+    expect(await top('.ai-sidebar-header')).toBeGreaterThanOrEqual(86);
+    await page.evaluate(() => toggleAISidebar(false));
+    await page.evaluate(() => toggleSidebarMenu());
+    await page.waitForTimeout(500);
+    expect(await top('#sidebar .slide-item')).toBeGreaterThanOrEqual(86);
+    await page.evaluate(() => { toggleSidebarMenu(); window.scrollTo(0, 60); document.documentElement.scrollTop = 60; window.dispatchEvent(new Event('scroll')); });
+    await expect.poll(() => page.evaluate(() => window.scrollY + document.documentElement.scrollTop)).toBe(0);
+  });
+});

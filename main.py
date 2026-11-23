@@ -2847,11 +2847,13 @@ GIF_SAFE_POOL = [
     "https://media.giphy.com/media/5GoVLqeAOo6PK/giphy.gif",
 ]
 _ANIM_WORDS = ("gif", "animation", "animated", "loop", "motion", "spinner", "particles", "globe rotating", "loading")
-# Speed: no artificial wait per search row (was 0.35 s each = up to 3.5 s per turn). Set SEARCH_STAGGER=0.35 for the old look.
+# v73: search rows are shown ONE BY ONE in the AI's order (row 1 «searching» -> «found», then row 2 …). The searches
+# still run in parallel in the background, so a row that is already finished is only held SEARCH_STAGGER seconds
+# (not dumped all at once). SEARCH_STAGGER=0 shows all rows together and marks each as it finishes.
 try:
-    SEARCH_STAGGER = max(0.0, float(os.environ.get("SEARCH_STAGGER", "0") or 0))
+    SEARCH_STAGGER = max(0.0, float(os.environ.get("SEARCH_STAGGER", "0.45") or 0))
 except ValueError:
-    SEARCH_STAGGER = 0.0
+    SEARCH_STAGGER = 0.45
 
 
 def _tool_search_kind(query: str, kind: Any) -> str:
