@@ -244,6 +244,7 @@
             <div onclick="addTextBox()"><span class="material-symbols-outlined">title</span> Matn maydoni</div>
             <div onclick="triggerDirectImageUpload()"><span class="material-symbols-outlined">image</span> Rasm yuklash</div>
             <div onclick="toggleShapesMenu(event)"><span class="material-symbols-outlined">shapes</span> Shakllar</div>
+            <div onclick="window.openCrosswordDialog &amp;&amp; openCrosswordDialog()"><span class="material-symbols-outlined">grid_on</span> Krossvord</div>
             <div onclick="openMediaBrowser()"><span class="material-symbols-outlined">travel_explore</span> Onlayn rasm / GIF / video</div>
             <div onclick="addVideoDialog()"><span class="material-symbols-outlined">movie</span> Video (link yoki fayl)</div>
             <div onclick="addLinkDialog()"><span class="material-symbols-outlined">link</span> Havola (link tugma)</div>
@@ -288,6 +289,7 @@
     <button class="tb-btn desk-only" title="Matn qo'shish" onclick="addTextBox()"><span class="material-symbols-outlined">text_fields</span></button>
     <button class="tb-btn desk-only" title="Rasm yuklash" onclick="triggerDirectImageUpload()"><span class="material-symbols-outlined">image</span></button>
     <button class="tb-btn" title="Shakllar" onclick="toggleShapesMenu(event)"><span class="material-symbols-outlined">shapes</span></button>
+    <button class="tb-btn desk-only" title="Krossvord" onclick="window.openCrosswordDialog &amp;&amp; openCrosswordDialog()"><span class="material-symbols-outlined">grid_on</span></button>
     <button class="tb-btn desk-only" title="Onlayn rasm / GIF / video" onclick="openMediaBrowser()"><span class="material-symbols-outlined">travel_explore</span></button>
     <button class="tb-btn desk-only" title="Video qo'shish (YouTube / MP4 link yoki fayl)" onclick="addVideoDialog()"><span class="material-symbols-outlined">movie</span></button>
     <button class="tb-btn desk-only" title="Tugma qo'shish" onclick="addButtonDialog()"><span class="material-symbols-outlined">smart_button</span></button>
@@ -342,6 +344,9 @@
     </button>
     <button class="mab-btn" onclick="triggerDirectImageUpload()">
       <span class="material-symbols-outlined">image</span> Rasm
+    </button>
+    <button class="mab-btn" onclick="window.openCrosswordDialog &amp;&amp; openCrosswordDialog()">
+      <span class="material-symbols-outlined">grid_on</span> Krossvord
     </button>
     <button class="mab-btn accent" onclick="openMediaBrowser()">
       <span class="material-symbols-outlined">gif_box</span> GIF/Rasm/Video
@@ -765,6 +770,7 @@
   <script src="js/53_lazy_media.js?v=1"></script>
   <script src="js/54_back_nav.js?v=2"></script>
   <script src="js/55_support.js?v=1"></script>
+  <script src="js/56_crossword.js?v=1"></script>
   <script src="js/46_topup.js?v=6" defer></script>
   <script src="js/voice.js?v=1" defer></script>
   <script src="js/slide_plus.js?v=3" defer></script>

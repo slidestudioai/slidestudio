@@ -221,6 +221,16 @@
           if (o.flipX) entry.flipX = true;
           if (o.flipY) entry.flipY = true;
           if (o.ssKit) { entry.kit = o.ssKit; entry.kitRole = o.ssRole || 'part'; }   // v67: dizayn to'plami (kartochka/ramka) qismi
+          if (o.ssKitItem === 'crossword') {                     // v71: krossvord — AI uni element sifatida ko'radi
+            if (o.cwData) {
+              try {
+                const cw = JSON.parse(o.cwData);
+                entry.type = 'crossword'; entry.kind = 'crossword'; delete entry.shape;
+                entry.words = (cw.words || []).slice(0, 14).map((w) => ({ answer: String(w.answer || '').slice(0, 30), clue: String(w.clue || '').slice(0, 160) }));
+                entry.showAnswers = !!cw.showAnswers; entry.showClues = cw.showClues !== false;
+              } catch (e) {}
+            } else entry.partOf = 'crossword';
+          }
           if (isText) {
             entry.text = (o.text || '').substring(0, 600);
             entry.fontSize = o.fontSize ? Math.round(o.fontSize * (o.scaleY || 1)) : null;
