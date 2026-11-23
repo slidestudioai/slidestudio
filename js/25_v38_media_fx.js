@@ -270,9 +270,13 @@
     return item;
   }
 
-  window.renderSidebar = function renderSidebar() {
+  window.renderSidebar = function renderSidebar(force) {
     const sidebar = $('sidebar');
     if (!sidebar) return;
+    // v75: «Sozlamalar / Asboblar» paneli ochiq bo'lsa — avtomatik qayta chizish (miniatyura yangilanishi, AI, saqlash...)
+    // uni o'chirib yubormaydi (avval panel ochilib, ~1 soniyada yopilib qolardi). Faqat «Orqaga» / yopish majburan chizadi.
+    if (force !== true && sidebar.querySelector('.settings-panel-inner')) { window.__ssSidebarDirty = true; return; }
+    window.__ssSidebarDirty = false;
     let scroll = sidebar.querySelector(':scope > .sidebar-slides-scroll');
     let addBtn = scroll && scroll.querySelector(':scope > .btn-add-slide-bottom');
     if (!scroll || !addBtn) {                       // birinchi marta yoki sozlamalar paneli almashtirgan bo'lsa — qayta quramiz

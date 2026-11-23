@@ -184,8 +184,12 @@
       });
       if (layer.childNodes.length) thumbEl.appendChild(layer);
     }
-    function renderSidebar() {
+    function renderSidebar(force) {
       const sidebar = document.getElementById('sidebar');
+      // v75: «Sozlamalar / Asboblar» paneli ochiq bo'lsa — avtomatik qayta chizish (miniatyura yangilanishi, AI, saqlash...)
+      // uni o'chirib yubormaydi (avval panel ochilib, ~1 soniyada yopilib qolardi). Faqat «Orqaga» / yopish majburan chizadi.
+      if (force !== true && sidebar && sidebar.querySelector('.settings-panel-inner')) { window.__ssSidebarDirty = true; return; }
+      window.__ssSidebarDirty = false;
 
       let savedScroll = 0;
       try {
@@ -412,9 +416,9 @@
         el.style.touchAction = 'manipulation';
       };
       const back = panel.querySelector('#settingsBackBtn');
-      bindTap(back, () => { try { renderSidebar(); } catch(e){} });
+      bindTap(back, () => { try { renderSidebar(true); } catch(e){} });
       const logoutBtn = panel.querySelector('#settingsLogoutBtn');
-      bindTap(logoutBtn, () => { try { handleLogout(); } catch(e){} try { renderSidebar(); } catch(e){} });
+      bindTap(logoutBtn, () => { try { handleLogout(); } catch(e){} try { renderSidebar(true); } catch(e){} });
       const loginBtn = panel.querySelector('#settingsLoginBtn');
       bindTap(loginBtn, () => { try { handleGoogleLogin(); } catch(e){} });
     }
@@ -1679,6 +1683,8 @@
       if (window.innerWidth <= 768) {
         sidebar.classList.toggle('open');
         overlay.classList.toggle('active');
+        // v75: drawer yopilganda ichida «Sozlamalar» qolib ketmasin — keyingi ochilishda slaydlar ro'yxati chiqadi
+        if (!sidebar.classList.contains('open') && sidebar.querySelector('.settings-panel-inner')) { try { renderSidebar(true); } catch (e) {} }
       } else {
         sidebar.classList.toggle('collapsed');
         setTimeout(fitCanvasToScreen, 300);

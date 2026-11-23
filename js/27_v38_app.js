@@ -135,9 +135,9 @@
     panel.addEventListener('click', function (e) {
       const t = e.target.closest('[data-a]'); if (!t) return;
       const a = t.getAttribute('data-a');
-      if (a === 'back') { safe(function () { renderSidebar(); }); }
+      if (a === 'back') { safe(function () { renderSidebar(true); }); }
       else if (a === 'login') safe(function () { handleGoogleLogin(); });
-      else if (a === 'logout') { safe(function () { handleLogout(); }); safe(function () { renderSidebar(); }); }
+      else if (a === 'logout') { safe(function () { handleLogout(); }); safe(function () { renderSidebar(true); }); }
       else if (a === 'buy') safe(function () { window.startCreditsCheckout(); });
       else if (a === 'tglink') safe(function () { window.ssTgLink(); });
       else if (a === 'gglink') safe(function () { window.ssGoogleLink(); });
