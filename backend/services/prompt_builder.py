@@ -111,6 +111,25 @@ _DEEP_MODE_NOTE = (
     "placeholder text. Edits of existing slides follow section 15 rule 0 (no new pictures unless asked).")
 
 
+def _crossword_brief(o):
+    """v71: krossvord guruhi (ssRole cw_grid, cwData JSON) -> {"type":"crossword","words":[...],...}."""
+    if not isinstance(o, dict):
+        return None
+    if o.get("type") == "crossword" and isinstance(o.get("words"), list):      # mijoz (05_ai_chat.js) allaqachon soddalashtirgan
+        d = o
+    elif o.get("ssKitItem") == "crossword" and o.get("cwData"):
+        try:
+            d = json.loads(o.get("cwData") or "{}")
+        except (TypeError, ValueError):
+            return None
+    else:
+        return None
+    words = [{"answer": str(w.get("answer") or "")[:30], "clue": str(w.get("clue") or "")[:160]}
+             for w in (d.get("words") or [])[:14] if isinstance(w, dict)]
+    return {"type": "crossword", "words": words, "showAnswers": bool(d.get("showAnswers")),
+            "showClues": d.get("showClues") is not False}
+
+
 def _extract_imgs(objects, slide_num):
     out = []
     if not isinstance(objects, list):
@@ -489,6 +508,11 @@ def build_turn_messages(*, base_prompt: str, data: Dict[str, Any], usage: dict, 
                         brief["kind"] = "gif"
                         if o.get("gifUrl"):
                             brief["gifUrl"] = (o.get("gifUrl") or "")[:120]
+                    cw = _crossword_brief(o)
+                    if cw:                    # v71: krossvord to'ri AI'ga o'z element ko'rinishida (kataklar ro'yxati emas)
+                        brief.update(cw)
+                    elif o.get("partOf") == "crossword" or (o.get("ssKitItem") == "crossword" and o.get("ssRole") in ("cw_head", "cw_clue")):
+                        brief["partOf"] = "crossword"
                     return brief
 
                 full = {

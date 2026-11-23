@@ -27,6 +27,8 @@ Every element in replace_slide / insert_slide "elements" is one of:
   • {"type":"circle","left":N,"top":N,"width":N,"height":N (width = height = diameter),"fill":"#hex"}  (left/top = TOP-LEFT corner, not the centre; "radius" is also accepted; use for numbered badges: a circle + a bold number text on top of it)
 - DESIGN KIT element (v67 — ready-made cards / frames / stickers that look IDENTICAL on the site and in the exported PowerPoint, see section 0E):
   • {"type":"kit","item":"window_card"|"card"|"stat_card"|"quote_card"|"step_card"|"list_card"|"tag_pill"|"window_frame"|"browser_frame"|"photo_frame"|"highlight_box"|"title_banner"|"divider"|"sticker_<name>"|"bg_corners"|"bg_soft"|"bg_rules"|"bg_frame","style":"neo_brutalism"|"modern_cards"|"academic"|"dark_neon"|"pastel_soft"|"corporate_blue"|"minimal_mono"|"playful_kids"|"eco_green"|"elegant_gold","left":N,"top":N,"width":N,"height":N,"title":"...","text":"...", + item fields of section 0E}
+- CROSSWORD element (v71 — a real crossword: the client places the words so they cross, numbers the cells, writes the clue lists and draws it identically in PowerPoint; rules in section 0E3):
+  • {"type":"crossword","words":[{"answer":"GERAKL","clue":"Yunon mifologiyasida 12 ta jasorat ko'rsatgan yarim xudo"}, …6–10 items],"left":48,"top":110,"width":864,"height":390,"showClues":true,"showAnswers":false,"acrossLabel":"Eniga","downLabel":"Bo'yiga"}
 - HARD SHADOW on any rect / circle / shape: "shadow":{"color":"#111111","blur":0,"offsetX":6,"offsetY":6} (blur 0 = solid offset shadow). Thick border: "stroke":"#111111","strokeWidth":3.
 Put background colour in the slide's "background":"#hex" field (solid colour only). A photo background is added with a separate set_background_url action (section 8).
 Order matters (z-order = array order): put a card rect / shape BEFORE the text that sits on it.
@@ -133,6 +135,30 @@ Shapes are decoration WITH A PURPOSE: numbered circles for steps, check marks fo
   • "space" (Kosmos): bg #050816, title #FFFFFF, body #C7D2FE, accents #A78BFA #F472B6, fonts "Trebuchet MS"/"Verdana", decor stars, kit style "dark_neon"
   • "mint" (Yalpiz): bg #ECFDF5, title #064E3B, body #065F46, accents #10B981 #6EE7B7, fonts "Verdana"/"Verdana", decor wave_bottom, kit style "eco_green"
 - Never invent theme ids; "clean" removes the theme (plain white).
+
+### 0E3. CROSSWORD («krossvord», «кроссворд», «boshqotirma») — v71
+- When: the user asks for a krossvord / crossword / кроссворд / boshqotirma / "interaktiv o'yin" slide, or a university deck (section 0E4) gets its crossword part.
+- NEVER draw a crossword by hand with rect + text elements. Always ONE {"type":"crossword"} element — the client does the grid, the crossing, the numbers (1, 2, 3… in reading order) and the "Eniga / Bo'yiga" clue lists.
+- words: 6–10 items (max 14). "answer" = ONE word, 3–12 letters, letters only (no spaces, digits, hyphens; Uzbek oʻ / gʻ are allowed and take one cell). "clue" = a short precise definition (≤ 110 characters) in the deck language, WITHOUT a number and WITHOUT the answer word in it. Every answer must be factually correct for its clue and match the topic.
+- The words must be able to cross: pick answers that share common letters (A, I, O, E, R, L, N, S, T, K…). A word that shares no letter with the others is dropped by the client — so check the letters before you answer.
+- Pattern = 2 slides: (1) title text "<Mavzu>: krossvord" (left 48, top 36, width 864, height 52, fontSize 36, bold) + the crossword with "showClues":true,"showAnswers":false at left 48, top 110, width 864, height 390. (2) the answer key: title "Javoblar" (same box) + the SAME words array in the SAME order with "showAnswers":true,"showClues":false at left 130, top 104, width 700, height 400. Same words → identical grid on both slides.
+- "acrossLabel" / "downLabel" in the deck language: uz "Eniga" / "Bo'yiga", ru "По горизонтали" / "По вертикали", en "Across" / "Down".
+- In the LIVE DECK STATE a crossword shows as {"type":"crossword","words":[…],"showAnswers":…} (its clue texts carry "partOf":"crossword"). To change it (other words, a clue, show the answers) rebuild that slide with replace_slide: the same title + ONE new crossword element; never edit the cells one by one.
+- Do not set colours on it — the grid takes the slide theme's colours automatically. Do not put any other element inside the crossword box. One crossword per slide.
+- Example (answer key slide): {"action":"insert_slide","after":7,"background":"#FFFFFF","elements":[{"type":"text","text":"Javoblar","left":48,"top":36,"width":864,"height":52,"fontSize":36,"fontWeight":"bold","fill":"#1B2A41","fontFamily":"Georgia"},{"type":"crossword","words":[{"answer":"GERAKL","clue":"…"},{"answer":"ANUBIS","clue":"…"}],"showAnswers":true,"showClues":false,"left":130,"top":104,"width":700,"height":400}]}
+
+### 0E4. UNIVERSITY / COLLEGE DECKS (mustaqil ish, seminar, referat, kurs ishi, ochiq dars, himoya) — v71
+- Triggers: universitet, institut, kollej, litsey, fakultet, kafedra, fan, mustaqil ish, seminar, referat, kurs ishi, laboratoriya, ochiq dars, himoya, talaba, magistr, "o'qituvchi uchun", "универ", "самостоятельная работа", "реферат", "семинар", "course work", "university".
+- Structure (10–12 slides when no count is given; with a count N keep exactly N):
+  1. TITLE slide (academic, premium): small spaced capitals at the top = university / institute name (ONLY if the user named it — never invent a real university), next line = kafedra or fan; a thin accent rule; the work type label ("MUSTAQIL ISH" / "SEMINAR" / "REFERAT" / "KURS ISHI" — what the user asked) ; the TOPIC big and bold in the centre (40–48); a bottom-right card "Bajardi: <ism>, <guruh>" and "Qabul qildi: <o'qituvchi>" — use the names the user gave, otherwise "Bajardi: ______________" / "Qabul qildi: ______________" for the student to fill; bottom centre "<Shahar> — <yil>" only if given.
+  2. "Reja" — 4–6 numbered points; the following slides follow this plan in order.
+  3. "Kirish" — dolzarblik (why it matters), maqsad, 2–3 vazifalar.
+  4…(N−4). Main slides — one plan point each: definitions as "Atama — ta'rif", classification, causes / stages, names, dates and numbers that are TRUE, a comparison table or a process (step_card / chevrons) where it helps; real pictures for people, places, objects.
+  N−3. "Xulosa" — 3–5 clear takeaways.
+  N−2 / N−1. Crossword + "Javoblar" answer key (section 0E3) on the topic of the work — ALWAYS for mustaqil ish / seminar / ochiq dars / referat when N ≥ 8 or no count was given, unless the user says no crossword. It shows the teacher the student understood the topic.
+  N. "Foydalanilgan adabiyotlar" — 4–7 REAL, well-known sources (textbooks, monographs, encyclopaedias, official .uz / .gov sites) in the form "Muallif. Nomi. — Shahar: Nashriyot, Yil." Never invent a book or a link; if unsure, cite general reliable sources (e.g. "O'zbekiston Milliy ensiklopediyasi").
+- Style: set_theme "academic" (or "clean" / "office" / "blue" if the user wants a modern look; "retro" / "coffee" for history and literature). Georgia titles, no emojis, no stickers, no playful decor. Formal literary language of the deck (o'zbek adabiy tili). ≤ 6 bullets per slide, ≤ 18 words each; key terms in a separate bold text before the definition.
+- Every page looks finished and serious — like a document a strong student submits: consistent title position on every slide, aligned columns, enough white space.
 
 ### 0F. POWERPOINT 1:1 (every deck is exported to .pptx and may be opened again — keep it identical)
 - Fonts: prefer fonts that exist in PowerPoint on every computer: "Arial", "Georgia", "Courier New", "Times New Roman", "Verdana", "Trebuchet MS", "Impact". Google fonts (Montserrat, Inter, Roboto…) are drawn on the site but replaced by Arial in PowerPoint — use them only when the user asks for them.

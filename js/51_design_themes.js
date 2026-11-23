@@ -255,6 +255,7 @@
       c.add(objs[i]); c.sendToBack(objs[i]);
     }
     restyleTexts(c, T);
+    try { if (window.SS_CROSSWORD) SS_CROSSWORD.recolorCanvas(c, T); } catch (e) {}   // v71: krossvord kataklari ham mavzuga mos
     c.requestRenderAll();
   }
   function saveState() {
@@ -308,6 +309,7 @@
       clearStyleKeys(o, ['fill', 'fontFamily']);
       o.fill = isTitle ? T.title : T.body; o.fontFamily = isTitle ? T.fontTitle : T.fontBody;
     });
+    try { if (window.SS_CROSSWORD) SS_CROSSWORD.recolorJson(objs, T); } catch (e) {}   // v71
     j.objects = (await decorJson(T)).concat(objs);
     s.json = JSON.stringify(j);
     try { if (typeof refreshSlideThumb === 'function') refreshSlideThumb(idx); } catch (e) {}
