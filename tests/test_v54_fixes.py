@@ -133,34 +133,28 @@ def test_balance_footer_unlimited():
     assert "cheksiz" in tg._balance_footer(usage, "fast", "vip@gmail.com", user)
 
 
-def test_welcome_sends_balance_later_when_db_slow(monkeypatch):
+def test_welcome_is_short_and_not_blocked_by_slow_db(monkeypatch):
+    """v75: salomlashuv qisqa (balanssiz); baza sekin bo'lsa ham darhol chiqadi va alohida balans xabari yuborilmaydi."""
     sent = []
 
     async def fake_send(cid, text, kb=None):
-        sent.append(text)
+        sent.append((text, kb))
         return {"message_id": len(sent)}
-    calls = {"n": 0}
 
-    async def slow_then_ok(user):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            await asyncio.sleep(10)          # salomlashuvdagi 6 soniyalik chegaradan oshadi
-        return {"linked": True, "free": 5, "paid": 0, "daily": 10, "wait": "", "suspended": False, "unlimited": False}
+    async def slow(user):
+        await asyncio.sleep(10)
+        return {"linked": False}
     monkeypatch.setattr(tg, "_send", fake_send)
-    monkeypatch.setattr(tg, "_balance_info", slow_then_ok)
+    monkeypatch.setattr(tg, "_balance_info", slow)
     spawned = []
     monkeypatch.setattr(tg, "_spawn", lambda coro: spawned.append(coro))
-
     real_wait_for = asyncio.wait_for
 
     async def fast_wait_for(aw, timeout):
-        return await real_wait_for(aw, timeout=min(timeout, 0.05) if timeout == 6 else timeout)
+        return await real_wait_for(aw, timeout=min(timeout, 0.05))
     monkeypatch.setattr(tg.asyncio, "wait_for", fast_wait_for)
-
-    async def run():
-        await tg._send_welcome(1, {"id": 1, "first_name": "Ali"})
-        assert len(spawned) == 1
-        await spawned[0]
-    asyncio.run(run())
-    assert "Salom" in sent[0]
-    assert any("Balans" in t and "5" in t for t in sent[1:]), sent
+    asyncio.run(tg._send_welcome(1, {"id": 1, "first_name": "Ali"}))
+    assert len(sent) == 1 and not spawned
+    text, kb = sent[0]
+    assert "Salom" in text and "Muharrirni oching" in text and "Balans" not in text
+    assert kb["inline_keyboard"][0][0]["text"] == "✨ Muharrirni ochish"

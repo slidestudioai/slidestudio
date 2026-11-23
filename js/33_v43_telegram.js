@@ -43,10 +43,20 @@
     document.head.appendChild(st);
     try { tg.ready(); } catch (e) {}
     try { tg.expand(); } catch (e) {}
-    // v66: Bot API 8.0+ — to'liq ekran. Planshet va kompyuterda ham tor "telefon ramkasi" emas, butun ekranda ochiladi.
-    // Eski Telegram versiyalarida (8.0 dan past) yoki qurilma rad etsa — jim o'tamiz, expand() yetarli.
+    // v75: TELEFONDA to'liq ekran (fullscreen) YO'Q — faqat expand(). Avval pastki menyudagi tugma va chapdagi doimiy
+    // «Muharrir» tugmasi ikki xil ochardi (biri fullscreen, biri oddiy). Endi qaysi tugmadan ochilsa ham bir xil:
+    // Telegram sarlavhasi ko'rinib turadi, yuqori qism kesilmaydi. Telegram o'zi fullscreen'da ochsa — chiqaramiz.
+    // Planshet / kompyuterda (qisqa tomoni >= 600px) v66 dagidek butun ekran.
+    var plat = String(tg.platform || '').toLowerCase();
+    var shortSide = Math.min(screen.width || 0, screen.height || 0) || Math.min(innerWidth, innerHeight);
+    var isPhone = (plat === 'android' || plat === 'ios') && shortSide < 600;
+    window.__ssTgPhone = isPhone;
+    if (isPhone) {
+      try { if (tg.isFullscreen && typeof tg.exitFullscreen === 'function') tg.exitFullscreen(); } catch (e) {}
+    }
+    // Bot API 8.0+ — to'liq ekran (faqat planshet / kompyuter). Eski versiyada yoki rad etilsa — jim o'tamiz.
     try {
-      var canFs = typeof tg.requestFullscreen === 'function' &&
+      var canFs = !isPhone && typeof tg.requestFullscreen === 'function' &&
         (typeof tg.isVersionAtLeast !== 'function' || tg.isVersionAtLeast('8.0'));
       if (canFs && !tg.isFullscreen) {
         if (tg.onEvent) tg.onEvent('fullscreenFailed', function (e) {

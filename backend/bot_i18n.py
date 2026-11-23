@@ -28,6 +28,8 @@ BUTTONS: List[Tuple[str, str, str]] = [
     ("ℹ️ Yordam", "ℹ️ Помощь", "ℹ️ Help"),
     ("🚀 Muharrirda ochish", "🚀 Открыть в редакторе", "🚀 Open in editor"),
     ("🚀 Muharrir", "🚀 Редактор", "🚀 Editor"),
+    ("✨ Muharrirni ochish", "✨ Открыть редактор", "✨ Open the editor"),
+    ("✨ Muharrir", "✨ Редактор", "✨ Editor"),
     ("🆕 Yangi slayd", "🆕 Новые слайды", "🆕 New slides"),
     ("🎨 Yangi slayd", "🎨 Новые слайды", "🎨 New slides"),
     ("📂 Slaydlarim", "📂 Мои слайды", "📂 My slides"),
@@ -60,57 +62,48 @@ BUTTONS: List[Tuple[str, str, str]] = [
 
 HELP_UZ = (
     "<b>Qanday ishlaydi</b>\n"
-    "1. <b>🎨 Yangi slayd</b> ni bosing va mavzuni yozing — bot slayd tayyorlaydi.\n"
-    "2. Tayyor bo'lgach <b>PPTX / PDF / HTML</b> tugmalaridan birini bosing — fayl yuboriladi.\n"
-    "3. O'zgartirish uchun <b>✏️ Tahrirlash</b> ni bosing va yozing: <i>«3-slaydni qisqartir»</i>.\n"
-    "4. Eski slaydlaringiz — <b>📂 Slaydlarim</b> da.\n"
-    "5. 1 slayd = 1 varaq. Varaq tugasa — «💳 Balans» orqali sotib oling.\n"
-    "6. <b>🎁 Do'st taklif qilish</b> — har bir do'st uchun +15 varaq.\n\n"
+    "1. <b>✨ Muharrirni ochish</b> ni bosing — slaydlarni jonli ko'rib, AI bilan yarating va tahrirlang.\n"
+    "2. Tayyor bo'lgach muharrirda <b>PPTX / PDF</b> ni bosing — fayl shu chatga keladi.\n"
+    "3. Tezkor yo'l: mavzuni shu yerga yozing — bot slayd tayyorlab beradi.\n"
+    "4. 1 slayd = 1 varaq. Varaq tugasa — «💳 Balans» orqali sotib oling.\n\n"
     "<b>Buyruqlar</b>\n"
-    "/new — yangi slayd\n"
     "/my — slaydlarim\n"
     "/credits — balans\n"
     "/buy — varaq sotib olish\n"
-    "/invite — do'st taklif qilish\n"
+    "/invite — do'st taklif qilish (+15 varaq)\n"
     "/settings — Google akkaunt\n"
-    "/lang — til\n"
-    "/id — Telegram ID"
+    "/support — adminga yozish\n"
+    "/lang — til"
 )
 HELP_RU = (
     "<b>Как это работает</b>\n"
-    "1. Нажмите <b>🎨 Новые слайды</b> и напишите тему — бот подготовит слайды.\n"
-    "2. Когда будет готово, нажмите <b>PPTX / PDF / HTML</b> — файл придёт в чат.\n"
-    "3. Чтобы изменить, нажмите <b>✏️ Изменить</b> и напишите: <i>«сократи 3-й слайд»</i>.\n"
-    "4. Ваши прошлые слайды — в <b>📂 Мои слайды</b>.\n"
-    "5. 1 слайд = 1 лист. Закончились листы — купите через «💳 Баланс».\n"
-    "6. <b>🎁 Пригласить друга</b> — +15 листов за каждого друга.\n\n"
+    "1. Нажмите <b>✨ Открыть редактор</b> — создавайте и меняйте слайды с AI, сразу видя результат.\n"
+    "2. Когда всё готово, нажмите в редакторе <b>PPTX / PDF</b> — файл придёт в этот чат.\n"
+    "3. Быстрый путь: напишите тему сюда — бот подготовит слайды.\n"
+    "4. 1 слайд = 1 лист. Закончились листы — купите через «💳 Баланс».\n\n"
     "<b>Команды</b>\n"
-    "/new — новые слайды\n"
     "/my — мои слайды\n"
     "/credits — баланс\n"
     "/buy — купить листы\n"
-    "/invite — пригласить друга\n"
+    "/invite — пригласить друга (+15 листов)\n"
     "/settings — аккаунт Google\n"
-    "/lang — язык\n"
-    "/id — Telegram ID"
+    "/support — написать админу\n"
+    "/lang — язык"
 )
 HELP_EN = (
     "<b>How it works</b>\n"
-    "1. Tap <b>🎨 New slides</b> and write a topic — the bot prepares the slides.\n"
-    "2. When ready, tap <b>PPTX / PDF / HTML</b> — the file is sent to you.\n"
-    "3. To change something, tap <b>✏️ Edit</b> and write: <i>«shorten slide 3»</i>.\n"
-    "4. Your earlier slides are in <b>📂 My slides</b>.\n"
-    "5. 1 slide = 1 page. Out of pages? Buy more via «💳 Balance».\n"
-    "6. <b>🎁 Invite a friend</b> — +15 pages for every friend.\n\n"
+    "1. Tap <b>✨ Open the editor</b> — create and edit slides with AI while you see them live.\n"
+    "2. When ready, tap <b>PPTX / PDF</b> in the editor — the file comes to this chat.\n"
+    "3. Quick way: write a topic here — the bot prepares the slides.\n"
+    "4. 1 slide = 1 page. Out of pages? Buy more via «💳 Balance».\n\n"
     "<b>Commands</b>\n"
-    "/new — new slides\n"
     "/my — my slides\n"
     "/credits — balance\n"
     "/buy — buy pages\n"
-    "/invite — invite a friend\n"
+    "/invite — invite a friend (+15 pages)\n"
     "/settings — Google account\n"
-    "/lang — language\n"
-    "/id — Telegram ID"
+    "/support — contact support\n"
+    "/lang — language"
 )
 
 PHRASES: List[Tuple[str, str, str]] = BUTTONS + [
@@ -137,6 +130,10 @@ PHRASES: List[Tuple[str, str, str]] = BUTTONS + [
     ("👋 <b>Salom!</b>", "👋 <b>Привет!</b>", "👋 <b>Hi!</b>"),
     ("👋 <b>Salom, ", "👋 <b>Привет, ", "👋 <b>Hi, "),
     ("Mavzuni yozing — slayd tayyorlab beraman.", "Напишите тему — я подготовлю слайды.", "Write a topic — I'll prepare the slides."),
+    ("Slaydlarni jonli ko'rib, AI bilan oson tahrirlash va tayyor shablonlardan foydalanish uchun Muharrirni oching 👇",
+     "Чтобы видеть слайды вживую, легко менять их с AI и брать готовые шаблоны — откройте редактор 👇",
+     "Open the editor to see your slides live, edit them easily with AI and use ready templates 👇"),
+    ("📩 Muharrirdan:", "📩 Из редактора:", "📩 From the editor:"),
     ("🔗 Balans va slaydlar uchun avval <b>Google akkauntni ulang</b>.", "🔗 Для баланса и слайдов сначала <b>подключите аккаунт Google</b>.", "🔗 To get a balance and slides, first <b>connect your Google account</b>."),
     ("🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.\nBu balansingizni saqlab qolish uchun kerak.", "🔗 Чтобы создавать слайды, сначала <b>подключите аккаунт Google</b>.\nЭто нужно, чтобы сохранить ваш баланс.", "🔗 To create slides, first <b>connect your Google account</b>.\nThis keeps your balance safe."),
     ("🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.", "🔗 Чтобы создавать слайды, сначала <b>подключите аккаунт Google</b>.", "🔗 To create slides, first <b>connect your Google account</b>."),

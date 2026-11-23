@@ -1568,7 +1568,7 @@
         } catch (e) { console.warn('PPTX loyiha joylash:', e); }
       }
 
-      downloadBlob(outBlob, makeSafeFileName(title, 'pptx'));
+      (window.downloadBlob || downloadBlob)(outBlob, makeSafeFileName(title, 'pptx'));   // v75: Telegram'da chatga yuboriladi
 
       var warn = [];
       if (stats.gifFail) warn.push(stats.gifFail + ' ta GIF');
