@@ -659,8 +659,37 @@
         try { if (window.ssPref) { if (el.value) ssPref.set('draft', JSON.stringify({ v: String(el.value).slice(0, 4000), at: Date.now() })); else ssPref.del('draft'); } } catch (_) {}
       }
     });
+    // v72: the draft is removed when the prompt is really SENT (the send code empties the field without an 'input'
+    // event, so before the last sent prompt came back after a reload — even in another account). A prompt that was
+    // not sent (e.g. the login redirect) keeps its draft.
+    function ssClearSentDraft() {
+      try {
+        var busy = ['aiSidebarInput', 'bottomAiTextarea', 'promptInput', 'chatInput'].some(function (id) {
+          var e = document.getElementById(id); return e && String(e.value || '').trim();
+        });
+        if (!busy && window.ssPref) ssPref.del('draft');
+      } catch (_) {}
+    }
+    function ssWrapSendForDraft() {
+      ['sendSidebarAiPrompt', 'sendBottomAiPrompt'].forEach(function (n) {
+        var f = window[n];
+        if (typeof f !== 'function' || f.__ssDraftClr) return;
+        var w = function () {
+          var r = f.apply(this, arguments);
+          setTimeout(ssClearSentDraft, 0);
+          try { Promise.resolve(r).then(ssClearSentDraft, ssClearSentDraft); } catch (_) {}
+          return r;
+        };
+        Object.keys(f).forEach(function (k) { try { w[k] = f[k]; } catch (_) {} });
+        w.__ssDraftClr = true;
+        window[n] = w;
+      });
+    }
+    window.ssClearSentDraft = ssClearSentDraft;
     // Restore on load
     document.addEventListener('DOMContentLoaded', function() {
+      ssWrapSendForDraft();
+      setTimeout(ssWrapSendForDraft, 2000);    // boshqa modullar keyinroq o'rab qo'ysa ham
       var saved = '';
       try { var d = JSON.parse((window.ssPref && ssPref.get('draft')) || 'null'); if (d && d.v && Date.now() - d.at < 3600000) saved = d.v; if (window.ssPref) ssPref.del('draft'); } catch (_) {}
       if (saved) {
