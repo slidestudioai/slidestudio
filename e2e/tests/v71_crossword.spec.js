@@ -27,6 +27,21 @@ async function aiDeck(page) {
   await page.waitForTimeout(800);
 }
 
+test('AI savol boshiga raqam yozsa — olib tashlanadi (raqamni faqat kataklar beradi)', async ({ page }) => {
+  await openEditor(page);
+  const c = await page.evaluate(() => SS_CROSSWORD.layout([{ answer: 'GERAKL', clue: '3. Yarim xudo' }, { answer: 'ANUBIS', clue: '1) Misr xudosi' }]).words.map((w) => w.clue));
+  expect(c.sort()).toEqual(['Misr xudosi', 'Yarim xudo']);
+});
+
+test('bir xil so\'zlar har qanday tartibda — bir xil to\'r va raqamlar', async ({ page }) => {
+  await openEditor(page);
+  const same = await page.evaluate((w) => {
+    const sig = (L) => JSON.stringify(L.cells) + JSON.stringify(L.words.map((x) => [x.num, x.dir, x.answer]));
+    return sig(SS_CROSSWORD.layout(w)) === sig(SS_CROSSWORD.layout(w.slice().reverse()));
+  }, WORDS);
+  expect(same).toBe(true);
+});
+
 test('joylash: hamma so\'z kesishadi, Oʻ/Gʻ bitta katak, raqamlar to\'g\'ri', async ({ page }) => {
   await openEditor(page);
   const r = await page.evaluate((w) => {
@@ -65,11 +80,19 @@ test('AI: {"type":"crossword"} — to\'r bitta guruh, savollar tahrirlanadigan m
   const s2 = await page.evaluate(async () => {
     await switchSlide(1);
     const g = canvas.getObjects().find((o) => o.ssRole === 'cw_grid');
-    return { letters: g.getObjects().filter((k) => k.ssRole === 'cw_letter').map((k) => k.text).join(''), clues: canvas.getObjects().filter((o) => o.ssRole === 'cw_clue').length };
+    const list = canvas.getObjects().filter((o) => o.ssRole === 'cw_clue').map((o) => o.text).join('\n');
+    // v73: ro'yxatdagi har bir «N. SO'Z» — N raqamli katakdan boshlanadigan so'z bilan bir xil
+    const L = SS_CROSSWORD.layout(JSON.parse(g.cwData).words);
+    const ok = list.split('\n').every((ln) => {
+      const m = /^(\d+)\. (.+)$/.exec(ln); if (!m) return false;
+      return L.words.some((w) => w.num === +m[1] && SS_CROSSWORD.tokens(w.answer).join('') === m[2]);
+    });
+    return { letters: g.getObjects().filter((k) => k.ssRole === 'cw_letter').map((k) => k.text).join(''), list, ok };
   });
   expect(s2.letters.length).toBeGreaterThan(30);
   expect(s2.letters).toContain('O‘');
-  expect(s2.clues).toBe(0);
+  expect(s2.list).toContain('KASHSHEY');
+  expect(s2.ok).toBe(true);
   // AI keyingi so'rovda krossvordni element sifatida ko'radi
   const map = await page.evaluate(() => extractDeckStateMap()[0].objects.filter((o) => o.type === 'crossword' || o.partOf));
   expect(map.find((o) => o.type === 'crossword').words[0]).toHaveProperty('answer');

@@ -4,15 +4,39 @@
       if (window.__ssIsPopupWindow) return true;
       return false;
     };
+    // v73: each start-up step has a time limit. Before, one hanging request (Supabase session, /api/config/* while the
+    // free Render server was waking up) kept the editor EMPTY — no slide list, no AI panel — until a manual reload.
+    function ssWithin(p, ms, label) {
+      var done = false;
+      return Promise.race([
+        Promise.resolve(p).then(function (v) { done = true; return v; }),
+        new Promise(function (r) { setTimeout(function () { if (!done) console.warn('[init] ' + label + ': ' + ms + ' ms — davom etamiz'); r('__timeout__'); }, ms); })
+      ]);
+    }
     async function appInit() {
       globalImageCounter = 0;
       uploadedImagesStore = [];
       bottomAiImages = [];
-      try { await initSupabaseAuth(); } catch (e) { console.error("initSupabaseAuth:", e); }
+      var _authP = null;
+      try { _authP = initSupabaseAuth(); } catch (e) { console.error("initSupabaseAuth:", e); }
+      var _authLate = false;
+      try { _authLate = (await ssWithin(_authP, 8000, 'auth')) === '__timeout__'; } catch (e) { console.error("initSupabaseAuth:", e); }
       if (window.ssIsOauthPopup()) return;   // v36: popup — faqat sessiyani almashtirish
       try { if (typeof WebSocket !== 'undefined') initWebSocket(); } catch (e) { console.error("initWebSocket:", e); }
-      try { await fetchAvailableModels(); } catch (e) { console.error("fetchAvailableModels:", e); }
-      try { await initProjectFromUrl(); } catch (e) { console.error("initProjectFromUrl:", e); }
+      try { await ssWithin(fetchAvailableModels(), 5000, 'models'); } catch (e) { console.error("fetchAvailableModels:", e); }
+      try { await ssWithin(initProjectFromUrl(), 8000, 'project'); } catch (e) { console.error("initProjectFromUrl:", e); }
+      if (_authLate && _authP) {
+        // the session arrived late: the account's own saved deck is loaded then — only if nothing was done meanwhile
+        Promise.resolve(_authP).then(async function () {
+          try { updateAuthUI(); } catch (e) {}
+          try {
+            if (window.ssIsPristineDeck && window.ssIsPristineDeck()) {
+              await initProjectFromUrl();
+              try { renderSidebar(); } catch (e) {}
+            }
+          } catch (e) { console.warn('[init] late auth', e); }
+        }).catch(function () {});
+      }
 
       hideLoading();
       if (slides.length === 0) {

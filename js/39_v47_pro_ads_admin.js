@@ -159,7 +159,9 @@
   async function checkAdmin(ov) {
     try {
       var t = token();
-      if (adminTok !== t) {
+      // v73: rad javobi (404 / tarmoq xatosi) eslab qolinmaydi — avval shu token bilan qayta tekshirilmas edi va Telegram
+      // Mini App'da sessiya to'liq tayyor bo'lmagan paytdagi bitta xato tugmani butunlay yashirib qo'yardi
+      if (adminTok !== t || !adminUrl) {
         adminTok = t; adminUrl = null;
         var r = await fetch('/api/me/admin-entry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: t }) });
         if (r.ok) { var j = await r.json(); adminUrl = j && j.url ? j.url : null; }

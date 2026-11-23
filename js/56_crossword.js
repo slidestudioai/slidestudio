@@ -45,6 +45,8 @@
       if (!w) return;
       var ans = typeof w === 'string' ? w : (w.answer || w.word || w.a || '');
       var clue = typeof w === 'string' ? '' : (w.clue || w.question || w.q || '');
+      // v73: AI ba'zan savol boshiga o'z raqamini yozadi («3. …») — raqamlarni faqat kataklar beradi
+      clue = String(clue).replace(/^\s*\d{1,2}\s*[.)\-:–]\s*/, '');
       var t = tokens(ans);
       if (t.length < MIN_LEN || t.length > MAX_LEN) return;
       var key = t.join('');
@@ -123,6 +125,9 @@
     var list = cleanWords(words);
     if (!list.length) return { cells: [], words: [], rows: 0, cols: 0, unplaced: [] };
     aspect = aspect || 1.6;
+    // v73: so'zlar qaysi tartibda kelmasin — natija BIR XIL (saqlangan krossvord qayta qurilganda, AI yoki tahrirlash
+    // oynasi so'zlarni boshqa tartibda berganda to'r va raqamlar o'zgarib, javoblar kataklarga mos kelmay qolardi)
+    list.sort(function (a, b) { var x = a.t.join(''), y = b.t.join(''); return b.t.length - a.t.length || (x < y ? -1 : x > y ? 1 : 0); });
     var rand = prng(hash(list.map(function (w) { return w.t.join(''); }).join('|')));
     var orders = [list.slice().sort(function (a, b) { return b.t.length - a.t.length; })];
     for (var i = 0; i < 60; i++) {
@@ -213,6 +218,9 @@
     var left = num(o.left, 48), top = num(o.top, 110), W = num(o.width, 864), H = num(o.height, 390);
     var showClues = o.showClues !== false && !!L.words.length && L.words.some(function (w) { return w.clue; });
     var showAnswers = !!o.showAnswers;
+    // v73: javoblar kalitida yonida TO'G'RI raqamli javoblar ro'yxati (raqamlar kataklardagi bilan bir xil)
+    var answerList = showAnswers && !showClues && o.answerList !== false && L.words.length > 0;
+    var side = showClues || answerList;
     var parts = [];
     if (!L.cells.length) {
       parts.push({ type: 'text', text: tr("Krossvord uchun kamida 2 ta so'z kerak"), left: left, top: top, width: W, height: 40, fontSize: 22, fill: P.clue, ssRole: 'cw_clue' });
@@ -220,23 +228,25 @@
     }
     // maydonlar: chapda to'r, o'ngda savollar (to'r eni ~ 52%)
     var gap = 28;
-    var gridW = showClues ? Math.round(W * (L.cols >= L.rows * 1.6 ? 0.56 : 0.5)) : W;
+    var gridW = side ? Math.round(W * (answerList ? 0.64 : (L.cols >= L.rows * 1.6 ? 0.56 : 0.5))) : W;
     var cluesX = left + gridW + gap, cluesW = W - gridW - gap;
-    var cell = Math.floor(Math.min(gridW / L.cols, H / L.rows, showClues ? 54 : 64));
+    var cell = Math.floor(Math.min(gridW / L.cols, H / L.rows, side ? 54 : 64));
     cell = Math.max(cell, 14);
     var gw = cell * L.cols, gh = cell * L.rows;
     var gx = left + (gridW - gw) / 2, gy = top + (H - gh) / 2;
-    if (showClues && gx > left) gx = left + Math.max(0, (gridW - gw) / 2);
+    if (side && gx > left) gx = left + Math.max(0, (gridW - gw) / 2);
     var json = JSON.stringify({ words: L.words.map(function (w) { return { answer: w.answer, clue: w.clue }; }).concat((L.unplaced || []).map(function (a) { return { answer: a, clue: '' }; })),
-      showClues: o.showClues !== false, showAnswers: showAnswers, acrossLabel: o.acrossLabel || '', downLabel: o.downLabel || '', letterFont: o.letterFont || 'hand' });
+      showClues: o.showClues !== false, showAnswers: showAnswers, answerList: o.answerList !== false, acrossLabel: o.acrossLabel || '', downLabel: o.downLabel || '', letterFont: o.letterFont || 'hand' });
     parts.push({ type: 'crossword_grid', left: rnd(gx), top: rnd(gy), cell: cell, cells: L.cells, showAnswers: showAnswers,
       letterFont: o.letterFont === 'print' ? 'Arial' : HAND_FONT, colors: P, ssRole: 'cw_grid', cwData: json, animation: o.animation });
 
-    if (showClues) {
+    if (side) {
       var lb = labels(o);
       var across = L.words.filter(function (w) { return w.dir === 'across'; });
       var down = L.words.filter(function (w) { return w.dir === 'down'; });
-      var lines = function (arr) { return arr.map(function (w) { return w.num + '. ' + (w.clue || '…'); }).join('\n'); };
+      var lines = function (arr) {
+        return arr.map(function (w) { return w.num + '. ' + (answerList ? tokens(w.answer).join('') : (w.clue || '…')); }).join('\n');
+      };
       var headFs = 20, colH = H;
       var blocks = [[lb[0], across], [lb[1], down]].filter(function (b) { return b[1].length; });
       var totalText = blocks.map(function (b) { return lines(b[1]); }).join('\n');
