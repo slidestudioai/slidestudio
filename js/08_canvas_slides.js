@@ -401,10 +401,6 @@
                 <span>Google bilan kirish</span>
               </button>
             `}
-            <button type="button" class="settings-menu-item" id="settingsLegalBtn">
-              <span class="material-symbols-outlined" style="color:#5f6368;">gavel</span>
-              <span>Huquqiy (Terms / Privacy / Refund)</span>
-            </button>
           </div>
         </div>
       `;
@@ -421,28 +417,6 @@
       bindTap(logoutBtn, () => { try { handleLogout(); } catch(e){} try { renderSidebar(); } catch(e){} });
       const loginBtn = panel.querySelector('#settingsLoginBtn');
       bindTap(loginBtn, () => { try { handleGoogleLogin(); } catch(e){} });
-      const legalBtn = panel.querySelector('#settingsLegalBtn');
-      if (legalBtn) {
-        bindTap(legalBtn, () => {
-          try {
-            if (window.Swal) {
-              Swal.fire({
-                title: 'Huquqiy hujjatlar',
-                html: '<div style="display:flex;flex-direction:column;gap:10px;text-align:left;">' +
-                  '<a href="/terms.html" target="_blank" rel="noopener" style="padding:12px 14px;background:#f1f3f4;border-radius:10px;text-decoration:none;color:#1f1f1f;font-weight:500;">Terms of Service</a>' +
-                  '<a href="/privacy.html" target="_blank" rel="noopener" style="padding:12px 14px;background:#f1f3f4;border-radius:10px;text-decoration:none;color:#1f1f1f;font-weight:500;">Privacy Policy</a>' +
-                  '<a href="/refund.html" target="_blank" rel="noopener" style="padding:12px 14px;background:#f1f3f4;border-radius:10px;text-decoration:none;color:#1f1f1f;font-weight:500;">Refund Policy</a>' +
-                  '</div>',
-                showConfirmButton: true,
-                confirmButtonText: 'Yopish',
-                heightAuto: false
-              });
-            } else {
-              window.open('/terms.html', '_blank');
-            }
-          } catch (e) {}
-        });
-      }
     }
     window.openSettingsPanel = openSettingsPanel;
 

@@ -36,6 +36,7 @@
     { name: 'lang', el: function () { return $('ssLangMenu'); }, open: function (el) { return el.classList.contains('open'); },
       close: function (el) { el.classList.remove('open'); } },
     { name: 'topup', el: function () { return $('topUpModal'); }, close: function (el) { clickClose(el); } },
+    { name: 'support', el: function () { return $('ssSup'); }, close: function (el) { esc(); if (el.isConnected) el.remove(); } },   // v70: 💬 Yordam
     { name: 'settings', el: function () { return $('ssSet'); }, close: function (el) { esc(); if (el.isConnected) el.remove(); } },
     { name: 'media', el: function () { return $('mediaBrowserModal'); }, close: function () { call('closeMediaBrowser'); } },
     { name: 'export', el: function () { return $('exportModal'); }, close: function () { call('closeExportModal'); } },

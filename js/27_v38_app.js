@@ -127,7 +127,7 @@
       '<div class="settings-menu" style="margin-top:12px">' +
       (li ? '<button type="button" class="settings-menu-item" data-a="logout"><span class="material-symbols-outlined" style="color:#ef4444;">logout</span><span>Chiqish</span></button>'
           : '<button type="button" class="settings-menu-item" data-a="login"><span class="material-symbols-outlined" style="color:#0b57d0;">login</span><span>Google bilan kirish</span></button>') +
-      '<button type="button" class="settings-menu-item" data-a="legal"><span class="material-symbols-outlined" style="color:#5f6368;">gavel</span><span>Huquqiy (Terms / Privacy / Refund)</span></button></div></div>';
+      '</div></div>';   // v70: «Huquqiy (Terms…)» olib tashlandi — Terms havolasi sidebar pastida doim ko'rinadi
     sidebar.appendChild(panel);
     safe(function () { if (window.ssAnimateMeters) window.ssAnimateMeters(panel); });
     safe(function () { if (window.ssTgDecorate) window.ssTgDecorate(panel); });       // v61: ulangan bo'lsa «Uzish»
@@ -141,11 +141,6 @@
       else if (a === 'buy') safe(function () { window.startCreditsCheckout(); });
       else if (a === 'tglink') safe(function () { window.ssTgLink(); });
       else if (a === 'gglink') safe(function () { window.ssGoogleLink(); });
-      else if (a === 'legal') {
-        if (window.Swal) Swal.fire({ title: 'Huquqiy hujjatlar', html: '<div style="display:flex;flex-direction:column;gap:10px;text-align:left;">' +
-          '<a href="/terms.html" target="_blank" rel="noopener">Terms of Service</a><a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a><a href="/refund.html" target="_blank" rel="noopener">Refund Policy</a></div>', confirmButtonText: 'Yopish', heightAuto: false });
-        else window.open('/terms.html', '_blank');
-      }
       else if (a === 'fx') { /* change hodisasi */ }
       else if (actions[a]) { actions[a](); if (a === 'clearRam') openSettings(); }
     });

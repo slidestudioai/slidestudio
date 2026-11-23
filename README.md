@@ -49,6 +49,7 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 
 > **Yangilashda:** `SUPABASE_SCHEMA.sql` ni Supabase SQL Editor'da qayta ishga tushiring (xavfsiz — faqat yangi jadval/ustun qo'shadi).
 > v69: `tg_pending_refs` jadvali (botdagi do'st taklifi bonusi server qayta ishga tushganda yo'qolmasligi uchun).
+> v70: `support_messages` jadvali — **💬 Yordam (Support)**: foydalanuvchi ⚙️ Sozlamalar → 💬 Yordam orqali adminga yozadi; admin **Admin panel → 💬 Yordam** bo'limida o'qiydi va javob beradi (Telegram admin(lar)ga yangi xabar haqida bildirishnoma ham boradi).
 >
 > **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida
 > `[GUNICORN] RAM limit ... -> N worker(s)` qatori). Qo'lda: `WEB_CONCURRENCY`.

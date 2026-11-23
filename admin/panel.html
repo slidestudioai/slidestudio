@@ -49,6 +49,14 @@ label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
 .empty{color:var(--mut);text-align:center;padding:26px}
 .kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);gap:10px}.kv:last-child{border:0}.kv span:first-child{color:var(--mut)}
 .pill-ok{color:var(--ok)}.pill-bad{color:var(--bad)}
+.nbadge{position:absolute;top:-4px;right:-10px;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:var(--bad);color:#fff;font-size:10px;font-weight:700;line-height:17px;font-style:normal}
+nav button i{position:relative}
+.sp-th{cursor:pointer}.sp-th.unread b{color:var(--pri)}.sp-th small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sp_user{color:var(--pri)}
+.sp-msgs{display:flex;flex-direction:column;gap:8px;margin:10px 0;max-height:52vh;overflow:auto;padding:2px}
+.sp-m{max-width:85%;padding:9px 12px;border-radius:14px;white-space:pre-wrap;word-break:break-word;background:var(--card2);border:1px solid var(--line);align-self:flex-start}
+.sp-m.adm{align-self:flex-end;background:var(--pri);color:#fff;border-color:var(--pri)}
+.sp-m small{display:block;opacity:.7;font-size:11px;margin-top:3px}
 .preview{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card2);margin-top:8px}.preview img,.preview video{width:100%;max-height:160px;object-fit:cover;display:block}.preview div{padding:10px}
 </style></head><body>
 <header><span class="dot" id="dot"></span><h1 id="ttl">Admin panel</h1><button class="btn sec sm" onclick="load(true)">⟳</button></header>
@@ -62,7 +70,8 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num=v=>v==null?'—':Number(v).toLocaleString('uz');
 let tab=localStorage.getItem('adm_tab')||'home';
-const TABS=[['home','📊','Bosh'],['users','👥','Odamlar'],['ads','📢','Reklama'],['settings','⚙️','Sozlama'],['more','☰','Yana']];
+const TABS=[['home','📊','Bosh'],['users','👥','Odamlar'],['support','💬','Yordam'],['ads','📢','Reklama'],['settings','⚙️','Sozlama'],['more','☰','Yana']];
+let supUnread=0;
 
 async function api(op,body){
   let r;
@@ -78,9 +87,10 @@ function toast(m,err){const t=document.createElement('div');t.className='toast'+
 function sheet(html){closeSheet();const s=document.createElement('div');s.className='sheet';s.id='sheet';s.innerHTML='<div>'+html+'</div>';s.addEventListener('click',e=>{if(e.target===s)closeSheet();});document.body.appendChild(s);return s;}
 function closeSheet(){const s=$('#sheet');if(s)s.remove();}
 function fdate(v){if(!v)return '—';const d=new Date(v);return isNaN(d)?'—':d.toLocaleString('uz',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});}
-function nav(){$('#nav').innerHTML=TABS.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="go('${t[0]}')"><i>${t[1]}</i>${t[2]}</button>`).join('');}
+function nav(){$('#nav').innerHTML=TABS.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="go('${t[0]}')"><i>${t[1]}${t[0]==='support'&&supUnread?`<span class="nbadge">${supUnread>99?'99+':supUnread}</span>`:''}</i>${t[2]}</button>`).join('');}
+async function refreshUnread(){try{const r=await api('support_unread');supUnread=+r.unread||0;nav();}catch(e){}}
 function go(t){tab=t;localStorage.setItem('adm_tab',t);nav();load();}
-async function load(force){nav();const m=$('#main');try{await ({home,users,ads,settings,more}[tab])(m);}catch(e){if(e.message!=='expired')m.innerHTML='<div class="empty">Yuklanmadi: '+esc(e.message)+'</div>';}}
+async function load(force){nav();const m=$('#main');try{await ({home,users,support,ads,settings,more}[tab]||home)(m);}catch(e){if(e.message!=='expired')m.innerHTML='<div class="empty">Yuklanmadi: '+esc(e.message)+'</div>';}}
 
 /* ---------------- BOSH ---------------- */
 async function home(m){
@@ -91,6 +101,7 @@ async function home(m){
   `<h2>Foydalanuvchilar</h2><div class="grid">${st('Jami',num(s.users_total),'+'+num(s.new_7d)+' (7 kun)')}${st('Faol (24 soat)',num(s.users_24h),num(s.users_7d)+' (7 kun)')}${st('Telegram',num(s.tg_users),'ulangan: '+num(s.linked))}${st('VIP / cheksiz',num(s.vip)+' / '+num(s.unlimited))}${st('Bloklangan',num(s.blocked))}</div>
   <h2>Daromad</h2><div class="grid">${st('Paket (30 kun)',num(s.purchases_30d))}${st('Jami buyurtma',num(s.orders_total))}</div>
   <h2>Reklama</h2><div class="grid">${st('Faol reklama',num(s.ads_active))}${st('Ko\'rsatildi',num(s.ad_impressions))}${st('Bosildi',num(s.ad_clicks),'CTR '+s.ad_ctr+'%')}</div>
+  <h2>Yordam</h2><div class="grid"><div class="card stat sp-th" onclick="go('support')"><span>O'qilmagan xabarlar</span><b>${num(s.support_unread)}</b></div></div>
   <h2>Server</h2><div class="grid">${st('Onlayn (WS)',num(s.ws_live))}${st('Sessiyalar',num(s.sessions))}${st('Holat',sys.paused?'⏸ to\'xtatilgan':'🟢 ishlayapti')}</div>`;
 }
 
@@ -198,6 +209,30 @@ async function saveSettings(){
   try{const r=await api('settings_set',{values:v});toast(r.persisted?'✓ Saqlandi':'⚠ Faqat xotirada: '+(r.error||''),!r.persisted);}catch(e){}
 }
 
+/* ---------------- YORDAM (support): foydalanuvchilar yozgan xabarlar ---------------- */
+async function support(m){
+  m.innerHTML='<div class="card" style="padding:0" id="splist"><div class="empty">Yuklanmoqda…</div></div>';
+  const r=await api('support_list',{limit:100});const t=r.threads||[];
+  supUnread=+r.unread_total||0;nav();
+  const box=$('#splist');
+  box.innerHTML=t.length?t.map(x=>`<div class="item sp-th${x.unread?' unread':''}" data-uid="${esc(x.user_id)}"><div class="t"><b>${esc(x.email||x.author||x.user_id)}</b><small>${x.last_from_admin?'↩︎ Siz: ':''}${esc(x.last_body)}</small><small>${fdate(x.last_at)}</small></div>${x.unread?`<span class="badge bad">${x.unread}</span>`:''}</div>`).join(''):'<div class="empty">Hali xabar yo\'q</div>';
+  box.onclick=e=>{const it=e.target.closest('[data-uid]');if(it)openThread(it.getAttribute('data-uid'));};
+}
+async function openThread(uid){
+  const r=await api('support_thread',{user_id:uid});
+  const msgs=(r.messages||[]).map(x=>`<div class="sp-m${x.from_admin?' adm':''}">${esc(x.body)}<small>${x.from_admin?'Admin · ':''}${fdate(x.created_at)}</small></div>`).join('')||'<div class="empty">Bo\'sh</div>';
+  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(r.email||'Foydalanuvchi')}</h3><small style="color:var(--mut)"><a href="#" id="sp_user">Foydalanuvchi kartasi →</a></small>
+  <div class="sp-msgs" id="sp_msgs">${msgs}</div>
+  <label>Javob (foydalanuvchi saytda ⚙️ Sozlamalar → 💬 Yordam da ko'radi; Telegram ulangan bo'lsa xabar ham boradi)</label>
+  <textarea id="sp_t" maxlength="2000" placeholder="Javob yozing…"></textarea>
+  <div class="row" style="margin-top:10px"><button class="btn" id="sp_s">Yuborish</button></div>`);
+  const ml=$('#sp_msgs');ml.scrollTop=ml.scrollHeight;
+  $('#sp_user').onclick=e=>{e.preventDefault();openUser(uid);};
+  $('#sp_s').onclick=async()=>{const t=$('#sp_t').value.trim();if(t.length<2)return toast('Javob yozing',1);
+    $('#sp_s').disabled=true;try{await api('support_reply',{user_id:uid,text:t});toast('✓ Yuborildi');await openThread(uid);}catch(e){$('#sp_s').disabled=false;}};
+  if(tab==='support')support($('#main'));else refreshUnread();
+}
+
 /* ---------------- YANA: xabar / tizim / jurnal ---------------- */
 let mtab='bc';
 async function more(m){
@@ -234,5 +269,5 @@ async function led(b){
   const r=await api(ltab,{limit:80});const rows=r.rows||[];
   $('#lbody').innerHTML=rows.length?rows.map(x=>ltab==='audit'?`<div class="item"><div class="t"><b>${esc(x.action)}</b><small>${esc(x.actor)} · ${esc(x.target)} · ${fdate(x.created_at)}</small></div></div>`:ltab==='orders'?`<div class="item"><div class="t"><b>${esc(x.email||x.user_id)}</b><small>#${esc(x.order_id)} · ${fdate(x.created_at)}</small></div><b>${num(x.pages)}</b></div>`:`<div class="item"><div class="t"><b>${esc(x.email||x.user_id)}</b><small>${esc(x.kind)} · ${fdate(x.created_at)}</small></div><b>${x.amount>0?'+':''}${num(x.amount)}</b></div>`).join(''):'<div class="empty">Bo\'sh</div>';
 }
-(async()=>{nav();try{await api('ping');}catch(e){return;}load();})();
+(async()=>{nav();try{await api('ping');}catch(e){return;}load();refreshUnread();setInterval(()=>{if(!document.hidden)refreshUnread();},60000);})();
 </script></body></html>
