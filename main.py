@@ -3152,23 +3152,15 @@ try:
 except Exception as _cm_err:
     print(f"[COMMUNITY] yuklanmadi: {_cm_err}")
 
-# Yordam (Support): foydalanuvchi ⚙️ Sozlamalar → 💬 Yordam orqali adminga yozadi, admin paneldan javob beriladi
-async def _support_notify_admins(text: str) -> None:
-    if tgbot is None:
-        return
-    for _tid in admin_core.admin_tg_ids():
-        try:
-            await tgbot.admin_send(_tid, text)
-        except Exception as _e:
-            print(f"[SUPPORT] admin xabari yuborilmadi: {str(_e)[:100]}")
-
+# Yordam (Support): foydalanuvchi saytda (⚙️ Sozlamalar → 💬 Yordam) yoki botda (⚙️ Sozlamalar → 💬 Adminga yozish)
+# adminga yozadi; admin sayt admin panelida yoki botdagi admin menyuda (💬 Yordam) o'qiydi va javob beradi.
 try:
     from backend.support import register_support
     register_support(app, {
         "get_supabase": lambda: supabase,
         "get_loop": lambda: admin_core._deps.get("loop"),
-        "notify_admins": _support_notify_admins,
-        "notify_user": (lambda uid, text: tgbot.notify_user(uid, text)) if tgbot is not None else None,
+        "notify_admins": tgbot.support_notify_admins if tgbot is not None else None,
+        "notify_reply": tgbot.support_notify_reply if tgbot is not None else None,
     })
 except Exception as _sp_err:
     print(f"[SUPPORT] yuklanmadi: {_sp_err}")

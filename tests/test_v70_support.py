@@ -7,8 +7,11 @@ from backend import admin_core, support
 @pytest.fixture(autouse=True)
 def _reset():
     support._sent.clear()
+    saved = dict(support._deps)
     yield
     support._sent.clear()
+    support._deps.clear()
+    support._deps.update(saved)
 
 
 def _users(sb):
@@ -95,3 +98,104 @@ def test_admin_reply_errors(sb, client):
 def test_admin_http_api_requires_token(sb, client):
     r = client.post("/_a/api/support_list", json={})
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------- Telegram bot
+import asyncio  # noqa: E402
+
+from backend import telegram_bot as tb  # noqa: E402
+
+
+def _bot(monkeypatch, sb):
+    sent = []
+
+    async def fake_send(cid, text, kb=None):
+        sent.append((cid, text, kb))
+        return {"message_id": 1}
+
+    async def fake_tg(method, **kw):
+        sent.append((kw.get("chat_id"), method, kw.get("reply_markup")))
+        return True
+
+    async def fake_uid(user):
+        return ("u-tg", "tg555@t.me")
+
+    monkeypatch.setattr(tb, "_send", fake_send)
+    monkeypatch.setattr(tb, "_show", lambda cid, mid, text, kb=None: fake_send(cid, text, kb))
+    monkeypatch.setattr(tb, "tg", fake_tg)
+    monkeypatch.setattr(tb, "_ensure_uid", fake_uid)
+    monkeypatch.setattr(tb, "ENABLED", True)
+    return sent
+
+
+def test_bot_user_writes_to_support(sb, monkeypatch):
+    sent = _bot(monkeypatch, sb)
+    cid = 555
+    user = {"id": cid, "first_name": "Ali"}
+    tb._chats.pop(cid, None)
+    st = tb._state(cid)
+    asyncio.run(tb._support_open(cid, user))
+    assert st.get("sup_await") is True and "Adminga yozish" in sent[-1][1]
+    asyncio.run(tb._handle_text(cid, user, "Botda PDF ochilmayapti"))
+    rows = sb.tables["support_messages"]
+    assert rows[-1]["body"] == "Botda PDF ochilmayapti" and rows[-1]["source"] == "tg" and rows[-1]["author"] == "Ali"
+    assert "sup_await" not in st and "yuborildi" in sent[-1][1]
+    # keyingi oddiy matn endi adminga ketmaydi
+    calls = []
+    monkeypatch.setattr(tb, "_google_ok", lambda *a: asyncio.sleep(0, True))
+    monkeypatch.setattr(tb, "_run_new", lambda cid, u, t: ("new", t))
+    monkeypatch.setattr(tb, "_spawn", lambda c: calls.append(c))
+    asyncio.run(tb._handle_text(cid, user, "Kosmos haqida slayd"))
+    assert calls == [("new", "Kosmos haqida slayd")] and len(sb.tables["support_messages"]) == 1
+
+
+def test_bot_menu_button_cancels_support_wait(sb, monkeypatch):
+    _bot(monkeypatch, sb)
+    cid = 556
+    tb._chats.pop(cid, None)
+    st = tb._state(cid)
+    st["sup_await"] = True
+    seen = []
+
+    async def menu(c, u, a):
+        seen.append(a)
+
+    monkeypatch.setattr(tb, "_menu_action", menu)
+    asyncio.run(tb._handle_text(cid, {"id": cid}, tb.BTN_BAL))
+    assert seen == ["bal"] and "sup_await" not in st and "support_messages" not in sb.tables
+
+
+def test_bot_admin_lists_and_replies(sb, client, monkeypatch):
+    sent = _bot(monkeypatch, sb)
+    sb.add_user("t1", "u-1", "one@x.uz")
+    client.post("/api/support/send", json={"token": "t1", "body": "Saytdan savol"})
+    monkeypatch.setenv("ADMIN_TG_IDS", "777")
+    admin = {"id": 777}
+    monkeypatch.setattr(tb, "_adm", lambda u: admin_core)
+    asyncio.run(tb._admin_cb(777, 10, admin, "a:sup"))
+    assert "one@x.uz" in sent[-1][1] and any("a:spt:u-1" == b["callback_data"] for r in sent[-1][2]["inline_keyboard"] for b in r)
+    asyncio.run(tb._admin_cb(777, 10, admin, "a:spr:u-1"))
+    st = tb._state(777)
+    assert st["adm"] == {"await": "sup_reply", "uid": "u-1"}
+    replied = []
+
+    async def notify(uid, body):
+        replied.append((uid, body))
+
+    support._deps["notify_reply"] = notify
+    done = asyncio.run(tb._admin_input(777, admin, {"text": "Botdan javob"}, st))
+    assert done is True and "adm" not in st
+    rows = sb.tables["support_messages"]
+    assert rows[-1]["body"] == "Botdan javob" and rows[-1]["from_admin"] is True
+    assert "Javob yuborildi" in sent[-1][1]
+
+
+def test_bot_notifies_admins_with_reply_button(sb, monkeypatch):
+    sent = _bot(monkeypatch, sb)
+    monkeypatch.setenv("ADMIN_TG_IDS", "777,888")
+    monkeypatch.setattr(tb, "_deps", dict(tb._deps, admin=admin_core))
+    asyncio.run(tb.support_notify_admins("u-1", "one@x.uz", "<b>salom</b>", "tg"))
+    assert {c for c, *_ in sent} == {777, 888}
+    text, kb = sent[0][1], sent[0][2]
+    assert "&lt;b&gt;salom&lt;/b&gt;" in text and "Telegram bot" in text
+    assert kb["inline_keyboard"][0][0]["callback_data"] == "a:spr:u-1"

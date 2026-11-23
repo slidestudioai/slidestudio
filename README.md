@@ -49,7 +49,7 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 
 > **Yangilashda:** `SUPABASE_SCHEMA.sql` ni Supabase SQL Editor'da qayta ishga tushiring (xavfsiz — faqat yangi jadval/ustun qo'shadi).
 > v69: `tg_pending_refs` jadvali (botdagi do'st taklifi bonusi server qayta ishga tushganda yo'qolmasligi uchun).
-> v70: `support_messages` jadvali — **💬 Yordam (Support)**: foydalanuvchi ⚙️ Sozlamalar → 💬 Yordam orqali adminga yozadi; admin **Admin panel → 💬 Yordam** bo'limida o'qiydi va javob beradi (Telegram admin(lar)ga yangi xabar haqida bildirishnoma ham boradi).
+> v70: `support_messages` jadvali — **💬 Yordam (Support)**: foydalanuvchi saytda (⚙️ Sozlamalar → 💬 Yordam) yoki botda (⚙️ Sozlamalar → 💬 Adminga yozish, `/support`) adminga yozadi. Admin javobni sayt **Admin panel → 💬 Yordam** da yoki botdagi admin menyuda (`admin` → 💬 Yordam) beradi. Yangi xabar Telegram admin(lar)ga «✍️ Javob yozish» tugmasi bilan keladi; javob foydalanuvchiga saytda va (Telegram ulangan bo'lsa) botda ko'rinadi.
 >
 > **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida
 > `[GUNICORN] RAM limit ... -> N worker(s)` qatori). Qo'lda: `WEB_CONCURRENCY`.

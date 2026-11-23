@@ -220,10 +220,10 @@ async function support(m){
 }
 async function openThread(uid){
   const r=await api('support_thread',{user_id:uid});
-  const msgs=(r.messages||[]).map(x=>`<div class="sp-m${x.from_admin?' adm':''}">${esc(x.body)}<small>${x.from_admin?'Admin · ':''}${fdate(x.created_at)}</small></div>`).join('')||'<div class="empty">Bo\'sh</div>';
+  const msgs=(r.messages||[]).map(x=>`<div class="sp-m${x.from_admin?' adm':''}">${esc(x.body)}<small>${x.from_admin?'Admin · ':x.source==='tg'?'✈️ Telegram · ':'🌐 Sayt · '}${fdate(x.created_at)}</small></div>`).join('')||'<div class="empty">Bo\'sh</div>';
   const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(r.email||'Foydalanuvchi')}</h3><small style="color:var(--mut)"><a href="#" id="sp_user">Foydalanuvchi kartasi →</a></small>
   <div class="sp-msgs" id="sp_msgs">${msgs}</div>
-  <label>Javob (foydalanuvchi saytda ⚙️ Sozlamalar → 💬 Yordam da ko'radi; Telegram ulangan bo'lsa xabar ham boradi)</label>
+  <label>Javob (foydalanuvchi saytda ⚙️ Sozlamalar → 💬 Yordam da ko'radi; Telegram ulangan bo'lsa javob botga ham boradi)</label>
   <textarea id="sp_t" maxlength="2000" placeholder="Javob yozing…"></textarea>
   <div class="row" style="margin-top:10px"><button class="btn" id="sp_s">Yuborish</button></div>`);
   const ml=$('#sp_msgs');ml.scrollTop=ml.scrollHeight;

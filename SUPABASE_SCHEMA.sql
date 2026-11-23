@@ -760,6 +760,8 @@ create table if not exists public.support_messages (
   read_by_user  boolean     not null default true,
   created_at    timestamptz not null default now()
 );
+-- qayerdan yozilgan: 'site' (sayt) | 'tg' (Telegram bot) | 'admin' (admin javobi)
+alter table public.support_messages add column if not exists source text not null default 'site';
 create index if not exists support_messages_user_idx   on public.support_messages (user_id, created_at desc);
 create index if not exists support_messages_recent_idx on public.support_messages (created_at desc);
 create index if not exists support_messages_unread_idx on public.support_messages (read_by_admin) where from_admin = false;
