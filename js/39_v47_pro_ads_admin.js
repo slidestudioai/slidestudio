@@ -114,6 +114,7 @@
       if (!s.unlimited) html += '<button type="button" class="ssset-btn pri" id="ssBuyPack">➕ Varaq sotib olish' + packTxt + '</button>';
       if (window.ssTgLink && !tgw) html += '<button type="button" class="ssset-btn" id="ssTg" data-tg-link>✈️ Telegram botni ulash</button>';
       if (tgw && window.ssGoogleLink) html += '<button type="button" class="ssset-btn" id="ssGg" data-google-link>🔗 Google akkauntni ulash</button>';   // v61: Mini App
+      html += '<button type="button" class="ssset-btn" id="ssSupport">💬 Yordam (Support)<span class="ss-sup-badge" style="display:none">0</span></button>';            // v70: adminga shaxsiy xabar (js/55_support.js)
       html += '<button type="button" class="ssset-btn" id="ssTools">🛠 Asboblar va tozalash</button>';
       html += '<button type="button" class="ssset-btn adm" id="ssAdmin" style="display:none">🛡 Admin panel</button>';
       if (!tgw) html += '<button type="button" class="ssset-btn" id="ssOut">Chiqish</button>';
@@ -121,6 +122,7 @@
       html += '<div class="ssset-head"><div class="ssset-av">S</div><div><b>Mehmon</b><span class="ssset-plan">Kirmagansiz</span></div></div>' +
         '<small>Kirsangiz AI, balans va loyihalarni saqlash ishlaydi.</small>' +
         (tgw ? '' : '<button type="button" class="ssset-btn pri" id="ssIn">Google bilan kirish</button>') +
+        '<button type="button" class="ssset-btn" id="ssSupport">💬 Yordam (Support)<span class="ss-sup-badge" style="display:none">0</span></button>' +
         '<button type="button" class="ssset-btn" id="ssTools">🛠 Asboblar</button>';
     }
     html += '</div>';
@@ -142,6 +144,12 @@
       try { if (typeof toggleSidebarMenu === 'function' && window.innerWidth <= 900) { var sb = $('sidebar'); if (sb && !sb.classList.contains('open')) toggleSidebarMenu(); } } catch (e) {}
       try { if (oldOpen) oldOpen(); } catch (e) { toast('Asboblar oynasini ochib bo\u2018lmadi', 'error'); console.warn('[v47] oldOpen', e); }
     });
+    on('ssSupport', function () { closeSettings(); if (window.ssOpenSupport) window.ssOpenSupport(); else toast('Yordam oynasini ochib bo\u2018lmadi', 'error'); });
+    try {                                          // o'qilmagan admin javoblari soni
+      if (li && window.ssSupportCheck) window.ssSupportCheck().then(function (n) {
+        var bd = ov.querySelector('#ssSupport .ss-sup-badge'); if (bd) { bd.textContent = n; bd.style.display = n > 0 ? '' : 'none'; }
+      });
+    } catch (e) {}
     on('ssAdmin', function () { closeSettings(); if (adminUrl) openExternal(adminUrl); });
     try { if (window.ssAnimateMeters) window.ssAnimateMeters(ov); } catch (e) {}
     if (li) checkAdmin(ov);

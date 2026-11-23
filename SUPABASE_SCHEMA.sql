@@ -742,3 +742,29 @@ create table if not exists public.tg_pending_refs (
 );
 alter table public.tg_pending_refs enable row level security;
 revoke all on public.tg_pending_refs from anon, authenticated;
+
+
+-- ============================================================================
+-- 16) v70: Yordam (Support) — foydalanuvchi ⚙️ Sozlamalar → 💬 Yordam orqali adminga shaxsiy xabar yozadi,
+--     admin «Admin panel → 💬 Yordam» bo'limida o'qiydi va javob beradi. Faqat server (service_role) o'qiydi.
+--     Qayta ishga tushirish xavfsiz.
+-- ============================================================================
+create table if not exists public.support_messages (
+  id            bigserial primary key,
+  user_id       text        not null,
+  email         text        not null default '',
+  author        text        not null default '',
+  body          text        not null,
+  from_admin    boolean     not null default false,
+  read_by_admin boolean     not null default false,
+  read_by_user  boolean     not null default true,
+  created_at    timestamptz not null default now()
+);
+create index if not exists support_messages_user_idx   on public.support_messages (user_id, created_at desc);
+create index if not exists support_messages_recent_idx on public.support_messages (created_at desc);
+create index if not exists support_messages_unread_idx on public.support_messages (read_by_admin) where from_admin = false;
+alter table public.support_messages enable row level security;
+revoke all on public.support_messages from anon, authenticated;
+revoke all on sequence public.support_messages_id_seq from anon, authenticated;
+grant all on public.support_messages to service_role;
+grant all on sequence public.support_messages_id_seq to service_role;

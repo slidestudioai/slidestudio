@@ -697,6 +697,7 @@ def stats() -> Dict[str, Any]:
         "ads_active": _count("ads", lambda q: q.eq("active", True)),
         "purchases_30d": _count("usage_ledger", lambda q: q.eq("kind", "purchase").gte("created_at", d30)),
         "orders_total": _count("payment_events"),
+        "support_unread": _count("support_messages", lambda q: q.eq("from_admin", False).eq("read_by_admin", False)),
     }
     imp = clk = 0
     if sb:
@@ -745,6 +746,7 @@ def system_info() -> Dict[str, Any]:
             "ads": _probe("ads", "id"), "app_settings": _probe("app_settings", "key"),
             "admin_audit": _probe("admin_audit", "id"), "tg_links": _probe("tg_links", "tg_id"),
             "payment_events": _probe("payment_events", "order_id"), "usage_ledger": _probe("usage_ledger", "id"),
+            "support_messages": _probe("support_messages", "id"),
         },
         "settings_persisted": appsettings.persisted,
         "paused": bool((_deps.get("paused") or (lambda: False))()),
@@ -1000,6 +1002,21 @@ def _dispatch(op: str, body: Dict[str, Any], actor: str):
             for r in rows:
                 r["email"] = em.get(str(r.get("user_id")), "")
         return {"rows": rows}
+    # ---- yordam (support) yozishmalari
+    if op in ("support_list", "support_thread", "support_reply", "support_unread"):
+        from backend import support
+        try:
+            if op == "support_list":
+                return support.admin_list(int(body.get("limit") or 100))
+            if op == "support_unread":
+                return {"unread": support.admin_unread_count()}
+            if op == "support_thread":
+                return support.admin_thread(str(body.get("user_id") or ""))
+            r = support.admin_reply(str(body.get("user_id") or ""), body.get("text"))
+            audit(actor, "support.reply", str(body.get("user_id") or ""))
+            return r
+        except support.SupportError as e:
+            raise AdminError(e.msg, e.code)
     # ---- ommaviy xabar
     if op == "broadcast_preview":
         return {"count": len(_audience(str(body.get("audience") or "all")))}
