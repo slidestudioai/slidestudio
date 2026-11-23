@@ -1085,7 +1085,7 @@
           try { pdfBytes = ssAppendMetaTrailer(pdfBytes, metaStr); } catch (e) { console.warn('PDF trailer:', e); }
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
           downloadBlob(blob, makeSafeFileName(projectTitle || 'presentation', 'pdf'));
-          showToast("PDF yuklab olindi (asl ko'rinish + tahrirlash metadata)");
+          if (!window.__ssTgSendOn) showToast("PDF yuklab olindi (asl ko'rinish + tahrirlash metadata)");
           return;
         }
       } catch (e) {
@@ -1113,8 +1113,8 @@
             });
           }
         } catch (e) {}
-        doc.save(makeSafeFileName(projectTitle || 'presentation', 'pdf'));
-        showToast("PDF yuklab olindi (visual; pdf-lib yo'q)");
+        downloadBlob(doc.output('blob'), makeSafeFileName(projectTitle || 'presentation', 'pdf'));   // v75: Telegram'da chatga
+        if (!window.__ssTgSendOn) showToast("PDF yuklab olindi (visual; pdf-lib yo'q)");
       } catch (e) {
         showToast('PDF saqlash xato: ' + e.message, 'error');
       }

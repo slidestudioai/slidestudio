@@ -277,13 +277,25 @@ def _https() -> bool:
     return SITE_URL.startswith("https://") and "localhost" not in SITE_URL and "127.0.0.1" not in SITE_URL
 
 
+BTN_EDITOR = "✨ Muharrirni ochish"
+MENU_BTN = "✨ Muharrir"                         # chapdagi doimiy tugma (setChatMenuButton)
+
+
 def kb_reply() -> dict:
-    """Doimiy pastki menyu: 2 ustunli, tartibli (v47)."""
-    last = [{"text": "🚀 Muharrir", "web_app": {"url": _app_url()}}] if _https() else [{"text": BTN_SITE}]
-    return {
-        "keyboard": [[{"text": BTN_NEW}, {"text": BTN_MY}], [{"text": BTN_BAL}, {"text": BTN_SET}], [{"text": BTN_INV}, {"text": BTN_ABOUT}], last],
-        "resize_keyboard": True, "is_persistent": True, "input_field_placeholder": "Slayd mavzusini yozing…",
-    }
+    """v75: katta pastki menyu (7 tugma) OLIB TASHLANDI — kirish nuqtasi bitta: chapdagi doimiy «✨ Muharrir» tugmasi
+    va xabardagi «✨ Muharrirni ochish». Eski foydalanuvchilarda qolgan klaviatura shu bilan yopiladi."""
+    return {"remove_keyboard": True}
+
+
+def kb_home() -> dict:
+    """v75: salomlashuv — bitta asosiy tugma (Mini App) + pastda kichik yordamchi qator."""
+    first = ({"text": BTN_EDITOR, "web_app": {"url": _app_url()}} if _https()
+             else {"text": BTN_EDITOR, "url": _app_url()})
+    return {"inline_keyboard": [[first], [_btn("💳 Balans", "bal"), _btn("ℹ️ Yordam", "about")]]}
+
+
+def _menu_button() -> dict:
+    return {"type": "web_app", "text": i18n.translate(MENU_BTN, _ctx_lang.get() or "uz"), "web_app": {"url": _app_url()}}
 
 
 def kb_main(topic: str = "") -> dict:
@@ -731,10 +743,11 @@ def _balance_block(i: dict) -> str:
     return f"💎 Varaqlar: <b>{_fmt_pages(float(i['free']) + float(i['paid']))}</b>"
 
 
-def _welcome_text(name: str, info: Optional[dict]) -> str:
+def _welcome_text(name: str, info: Optional[dict] = None) -> str:
+    """v75: qisqa — salom + bitta yo'naltiruvchi eslatma (balans «💳 Balans» tugmasida)."""
     hello = f"👋 <b>Salom, {esc(name)}!</b>" if name else "👋 <b>Salom!</b>"
-    bal = ("\n\n" + _balance_block(info)) if (info and not info.get("locked")) else ""
-    return f"{hello}\nMavzuni yozing — slayd tayyorlab beraman.{bal}"
+    return (f"{hello}\nSlaydlarni jonli ko'rib, AI bilan oson tahrirlash va tayyor shablonlardan foydalanish uchun "
+            "Muharrirni oching 👇")
 
 
 async def _credits_text(user: dict) -> str:
@@ -3834,7 +3847,7 @@ async def _menu_action(cid: int, user: dict, action: str) -> None:
     elif action == "set":
         await _show_settings(cid, user)
     elif action == "about":
-        await _send(cid, ABOUT, kb_main())
+        await _send(cid, ABOUT, kb_home())
     elif action == "inv":
         await _show_invite(cid, user)
 
@@ -3879,7 +3892,7 @@ async def _handle_callback(cb: dict) -> None:
     elif data == "dismiss":
         await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
     elif data == "about":
-        await _send(cid, ABOUT, kb_main())
+        await _send(cid, ABOUT, kb_home())
     elif data.startswith("smode:"):
         st["mode"] = "deep" if data.endswith("deep") else "fast"
         await _show_settings(cid, user, mid)
@@ -4162,20 +4175,6 @@ def _account_context(usage: Optional[dict], email: str, user: dict) -> str:
         return ""
 
 
-async def _late_balance(chat_id: int, user: dict) -> None:
-    """v54: baza sekin javob bersa (Render uyg'onishi) salomlashuvda balans yo'qolib qolardi — fonda olib, alohida yuboriladi."""
-    try:
-        info = await asyncio.wait_for(_balance_info(user), timeout=25)
-    except Exception:
-        info = None
-    if info and not info.get("locked"):
-        await _send(chat_id, f"💳 <b>Balans</b>\n{_balance_block(info)}")
-    elif info and not _is_admin(user):
-        await _send(chat_id, LINK_FIRST, {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
-    elif not info:
-        await _send(chat_id, "⚠️ Balansni hozir o'qib bo'lmadi. «💳 Balans» tugmasini bosib qayta urinib ko'ring.")
-
-
 async def _choose_lang(cid: int, mid: Optional[int], user: dict, code: str) -> None:
     """Til tugmasi bosildi: saqlaymiz, menyu va Mini App tugmasini shu tilda qayta yuboramiz."""
     lang = i18n.norm_lang(code) or "uz"
@@ -4186,8 +4185,7 @@ async def _choose_lang(cid: int, mid: Optional[int], user: dict, code: str) -> N
     if mid:
         await tg("editMessageText", chat_id=cid, message_id=mid, text="✅ " + i18n.NAMES[lang], reply_markup={"inline_keyboard": []})
     if _https():                                              # shu chat uchun «Muharrir» tugmasi ham shu tilda ochilsin
-        await tg("setChatMenuButton", chat_id=cid, menu_button={"type": "web_app", "text": i18n.translate("🚀 Muharrir", lang),
-                                                                "web_app": {"url": _app_url()}})
+        await tg("setChatMenuButton", chat_id=cid, menu_button=_menu_button())
     st = _state(cid)
     arg = st.pop("start_arg", None) or ""
     if arg.lower().startswith("link_"):
@@ -4197,17 +4195,32 @@ async def _choose_lang(cid: int, mid: Optional[int], user: dict, code: str) -> N
     await _send_welcome(cid, user)
 
 
+async def _drop_old_keyboard(chat_id: int) -> None:
+    """v75: avvalgi versiyalardagi katta pastki klaviaturani yopadi (yordamchi xabar darhol o'chiriladi) va
+    shu chatning chapdagi «Muharrir» tugmasini yangi nom/tilga o'tkazadi."""
+    st = _state(chat_id)
+    if st.get("kb_dropped"):
+        return
+    st["kb_dropped"] = True
+    if _https():                                  # chapdagi doimiy tugma ham yangilanadi (✨ Muharrir, shu tilda)
+        await tg("setChatMenuButton", chat_id=chat_id, menu_button=_menu_button())
+    m = await tg("sendMessage", chat_id=chat_id, text="⌛", reply_markup={"remove_keyboard": True})
+    if isinstance(m, dict) and m.get("message_id"):
+        await tg("deleteMessage", chat_id=chat_id, message_id=m["message_id"])
+
+
 async def _send_welcome(chat_id: int, user: dict) -> None:
-    try:
-        info = await asyncio.wait_for(_balance_info(user), timeout=6)
-    except Exception:
-        info = None
     _state(chat_id)["ui"] = None
-    await _send(chat_id, _welcome_text(user.get("first_name") or "", info), kb_reply())
-    if info is None:
-        _spawn(_late_balance(chat_id, user))
-    if info and not info.get("linked") and not _is_admin(user):
-        await _send(chat_id, "🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.", {"inline_keyboard": [[_btn("🔗 Google ulash", "linkinfo")]]})
+    await _drop_old_keyboard(chat_id)
+    kb = kb_home()
+    if not _is_admin(user):                       # Google ulanmagan bo'lsa — alohida xabar emas, shu yerda kichik tugma
+        try:
+            info = await asyncio.wait_for(_balance_info(user), timeout=4)
+        except Exception:
+            info = None
+        if info and not info.get("linked"):
+            kb["inline_keyboard"].append([_btn("🔗 Google ulash", "linkinfo")])
+    await _send(chat_id, _welcome_text(user.get("first_name") or ""), kb)
 
 
 async def handle_update(data: dict) -> None:
@@ -4278,7 +4291,7 @@ async def handle_update(data: dict) -> None:
             st["start_arg"] = None
             await _send(chat_id, i18n.PICK_TEXT, i18n.picker_markup())
         elif cmd == "/help":
-            await _send(chat_id, HELP, kb_reply())
+            await _send(chat_id, HELP, kb_home())
         elif cmd == "/new":
             await _menu_action(chat_id, user, "new")
         elif cmd in ("/my", "/slides"):
@@ -4744,6 +4757,67 @@ async def telegram_file(t: str = ""):
                     headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-File-Name": quote(f["name"])})
 
 
+SEND_FILE_MAX = 25 * 1024 * 1024                 # Telegram Bot API: 50 MB gacha; sayt so'rov limiti 25 MB
+_SEND_MIME = {"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+              "pdf": "application/pdf", "html": "text/html"}
+_SEND_MAGIC = {"pptx": (b"PK\x03\x04",), "pdf": (b"%PDF",)}
+_send_hits: "OrderedDict[int, List[float]]" = OrderedDict()
+
+
+def _send_limited(tid: int, per_min: int = 6) -> bool:
+    now = time.time()
+    hits = [t for t in _send_hits.pop(tid, []) if now - t < 60]
+    limited = len(hits) >= per_min
+    if not limited:
+        hits.append(now)
+    _send_hits[tid] = hits
+    while len(_send_hits) > 5000:
+        _send_hits.popitem(last=False)
+    return limited
+
+
+@router.post("/api/telegram/send-file")
+async def telegram_send_file(request: Request, name: str = ""):
+    """v75: Mini App «PPTX / PDF / HTML» — tayyor faylni BOTNING O'ZI shu foydalanuvchi chatiga yuboradi
+    (Telegram WebView'da yuklab olish ko'pincha ishlamaydi). initData bilan tasdiqlanadi; fayl saqlanmaydi (RAM)."""
+    if not ENABLED:
+        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
+    user = verify_init_data(str(request.headers.get("x-tg-init-data") or ""))
+    if not user:
+        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
+    tid = int(user["id"])
+    fname = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", str(name or "")).strip()[:120] or "slayd.pptx"
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+    if ext not in _SEND_MIME:
+        return JSONResponse({"error": "bad_type"}, status_code=415)
+    cl = request.headers.get("content-length") or ""
+    if cl.isdigit() and int(cl) > SEND_FILE_MAX:
+        return JSONResponse({"error": "too_large"}, status_code=413)
+    if _send_limited(tid):
+        return JSONResponse({"error": "rate_limited"}, status_code=429)
+    buf = bytearray()
+    try:
+        async for chunk in request.stream():
+            buf += chunk
+            if len(buf) > SEND_FILE_MAX:
+                return JSONResponse({"error": "too_large"}, status_code=413)
+    except Exception:
+        return JSONResponse({"error": "bad_request"}, status_code=400)
+    if not buf:
+        return JSONResponse({"error": "empty"}, status_code=400)
+    magic = _SEND_MAGIC.get(ext)
+    if magic and not any(bytes(buf[:8]).startswith(m) for m in magic):
+        return JSONResponse({"error": "bad_type"}, status_code=415)
+    lang = await _saved_lang(tid) or i18n.guess(user.get("language_code"))
+    _ctx_lang.set(lang)
+    ok = await tg_send_document(tid, fname, io.BytesIO(bytes(buf)), _SEND_MIME[ext],
+                                i18n.translate(f"📩 Muharrirdan: <b>{esc(fname)}</b>", lang))
+    buf = None
+    if not ok:
+        return JSONResponse({"error": "send_failed"}, status_code=502)
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+
+
 def _stream_response(name: str, stream: "io.BytesIO", mime: str, size: int, inline: bool = True) -> StreamingResponse:
     """RAM'dagi BytesIO ni 64 KB bo'laklarda oqim qilib beradi (Content-Length bilan). Yuborish tugagach BytesIO yopiladi
     (Starlette uni fon vazifasi sifatida chaqiradi) — fayl hech qayerda saqlanmaydi."""
@@ -4842,7 +4916,7 @@ async def _set_commands() -> None:
         await tg("setMyCommands", language_code=_lc,
                  commands=[{"command": "start", "description": "Main menu" if _lc == "en" else "Главное меню"}]
                  + [{"command": c, "description": d} for c, d in _cmds])
-    await tg("setChatMenuButton", menu_button={"type": "web_app", "text": "🚀 Muharrir", "web_app": {"url": _app_url()}})
+    await tg("setChatMenuButton", menu_button=_menu_button())
 
 
 async def _register_webhook(attempts: int = 4) -> bool:
