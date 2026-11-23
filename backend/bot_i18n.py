@@ -114,6 +114,24 @@ HELP_EN = (
 )
 
 PHRASES: List[Tuple[str, str, str]] = BUTTONS + [
+    # ---- v70: Yordam (Support) ----
+    ("💬 Adminga yozish (Support)", "💬 Написать админу (Support)", "💬 Contact support"),
+    ("💬 <b>Adminga yozish</b>", "💬 <b>Написать админу</b>", "💬 <b>Contact support</b>"),
+    ("Savol, taklif yoki muammoni bitta xabarda yozib yuboring — admin javob beradi. Javob shu yerga keladi.",
+     "Опишите вопрос, идею или проблему одним сообщением — администратор ответит. Ответ придёт сюда.",
+     "Send your question, idea or problem in one message — an admin will reply. The reply will come here."),
+    ("<b>Oxirgi xabarlar:</b>", "<b>Последние сообщения:</b>", "<b>Recent messages:</b>"),
+    ("👤 Siz", "👤 Вы", "👤 You"),
+    ("✖️ Bekor qilish", "✖️ Отмена", "✖️ Cancel"),
+    ("Bekor qilindi.", "Отменено.", "Cancelled."),
+    ("✅ Xabaringiz adminga yuborildi. Javob shu yerga keladi.", "✅ Сообщение отправлено администратору. Ответ придёт сюда.", "✅ Your message was sent to the admin. The reply will come here."),
+    ("✍️ Yana yozish", "✍️ Написать ещё", "✍️ Write again"),
+    ("✍️ Javob yozish", "✍️ Ответить", "✍️ Reply"),
+    ("💬 <b>Admin javobi:</b>", "💬 <b>Ответ администратора:</b>", "💬 <b>Admin reply:</b>"),
+    ("⚙️ Hozir yuborib bo'lmadi. Keyinroq urinib ko'ring.", "⚙️ Сейчас не удалось отправить. Попробуйте позже.", "⚙️ Could not send right now. Please try again later."),
+    ("Iltimos, biroz kuting va qayta yuboring", "Пожалуйста, подождите немного и отправьте снова", "Please wait a moment and try again"),
+    ("Juda ko'p xabar yuborildi. Bir soatdan keyin urinib ko'ring", "Слишком много сообщений. Попробуйте через час", "Too many messages. Try again in an hour"),
+    ("Xabar juda qisqa", "Сообщение слишком короткое", "Message is too short"),
     (HELP_UZ, HELP_RU, HELP_EN),
     # ---- salomlashuv / balans ----
     ("👋 <b>Salom!</b>", "👋 <b>Привет!</b>", "👋 <b>Hi!</b>"),
@@ -338,7 +356,7 @@ def picker_markup() -> Dict[str, Any]:
 
 COMMANDS = {
     "ru": [("new", "Новые слайды"), ("my", "Мои слайды"), ("credits", "Баланс"), ("buy", "Купить листы"),
-           ("invite", "Пригласить друга (+15 листов)"), ("settings", "Аккаунт Google"), ("lang", "Язык"), ("help", "Помощь")],
+           ("invite", "Пригласить друга (+15 листов)"), ("settings", "Аккаунт Google"), ("support", "Написать админу"), ("lang", "Язык"), ("help", "Помощь")],
     "en": [("new", "New slides"), ("my", "My slides"), ("credits", "Balance"), ("buy", "Buy pages"),
-           ("invite", "Invite a friend (+15 pages)"), ("settings", "Google account"), ("lang", "Language"), ("help", "Help")],
+           ("invite", "Invite a friend (+15 pages)"), ("settings", "Google account"), ("support", "Contact support"), ("lang", "Language"), ("help", "Help")],
 }
