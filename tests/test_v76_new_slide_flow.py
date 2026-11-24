@@ -216,7 +216,7 @@ def test_generate_applies_chosen_style_and_colour(bot, monkeypatch):
     monkeypatch.setattr(tb, "_deck_insert_sync", lambda *a: 5)
     monkeypatch.setattr(tb, "_pages_left", lambda *a: 10)
     monkeypatch.setitem(tb._deps, "total_credits", lambda u: 100)
-    monkeypatch.setattr(tb, "_page_units", lambda m: 1)
+    monkeypatch.setattr(tb, "_page_units", lambda m, usage=None: 1)
     asyncio.run(_REAL_GENERATE(7611, {"id": 7611}, "Kosmos", 3))
     assert "MINIMALIST" in seen["prompt"]
     assert st["deck"]["theme"] == "rose" and st["ui"] is None

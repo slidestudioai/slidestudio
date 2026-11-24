@@ -40,6 +40,10 @@
     if (feeLoaded) return;
     fetch('/api/billing/plans').then(function (r) { return r.json(); }).then(function (d) {
       var f = d && d.fee;
+      // v76: «$1 = nechta varaq» admin paneldan — paket kreditlari ham serverdagi qiymatdan olinadi
+      if (d && d.credits_per_usd > 0) CREDITS_PER_USD = d.credits_per_usd;
+      var tp = d && d.topup_packages;
+      if (tp) PACKAGES.forEach(function (p) { if (tp[p.id] && tp[p.id].credits > 0) p.credits = tp[p.id].credits; });
       if (f && typeof f.permille === 'number' && typeof f.fixed_cents === 'number') {
         FEE_PERMILLE = f.permille; FEE_FIXED_CENTS = f.fixed_cents; feeLoaded = true;
         if (els.modal && !els.modal.hidden) { if (sel && sel.package === 'custom') onCustomInput(); else render(); }

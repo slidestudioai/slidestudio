@@ -55,14 +55,29 @@ class _Query:
         return self
 
     # --- filtrlar ---
-    def eq(self, col, val):
-        self.filters.append(lambda r: str(r.get(col)) == str(val))
+    @property
+    def not_(self):                     # postgrest: q.not_.like(...) — keyingi filtr teskari
+        self._neg = True
         return self
+
+    def _add(self, fn):
+        if getattr(self, "_neg", False):
+            self._neg = False
+            self.filters.append(lambda r, f=fn: not f(r))
+        else:
+            self.filters.append(fn)
+        return self
+
+    def eq(self, col, val):
+        return self._add(lambda r: str(r.get(col)) == str(val))
 
     def like(self, col, pattern):
         rx = re.compile("^" + re.escape(pattern).replace("%", ".*") + "$")
-        self.filters.append(lambda r: bool(rx.match(str(r.get(col) or ""))))
-        return self
+        return self._add(lambda r: bool(rx.match(str(r.get(col) or ""))))
+
+    def ilike(self, col, pattern):
+        rx = re.compile("^" + re.escape(pattern).replace("%", ".*") + "$", re.I)
+        return self._add(lambda r: bool(rx.match(str(r.get(col) or ""))))
 
     def lt(self, col, val):
         self.filters.append(lambda r: r.get(col) is not None and r.get(col) < val)
@@ -79,8 +94,7 @@ class _Query:
 
     def in_(self, col, vals):
         vs = {str(v) for v in vals}
-        self.filters.append(lambda r: str(r.get(col)) in vs)
-        return self
+        return self._add(lambda r: str(r.get(col)) in vs)
 
     def range(self, a, b):
         self._range = (a, b)
@@ -237,10 +251,10 @@ class FakeSupabase:
             lr = u.get("last_reset_time")
             last = datetime.fromisoformat(str(lr).replace("Z", "+00:00")) if lr else None
             day = timedelta(hours=24)
-            susp = p_daily_units > 0 and paid >= p_daily_units
+            susp = paid > 0                              # v76: pullik balans > 0 -> bepul limit ishlamaydi
             if susp:
-                free = min(free, p_daily_units)
-                if free <= 0 and (last is None or now - last < day):
+                free = 0
+                if last is None or now - last < day:
                     last = now - day
             elif last is None or now - last >= day:
                 free, last = p_daily_units, now
@@ -260,7 +274,7 @@ class FakeSupabase:
                         reason += "+debt"
                 else:
                     reason = "no_credits"
-                if susp and free <= 0:
+                if susp and paid <= 0:
                     last = now - day
             else:
                 reason = "tokens_only"

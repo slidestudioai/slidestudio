@@ -20,8 +20,12 @@ persisted = False
 TTL = 60.0
 
 DEFAULTS: Dict[str, Any] = {
-    "free_daily_pages": mon.FREE_DAILY_PAGES,      # bepul kunlik (Tez-varaq)
-    "pack_pages": mon.PAGES_PER_PACK,              # bitta paket (Tez-varaq)
+    # v76: tarif — kodda qotirilgan son yo'q, hammasi shu yerdan (admin panel → Sozlamalar → Tarif)
+    "slides_per_dollar": mon.PAGES_PER_PACK,       # $1 netto -> shuncha birlik (Tez-varaq) pullik balansga
+    "fast_ai_cost": 1,                             # 1 Tez slayd = shuncha birlik
+    "deep_ai_cost": mon.DEEP_MULT,                 # 1 Chuqur slayd = shuncha birlik ($1=100 -> 50 Chuqur)
+    "free_daily_fast_limit": mon.FREE_DAILY_PAGES,  # bepul kunlik Tez limit
+    "free_daily_deep_limit": mon.FREE_DAILY_PAGES // mon.DEEP_MULT,   # bepul kunlik Chuqur limit
     "daily_message_limit": 200,                    # bitta foydalanuvchining kunlik AI xabarlari
     "ads_enabled": True,                           # umumiy reklama kaliti
     "ads_site": True,                              # saytda (chap panel)
@@ -32,7 +36,10 @@ DEFAULTS: Dict[str, Any] = {
     "maintenance_text": "Texnik ishlar olib borilmoqda. Birozdan keyin urinib ko'ring.",
     "announcement": "",                            # saytda tepada ko'rinadigan e'lon (bo'sh = yo'q)
 }
-INT_KEYS = {"free_daily_pages", "pack_pages", "daily_message_limit", "ad_bot_interval_min"}
+INT_KEYS = {"slides_per_dollar", "free_daily_fast_limit", "free_daily_deep_limit", "daily_message_limit", "ad_bot_interval_min"}
+FLOAT_KEYS = {"fast_ai_cost", "deep_ai_cost"}
+ALIASES = {"free_daily_pages": "free_daily_fast_limit", "pack_pages": "slides_per_dollar"}   # v75 gacha bo'lgan kalitlar
+TARIFF_KEYS = ("slides_per_dollar", "fast_ai_cost", "deep_ai_cost", "free_daily_fast_limit", "free_daily_deep_limit")
 BOOL_KEYS = {"ads_enabled", "ads_site", "ads_bot", "maintenance", "ad_purge_on_expire"}
 STR_KEYS = {"maintenance_text", "announcement"}
 _cache: Dict[str, Any] = dict(DEFAULTS)
@@ -45,8 +52,16 @@ def configure(supabase_getter: Callable[[], Any]) -> None:
 
 def _coerce(key: str, val: Any) -> Any:
     if key in INT_KEYS:
-        lo, hi = (0, 100000) if key != "ad_bot_interval_min" else (0, 1440)
-        return max(lo, min(hi, int(float(val))))
+        lo, hi = {"ad_bot_interval_min": (0, 1440), "slides_per_dollar": (1, 1000000)}.get(key, (0, 100000))
+        x = float(val)
+        if x != x:
+            raise ValueError(key)
+        return max(lo, min(hi, int(x)))
+    if key in FLOAT_KEYS:
+        x = float(val)
+        if x != x or x <= 0:
+            raise ValueError(key)               # narx 0 yoki manfiy bo'lmaydi (aks holda AI tekin bo'lib qoladi)
+        return round(max(0.05, min(1000.0, x)), 2)
     if key in BOOL_KEYS:
         if isinstance(val, str):
             return val.strip().lower() in ("1", "true", "yes", "on", "ha")
@@ -57,8 +72,11 @@ def _coerce(key: str, val: Any) -> Any:
 
 
 def _apply_runtime() -> None:
-    mon.set_runtime(free_daily_pages=_cache.get("free_daily_pages"),
-                    pack_pages=_cache.get("pack_pages"))
+    mon.set_runtime(free_daily_pages=_cache.get("free_daily_fast_limit"),
+                    pack_pages=_cache.get("slides_per_dollar"),
+                    fast_ai_cost=_cache.get("fast_ai_cost"),
+                    deep_ai_cost=_cache.get("deep_ai_cost"),
+                    free_daily_deep_limit=_cache.get("free_daily_deep_limit"))
 
 
 def load(force: bool = False) -> Dict[str, Any]:
@@ -71,9 +89,12 @@ def load(force: bool = False) -> Dict[str, Any]:
     if sb:
         try:
             rows = sb.table("app_settings").select("key,value").execute().data or []
+            have = {r.get("key") for r in rows}
             with _lock:
                 for r in rows:
                     k = r.get("key")
+                    if k in ALIASES and ALIASES[k] not in have:      # eski kalit: yangisi hali saqlanmagan bo'lsa
+                        k = ALIASES[k]
                     if k in DEFAULTS:
                         try:
                             _cache[k] = _coerce(k, r.get("value"))
@@ -101,6 +122,7 @@ def set_many(values: Dict[str, Any]) -> Dict[str, Any]:
     """Qiymatlarni tekshirib saqlaydi. Qaytaradi: {'saved': {...}, 'persisted': bool, 'error': str|None}."""
     clean: Dict[str, Any] = {}
     for k, v in (values or {}).items():
+        k = ALIASES.get(k, k)
         if k not in DEFAULTS:
             continue
         try:

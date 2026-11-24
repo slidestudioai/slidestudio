@@ -729,7 +729,14 @@ def _usage_now_sync(uid: str, email: str) -> dict:
     return _deps["apply_reset"](_deps["get_usage"](uid, email))
 
 
-def _page_units(mode: str) -> int:
+def _page_units(mode: str, usage: Optional[dict] = None) -> int:
+    """1 varaq narxi (birlik). usage berilsa — v76: bepul rejimdagi Chuqur narxi kunlik Chuqur limitga moslanadi."""
+    if usage is not None:
+        try:
+            from backend import monitoring as _mon
+            return int(_mon.page_units(mode, usage))
+        except Exception:
+            pass
     return int(_deps["MODES"][mode if mode in _deps["MODES"] else "fast"]["page"])
 
 
@@ -742,7 +749,7 @@ def _deep_mult() -> int:
 
 
 def _pages_left(usage: dict, mode: str) -> float:
-    return _deps["total_credits"](usage) / _page_units(mode)
+    return _deps["total_credits"](usage) / _page_units(mode, usage)
 
 
 def _fmt_pages(x: float) -> str:
@@ -3068,7 +3075,7 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
         if usage.get("blocked"):
             await _edit(chat_id, msg_id, "⛔ Akkauntingiz bloklangan.")
             return
-        afford = int(_deps["total_credits"](usage) // _page_units(mode))
+        afford = int(_deps["total_credits"](usage) // _page_units(mode, usage))
         if afford < 1:
             await _edit(chat_id, msg_id, *_no_credit_reply(mode, usage))
             return
@@ -3192,7 +3199,7 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         if not new:
             await _edit(chat_id, msg_id, "⚠️ O'zgartirishni qo'llab bo'lmadi. Hech narsa yechilmadi — boshqacha yozib ko'ring.", kb_done(st))
             return
-        afford = int(_deps["total_credits"](usage) // _page_units(mode))
+        afford = int(_deps["total_credits"](usage) // _page_units(mode, usage))
         if changed > afford:
             await _edit(chat_id, msg_id, f"😔 Bu o'zgarish {changed} varaq talab qiladi, sizda {afford} varaq bor. Kichikroq o'zgarish so'rang yoki varaq oling.", kb_main())
             return
