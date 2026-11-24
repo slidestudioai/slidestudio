@@ -37,9 +37,12 @@ test('AI «Bekor qilish» dan keyin «Qaytarish» AI natijasini qaytaradi', asyn
   await expect(page.locator('.ai-undo-btn').last()).toBeVisible();          // yana bekor qilish mumkin
 });
 
-test('v81: saytda «Telegram botni ulash» / «Uzish» yo\'q (yagona yo\'l — botdagi «Google akkauntni ulash»)', async ({ page }) => {
+test('sayt: Telegram ulangan bo\'lsa sozlamalarda «Uzish» ko\'rinadi', async ({ page }) => {
+  await page.route('**/api/telegram/link-status', (r) => r.fulfill({ json: { linked: true, enabled: true } }));
   await openEditor(page);
   await page.evaluate(() => { supabaseToken = 'devtok'; currentUserEmail = 't@e2e.uz'; });
-  expect(await page.evaluate(() => [typeof window.ssTgLink, typeof window.ssTgDecorate, typeof window.ssGoogleLink])).toEqual(['undefined', 'undefined', 'undefined']);
-  expect(await page.locator('[data-tg-link], [data-google-link]').count()).toBe(0);
+  const ok = await page.evaluate(() => typeof window.ssTgDecorate === 'function');
+  expect(ok).toBe(true);
+  await page.evaluate(() => { const b = document.createElement('button'); b.id = 'tgProbe'; b.setAttribute('data-tg-link', ''); document.body.appendChild(b); return window.ssTgDecorate(); });
+  await expect(page.locator('#tgProbe')).toHaveText(/Uzish/);
 });

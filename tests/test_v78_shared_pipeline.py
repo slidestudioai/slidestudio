@@ -157,8 +157,7 @@ def test_bot_prompt_knows_all_site_layouts_and_themes():
 # ------------------------------------------------------------------ 4) akkaunt / UX
 def test_no_google_gate_left_in_bot():
     src = open(os.path.join(ROOT, "backend", "telegram_bot.py"), encoding="utf-8").read()
-    assert "_google_ok" not in src and "LINK_FIRST" not in src and '"linkinfo")]' not in src
-    assert '"command": "link"' not in src
+    assert "_google_ok" not in src and "LINK_FIRST" not in src      # Google ulash MAJBURIY emas (ixtiyoriy tugma qoldi)
 
 
 def test_provision_marks_telegram_account(sb):
@@ -180,55 +179,30 @@ def test_balance_screen_has_buy_for_telegram_account(monkeypatch):
     asyncio.run(tb._show_balance(1, {"id": 1}))
     text, kb = sent[-1]
     assert "10" in text and "Google" not in text
-    assert [b["callback_data"] for row in kb["inline_keyboard"] for b in row] == ["buy", "glink", "new"]   # v81: yagona ulash
+    assert [b["callback_data"] for row in kb["inline_keyboard"] for b in row] == ["buy", "linkinfo", "new"]   # ixtiyoriy ulash
 
 
-def test_one_google_link_button_and_no_unlink(monkeypatch):
-    """v81: «Google ulash» (eski tugma ham), /link — YAGONA ulash yo'li; uzish tugmalari / /unlink — balans / bosh menyu."""
-    seen = []
-
-    async def offer(cid, user):
-        seen.append("offer")
-
-    async def bal(cid, user):
-        seen.append("bal")
-
-    async def welcome(cid, user):
-        seen.append("home")
-
-    async def fake_tg(*a, **k):
-        return True
-    monkeypatch.setattr(tb, "_google_link_offer", offer)
-    monkeypatch.setattr(tb, "_show_balance", bal)
-    monkeypatch.setattr(tb, "_send_welcome", welcome)
-    monkeypatch.setattr(tb, "tg", fake_tg)
-    monkeypatch.setattr(tb, "_saved_lang", lambda tid: asyncio.sleep(0, "uz"))
-    cb = lambda d: {"id": "q", "data": d, "from": {"id": 31}, "message": {"chat": {"id": 31}, "message_id": 1}}  # noqa: E731
-    msg = lambda t, n: {"update_id": n, "message": {"chat": {"id": 31, "type": "private"}, "from": {"id": 31}, "text": t}}  # noqa: E731
-    for d in ("glink", "linkinfo", "unl_yes"):
-        tb._rl.pop(31, None)
-        asyncio.run(tb._handle_callback(cb(d)))
-    asyncio.run(tb.handle_update(msg("/link", 99031)))
-    asyncio.run(tb.handle_update(msg("/unlink", 99032)))
-    assert seen == ["offer", "offer", "bal", "offer", "home"]
-    for name in ("_link_code_sync", "_link_consume_sync", "_do_link", "_unlink_sync", "_mark_link_used_sync"):
-        assert not hasattr(tb, name), name
-
-
-def test_google_link_offer_gives_site_link_or_shows_linked(monkeypatch):
+def test_link_and_unlink_toggle_is_back_in_the_bot(monkeypatch):
+    """Bitta tugma: ulanmagan — «🔗 Google ulash», ulangan — «🔓 Google'ni uzish» (avvalgi ishlagan tizim)."""
     sent = []
 
-    async def fake_send(cid, text, kb=None):
+    async def fake_edit(cid, mid, text, kb=None):
         sent.append((text, kb))
-    monkeypatch.setattr(tb, "_send", fake_send)
-    monkeypatch.setattr(tb, "SITE_URL", "https://s.example")
-    monkeypatch.setattr(tb, "_linked_sync", lambda tid: None)
-    asyncio.run(tb._google_link_offer(77, {"id": 77}))
-    url = sent[-1][1]["inline_keyboard"][0][0]["url"]
-    assert url.startswith("https://s.example/?tglink=") and tb._check_token("L", url.split("tglink=")[1]) == (77, 0)
-    monkeypatch.setattr(tb, "_linked_sync", lambda tid: ("g-1", "ali@gmail.com"))
-    asyncio.run(tb._google_link_offer(77, {"id": 77}))
-    assert "ulangan" in sent[-1][0] and sent[-1][1] is None
+
+    async def info_no(user):
+        return {"free": 1, "paid": 0, "linked": False, "email": "tg1@t.me"}
+
+    async def info_yes(user):
+        return {"free": 1, "paid": 0, "linked": True, "email": "ali@gmail.com"}
+    monkeypatch.setattr(tb, "_edit", fake_edit)
+    monkeypatch.setattr(tb, "_balance_info", info_no)
+    asyncio.run(tb._show_settings(1, {"id": 1}))
+    assert sent[-1][1]["inline_keyboard"][0][0]["callback_data"] == "linkinfo"
+    monkeypatch.setattr(tb, "_balance_info", info_yes)
+    asyncio.run(tb._show_settings(1, {"id": 1}))
+    assert sent[-1][1]["inline_keyboard"][0][0]["callback_data"] == "unl" and "a***@gmail.com" in sent[-1][0]
+    for name in ("_link_help", "_do_link", "_unlink_sync", "_link_apply"):
+        assert hasattr(tb, name), name
 
 
 def test_generation_sends_file_then_editor_card(monkeypatch):

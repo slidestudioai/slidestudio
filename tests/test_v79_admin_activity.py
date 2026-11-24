@@ -199,18 +199,18 @@ def test_site_google_user_gets_the_bot_latest_deck(sb, client, monkeypatch):
     assert client.post("/api/telegram/latest-deck", json={"token": "bad"}).status_code == 401
 
 
-def test_site_has_no_link_or_unlink_buttons_left():
+def test_old_link_unlink_endpoints_and_buttons_are_back():
+    """Avvalgi ishlagan ulash / uzish tizimi qaytarildi (sayt, Mini App, bot, Supabase tg_link_codes)."""
     import glob
     js = "".join(open(f, encoding="utf-8").read() for f in glob.glob(os.path.join(ROOT, "js", "*.js")))
-    for gone in ("window.ssTgLink", "window.ssGoogleLink", "/api/telegram/link-code", "/api/telegram/unlink",
-                 "/api/telegram/miniapp-link", "Telegram botni ulash</button>"):
-        assert gone not in js, gone
+    for need in ("window.ssTgLink", "window.ssGoogleLink", "/api/telegram/link-code", "/api/telegram/unlink", "/api/telegram/miniapp-link"):
+        assert need in js, need
     paths = {getattr(r, "path", "") for r in tb.router.routes}
-    assert "/api/telegram/link-complete" in paths                                  # yagona yo'l qoldi
-    for gone in ("/api/telegram/link-code", "/api/telegram/link-status", "/api/telegram/unlink", "/api/telegram/miniapp-link"):
-        assert gone not in paths, gone
+    for need in ("/api/telegram/link-code", "/api/telegram/link-status", "/api/telegram/unlink",
+                 "/api/telegram/miniapp-link", "/api/telegram/link-complete", "/api/telegram/account"):
+        assert need in paths, need
     sql = open(os.path.join(ROOT, "SUPABASE_SCHEMA.sql"), encoding="utf-8").read()
-    assert "create table if not exists public.tg_link_codes" not in sql
+    assert "create table if not exists public.tg_link_codes" in sql
 
 
 def test_presentation_sees_every_edit_and_reuses_loaded_media():

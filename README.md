@@ -71,11 +71,9 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 > hisoblanadi. Botda navbatdagi foydalanuvchi o'z o'rnini ko'radi. Telegram API: umumiy tezlik cheklagich (`TG_API_RPS`)
 > va 429 da Telegram aytgan vaqt to'liq kutiladi — ommaviy yuklamada xabar/fayl yo'qolmaydi. Deploy logida:
 > `[EXPORT] RAM … MB, CPU … -> N jarayon`.
-> v81: **Ulash — bitta tugma.** Eski kod bilan ulash (`/link KOD`, saytdagi «Telegram botni ulash»), «Uzish» tugmalari va
-> `tg_link_codes` jadvali olib tashlandi. Yagona yo'l: botdagi «🔗 Google akkauntni ulash» -> saytda Google bilan kirish.
-> Ulash doimiy va 1 ga 1 (boshqa Google / Telegram'ga qayta ulab bo'lmaydi). Ulangach: bitta balans, bitta oxirgi taqdimot,
-> Mini App ham Google akkaunt bilan ochiladi. Eski jadvalni bazadan olib tashlash (ixtiyoriy, bir marta, SQL Editor'da):
-> `drop table if exists public.tg_link_codes;`
+> v81: **Ulash / uzish — avvalgi ishlagan tizim** (bot: Sozlamalar → «🔗 Google ulash» / «🔓 Google'ni uzish», `/link`, `/unlink`;
+> sayt: Sozlamalar → «✈️ Telegram botni ulash» / «Uzish»; Mini App: «🔗 Google akkauntni ulash» / «Uzish»). Google ulash
+> MAJBURIY emas. Ulangach: bitta balans, bitta oxirgi taqdimot (saytda ham), Mini App Google akkaunt bilan ochiladi.
 > Namoyish: har tahrir ko'rinadi (to'liq xesh) va GIF / rasmlar muharrir xotirasidan olinadi — qayta yuklanmaydi.
 >
 > **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida

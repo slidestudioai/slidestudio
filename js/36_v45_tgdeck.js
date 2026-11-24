@@ -105,7 +105,7 @@
 
   async function runLink() {
     if (!linkTok) return;
-    if (tokExp(linkTok) < Date.now()) { linkFinished(); toast('Havola eskirgan — botdagi «🔗 Google akkauntni ulash» ni qayta bosing.', 'error'); return; }
+    if (tokExp(linkTok) < Date.now()) { linkFinished(); toast('Havola eskirgan — botdagi «🔗 Google ulash» ni qayta bosing.', 'error'); return; }
     var ok = await waitFor(logged, 6000);
     if (!ok) {
       askLogin();
@@ -120,15 +120,16 @@
         var j = {}; try { j = await r.json(); } catch (e) {}
         if (r.ok && j.ok) {
           linkFinished(); toast('✅ Google akkaunt ulandi! Balans va oxirgi taqdimot endi bot bilan bir xil.');
+          try { window.ssTgDecorate && window.ssTgDecorate(); } catch (e) {}
           try { if (typeof loadUserStats === 'function') loadUserStats(true); } catch (e) {}
           deckTok = ''; runLatest();                                // botdagi oxirgi taqdimot shu yerda ham
           return;
         }
-        if (r.status === 410) { linkFinished(); toast('Havola eskirgan — botdagi «🔗 Google akkauntni ulash» ni qayta bosing.', 'error'); return; }
+        if (r.status === 410) { linkFinished(); toast('Havola eskirgan — botdagi «🔗 Google ulash» ni qayta bosing.', 'error'); return; }
         if (r.status === 409) {                                     // v81: ulanish doimiy — boshqasiga o'tkazilmaydi
           linkFinished();
-          toast(j.error === 'google_taken' ? 'Bu Google akkaunt boshqa Telegram\u2019ga ulangan.'
-            : 'Bu Telegram allaqachon boshqa Google akkauntga ulangan.', 'error');
+          toast(j.error === 'used' ? 'Bu havola allaqachon ishlatilgan.' : (j.error === 'google_taken' ? 'Bu Google akkaunt boshqa Telegram\u2019ga ulangan.'
+            : 'Bu Telegram allaqachon boshqa Google akkauntga ulangan.'), 'error');
           return;
         }
         if (r.status === 400) { linkFinished(); toast('Bu akkaunt Telegram akkaunti — Google bilan kirib ulang.', 'error'); return; }
