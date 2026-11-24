@@ -66,6 +66,11 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 >   sayt) «oxirgi faollik»; panel 30 soniyada o'zi yangilanadi; «Telegram» / «Ulanganlar» filtrlari ko'p foydalanuvchida ham ishlaydi.
 > - «🚀 Muharrir»: botdagi taqdimot muharrirdagi qoralamadan yangiroq bo'lsa — o'sha ochiladi. Bir qurilmada 2 akkaunt:
 >   bir akkaunt slaydlari boshqasining qoralamasiga yozilmaydi.
+> v80: **Yuklama.** PPTX/PDF eksporti server kuchiga moslashadi (`backend/services/export_pool.py`): kuchli serverda bot
+> worker'ida alohida jarayonlar (barcha yadrolar; 4 CPU'da ~7x tez), kuchsizda oqim; bir vaqtdagi eksportlar RAM'dan
+> hisoblanadi. Botda navbatdagi foydalanuvchi o'z o'rnini ko'radi. Telegram API: umumiy tezlik cheklagich (`TG_API_RPS`)
+> va 429 da Telegram aytgan vaqt to'liq kutiladi — ommaviy yuklamada xabar/fayl yo'qolmaydi. Deploy logida:
+> `[EXPORT] RAM … MB, CPU … -> N jarayon`.
 >
 > **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida
 > `[GUNICORN] RAM limit ... -> N worker(s)` qatori). Qo'lda: `WEB_CONCURRENCY`.

@@ -144,6 +144,8 @@ PHRASES: List[Tuple[str, str, str]] = BUTTONS + [
      "When a friend opens the bot (or the website) with your link, your balance gets"),
     ("ta pullik varaq qo'shiladi.", "платных листов.", "paid pages."),
     ("📦 Fayl yuborilmoqda...", "📦 Отправляю файл...", "📦 Sending the file..."),
+    ("⏳ So'rovlar ko'p — navbatdasiz: ", "⏳ Много запросов — вы в очереди: ", "⏳ Many requests — you are in the queue: "),
+    ("-o'rin. Hech narsa yechilmadi, kuting…", "-е место. Ничего не списано, подождите…", " place. Nothing was charged, please wait…"),
     ("🔗 Balans va slaydlar uchun avval <b>Google akkauntni ulang</b>.", "🔗 Для баланса и слайдов сначала <b>подключите аккаунт Google</b>.", "🔗 To get a balance and slides, first <b>connect your Google account</b>."),
     ("🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.\nBu balansingizni saqlab qolish uchun kerak.", "🔗 Чтобы создавать слайды, сначала <b>подключите аккаунт Google</b>.\nЭто нужно, чтобы сохранить ваш баланс.", "🔗 To create slides, first <b>connect your Google account</b>.\nThis keeps your balance safe."),
     ("🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.", "🔗 Чтобы создавать слайды, сначала <b>подключите аккаунт Google</b>.", "🔗 To create slides, first <b>connect your Google account</b>."),
