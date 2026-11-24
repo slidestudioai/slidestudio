@@ -142,7 +142,6 @@ def test_bot_user_writes_to_support(sb, monkeypatch):
     assert "sup_await" not in st and "yuborildi" in sent[-1][1]
     # keyingi oddiy matn endi adminga ketmaydi
     calls = []
-    monkeypatch.setattr(tb, "_google_ok", lambda *a: asyncio.sleep(0, True))
     monkeypatch.setattr(tb, "_run_new", lambda cid, u, t: ("new", t))
     monkeypatch.setattr(tb, "_spawn", lambda c: calls.append(c))
     st.update(ui="new", ui_ts=tb.time.time())            # v76: slayd faqat «🆕 Yangi slayd» bosilgandan keyin

@@ -27,11 +27,13 @@ def test_big_reply_keyboard_is_gone():
     assert tb.kb_reply() == {"remove_keyboard": True}
 
 
-def test_home_keyboard_one_primary_button(monkeypatch):
+def test_home_keyboard_three_buttons(monkeypatch):
+    """v78: /start — faqat 🆕 Yangi slayd · 🚀 Muharrir (Mini App) · 💳 Balans."""
     monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
     rows = tb.kb_home()["inline_keyboard"]
-    assert len(rows[0]) == 1 and rows[0][0]["text"] == "✨ Muharrirni ochish" and "web_app" in rows[0][0]
-    assert [b["callback_data"] for b in rows[1]] == ["new", "bal", "about"]          # v76: + «🆕 Yangi slayd»
+    assert [len(r) for r in rows] == [1, 1, 1]
+    assert rows[0][0]["callback_data"] == "new" and rows[2][0]["callback_data"] == "bal"
+    assert rows[1][0]["text"] == "🚀 Muharrir" and "web_app" in rows[1][0]
 
 
 def test_start_greets_short_and_sets_menu_button(sb, monkeypatch):
@@ -39,23 +41,24 @@ def test_start_greets_short_and_sets_menu_button(sb, monkeypatch):
     http = _bot(monkeypatch)
     tb._chats.pop(5551, None)                     # boshqa testlardan qolgan chat holati
     asyncio.run(tb.handle_update(_msg("/start")))
+    first = list(http.calls)                      # v78: /start darhol salomlashadi (til so'ralmaydi)
     http.calls.clear()
     asyncio.run(tb.handle_update(_cb("lang:en")))
     greet = [p for m, p in http.calls if m == "sendMessage" and "inline_keyboard" in (p.get("reply_markup") or {})][-1]
-    assert "Open the editor" in greet["text"] and len(greet["text"]) < 200
-    assert greet["reply_markup"]["inline_keyboard"][0][0]["text"] == "✨ Open the editor"
+    assert "Write a topic" in greet["text"] and len(greet["text"]) < 200 and greet["text"].count("\n") <= 2
+    assert greet["reply_markup"]["inline_keyboard"][1][0]["text"] == "🚀 Editor"
     menu = [p for m, p in http.calls if m == "setChatMenuButton"]
     assert menu and menu[-1]["menu_button"]["text"] == "✨ Editor" and "lang=en" in menu[-1]["menu_button"]["web_app"]["url"]
     # eski katta klaviatura yopiladi (yordamchi xabar o'chiriladi)
-    assert any(m == "sendMessage" and p.get("reply_markup") == {"remove_keyboard": True} for m, p in http.calls)
-    assert any(m == "deleteMessage" for m, p in http.calls)
+    assert any(m == "sendMessage" and p.get("reply_markup") == {"remove_keyboard": True} for m, p in first)
+    assert any(m == "deleteMessage" for m, p in first)
 
 
 def test_old_keyboard_buttons_still_work(sb, monkeypatch):
     http = _bot(monkeypatch)
     tb._lang_remember(5551, "uz")
     asyncio.run(tb.handle_update(_msg("ℹ️ Yordam")))
-    assert any("Muharrirni ochish" in t for t in _texts(http))
+    assert any("Muharrirda tahrirlash" in t for t in _texts(http))
 
 
 # ------------------------------------------------------------------ Mini App → chatga fayl

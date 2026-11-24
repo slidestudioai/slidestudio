@@ -472,8 +472,15 @@ _TG_ONLY_EMAIL = re.compile(r"^tg\d+@t\.me$", re.I)
 def daily_units_for(user: Optional[dict]) -> int:
     """Shu foydalanuvchining kunlik bepul chegarasi (BIRLIK): admin belgilagan > oddiy."""
     user = user or {}
-    if _TG_ONLY_EMAIL.match(str(user.get("email") or "")) and not user.get("daily_units_override"):
-        return 0          # v66: Google ulanmagan Telegram akkaunti — bepul varaq yo'q (1 email = 1 balans)
+    # v78: Telegram akkaunti — to'liq mustaqil akkaunt: Google ulamasdan ham boshlang'ich/kunlik bepul varaq oladi
+    # (avval 0 edi). Kerak bo'lsa alohida chegara: TG_FREE_DAILY_PAGES (varaqda; 0 = Telegram'ga bepul varaq yo'q).
+    if _TG_ONLY_EMAIL.match(str(user.get("email") or "")) and user.get("daily_units_override") in (None, ""):
+        tg_pages = _os.environ.get("TG_FREE_DAILY_PAGES", "").strip()
+        if tg_pages:
+            try:
+                return max(0, int(float(tg_pages) * fast_page_units()))
+            except ValueError:
+                pass
     ov = user.get("daily_units_override")
     try:
         if ov is not None and str(ov) != "":

@@ -33,7 +33,9 @@ MIN_CONTENT_Y       = 70   # slide title / first content box minimum Y
 TOP_STRIPE_MAX_Y    = 30   # px — top decorative element restricted to 0-30px
 MIN_TITLE_Y         = 70   # px — title must start below decorative zone
 
-LAYOUTS = ("title", "bullets", "cards", "stats", "quote", "closing", "table", "chart")
+LAYOUTS = ("title", "bullets", "cards", "stats", "quote", "closing", "table", "chart",
+           "compare", "image", "crossword")                     # v78: + taqqoslash, katta rasm, krossvord (sayt bilan bir xil)
+IMAGE_LAYOUTS = ("title", "bullets", "image")                   # v78: rasm so'rovi (image) ishlatiladigan maketlar
 TRANSITIONS = ("fade", "zoom", "flip", "up", "blur", "none")      # sayt bilan bir xil nomlar
 CHART_KINDS = ("bar", "line", "pie", "doughnut")
 
@@ -48,6 +50,22 @@ THEMES: Dict[str, Dict[str, str]] = {
     "teal":   dict(name="teal", dark="#042F2E", primary="#0F766E", accent="#F97316", bg="#F6FFFE", text="#0B2B29", muted="#5A7270", card="#FFFFFF", tint="#CCFBF1", label="🩵 Zumrad"),
 }
 DEFAULT_THEME = "ocean"
+LEGACY_THEMES = tuple(THEMES.keys())        # v78: eski 7 ta nom — avval saqlangan slaydlar o'zgarmasdan ochiladi
+for _t in THEMES.values():                  # eski mavzularga yangi tokenlar (sarlavha rangi, tugma ustidagi matn, bezak)
+    _t.setdefault("title", _t["primary"])
+    _t.setdefault("on_primary", "#FFFFFF")
+    _t.setdefault("decor", "top_bar")
+    _t.setdefault("dark_bg", False)
+
+# v78: SAYTDAGI 32 ta dizayn mavzusi (js/51_design_themes.js — yagona manba) botda ham. Nomi to'qnashsa (ocean) —
+# eski bot mavzusi qoladi (saqlangan slaydlar ko'rinishi o'zgarmasin).
+try:
+    from backend.services import design_system as _ds
+    for _k, _v in _ds.bot_themes().items():
+        THEMES.setdefault(_k, dict(_v))
+except Exception as _e:  # pragma: no cover — dizayn moduli bo'lmasa ham bot eski 7 ta mavzu bilan ishlaydi
+    _ds = None
+    print(f"[TG_DECKS] sayt mavzulari yuklanmadi: {type(_e).__name__}: {str(_e)[:120]}")
 
 # Multi-color harmony palettes for charts, stats, buttons
 CHART_PALETTES = {
@@ -64,8 +82,12 @@ DEFAULT_PALETTE = CHART_PALETTES[DEFAULT_THEME]
 
 def get_palette(th_or_name: Any) -> List[str]:
     if isinstance(th_or_name, str):
-        return CHART_PALETTES.get(th_or_name, DEFAULT_PALETTE)
+        if th_or_name in CHART_PALETTES:
+            return CHART_PALETTES[th_or_name]
+        return list((THEMES.get(th_or_name) or {}).get("palette") or DEFAULT_PALETTE)
     if isinstance(th_or_name, dict):
+        if th_or_name.get("palette"):
+            return list(th_or_name["palette"])
         if "name" in th_or_name and th_or_name["name"] in CHART_PALETTES:
             return CHART_PALETTES[th_or_name["name"]]
         prim = th_or_name.get("primary", "")
@@ -368,6 +390,10 @@ def _normalize_slide_core(s: Any) -> Optional[dict]:
         lay = "table"
     if lay == "" and (s.get("labels") or s.get("series") or s.get("values")):
         lay = "chart"
+    if lay == "" and isinstance(s.get("words"), list):
+        lay = "crossword"
+    if lay == "" and isinstance(s.get("left"), dict) and isinstance(s.get("right"), dict):
+        lay = "compare"
     out: Dict[str, Any] = {"layout": lay, "notes": clean(s.get("notes"), 400), "image": clean(s.get("image"), 80)}
     tr = str(s.get("transition") or "").strip().lower()
     out["transition"] = tr if tr in TRANSITIONS else ""
@@ -452,6 +478,33 @@ def _normalize_slide_core(s: Any) -> Optional[dict]:
             series = series[:1]
         out.update(title=title, chart=kind, labels=labels, series=series)
         out["image"] = ""
+    elif lay == "compare":                                   # v78: ikki ustunli taqqoslash (sayt: two-column)
+        cols = []
+        for side in ("left", "right"):
+            c = s.get(side) if isinstance(s.get(side), dict) else {}
+            items = [clean(b, 120) for b in _as_list(c.get("bullets") or c.get("points") or c.get("items"))]
+            items = [b for b in items if b][:5]
+            hd = clean(c.get("heading") or c.get("title"), 40)
+            if not items and not hd:
+                return None
+            cols.append({"heading": hd, "bullets": items})
+        out.update(title=title, left=cols[0], right=cols[1])
+        out["image"] = ""
+    elif lay == "image":                                     # v78: katta rasm + izoh (sayt: rasm joylashuvi)
+        cap = clean(s.get("caption") or s.get("text") or s.get("subtitle"), 220)
+        if not out["image"] and not cap:
+            return None
+        out.update(title=title, caption=cap)
+    elif lay == "crossword":                                 # v78: krossvord — sayt bilan BIR XIL algoritm
+        from backend.services import crossword as _cw
+        words = _cw.normalize(s.get("words"))
+        if not words:
+            return None
+        show_answers = bool(s.get("showAnswers") or s.get("show_answers"))
+        show_clues = s.get("showClues", s.get("show_clues"))
+        show_clues = (not show_answers) if show_clues is None else bool(show_clues)
+        out.update(title=title, words=words, show_answers=show_answers, show_clues=show_clues)
+        out["image"] = ""
     elif lay == "quote":
         q = clean(s.get("text") or s.get("quote"), 220)
         if not q:
@@ -460,6 +513,25 @@ def _normalize_slide_core(s: Any) -> Optional[dict]:
         out["image"] = ""
     else:
         return None
+    return out
+
+
+def _crossword_answer_keys(slides: List[dict], n: int) -> List[dict]:
+    """v78: saytdagi qoida — krossvorddan keyin «Javoblar» slaydi (o'sha so'zlar, javoblar ko'rinadi).
+    AI unutsa: joy bo'lsa (slaydlar soni n dan kam) — o'zimiz qo'shamiz, aks holda javoblar ma'ruzachi izohiga yoziladi."""
+    out: List[dict] = []
+    for i, s in enumerate(slides):
+        out.append(s)
+        if s.get("layout") != "crossword" or s.get("show_answers"):
+            continue
+        nxt = slides[i + 1] if i + 1 < len(slides) else None
+        if nxt and nxt.get("layout") == "crossword" and nxt.get("show_answers"):
+            continue
+        if len(slides) + (len(out) - i - 1) < n:
+            out.append({"layout": "crossword", "title": "Javoblar", "words": s["words"], "show_answers": True,
+                        "show_clues": False, "notes": "", "image": "", "transition": ""})
+        elif not s.get("notes"):
+            s["notes"] = clean("; ".join(f"{w['answer']}" for w in s["words"]), 400)
     return out
 
 
@@ -475,8 +547,8 @@ def normalize_deck(raw: Any, n: int, topic: str = "") -> Optional[dict]:
         return None
     title = clean(raw.get("title"), 90) or clean(topic, 90) or slides[0].get("title") or "Taqdimot"
     theme = str(raw.get("theme") or "").strip().lower()
-    if theme not in THEMES:
-        theme = DEFAULT_THEME
+    if theme not in THEMES:                                  # v78: mavzuga mos rang (sayt dizayn tizimi), avval doim «ocean»
+        theme = _ds.pick_theme(f"{topic} {title}") if _ds else DEFAULT_THEME
     if slides[0]["layout"] != "title":
         slides.insert(0, {"layout": "title", "title": title, "subtitle": clean(raw.get("subtitle"), 140), "notes": "", "image": "", "transition": ""})
     n = max(1, int(n or len(slides)))
@@ -485,6 +557,7 @@ def normalize_deck(raw: Any, n: int, topic: str = "") -> Optional[dict]:
         slides = slides[:n]
         if closing is not None and n >= 3 and slides[-1]["layout"] != "closing":
             slides[-1] = closing
+    slides = _crossword_answer_keys(slides, n)
     dtr = str(raw.get("transition") or "").strip().lower()
     return {"title": title, "subtitle": clean(raw.get("subtitle"), 140), "theme": theme, "slides": slides,
             "transition": dtr if dtr in TRANSITIONS else ""}
@@ -623,7 +696,7 @@ def expand_item(it: dict) -> List[dict]:
                 else:
                     fill = th["card"]
                 tmp.rect(x, y, cw, rh, fill, line=mix(th["tint"], th["primary"], 0.25), lw=1)
-                col = "#FFFFFF" if ri == 0 else th["text"]
+                col = th.get("on_primary", "#FFFFFF") if ri == 0 else th["text"]
                 lines = wrap(cell or " ", fs, cw - 20, bold=(ri == 0))
                 if cell:
                     tmp.text(x + 10, y, cw - 20, rh, cell, fs, col, bold=(ri == 0), align=("l" if ci == 0 else "c"), anchor="m", lines=lines)
@@ -745,6 +818,14 @@ def _footer(sc: Scene, th: dict, deck_title: str, idx: int, total: int):
     sc.text(804, 502, 100, 20, num, 12, th["muted"], align="r", lines=[num])
 
 
+def _decor(sc: Scene, th: dict) -> None:
+    """v78: sayt mavzusi bo'lsa — saytdagi chet bezagi (design_system.decor_items), eski bot mavzusida — yuqori chiziq."""
+    if th.get("site") and _ds is not None:
+        sc.items.extend(dict(it) for it in _ds.decor_items(th))
+    else:
+        _topbar(sc, th)
+
+
 def _topbar(sc: Scene, th: dict):
     stripe_y = TOP_STRIPE_SAFE_Y
     stripe_h = min(10, TOP_STRIPE_MAX_H)
@@ -755,7 +836,7 @@ def _topbar(sc: Scene, th: dict):
 def _heading(sc: Scene, th: dict, title: str, width: float) -> None:
     title_y = max(MIN_TITLE_Y, 70)
     size, lines = fit(title, width, 58, 34, 22, bold=True)
-    sc.text(56, title_y, width, 58, title, size, th["primary"], bold=True, lines=lines)
+    sc.text(56, title_y, width, 58, title, size, th.get("title") or th["primary"], bold=True, lines=lines)
     sc.rect(56, title_y + 60, 64, 5, th["accent"], r=2)
 
 
@@ -834,6 +915,132 @@ def _buttons_row(sc: Scene, th: dict, btns: List[dict], x: float, y: float, max_
         cx += bw + gap
 
 
+def _compare_slide(sc: Scene, th: dict, s: dict) -> None:
+    """v78: ikki ustunli taqqoslash — ikki kartochka va o'rtada «VS» belgisi."""
+    pal = get_palette(th)
+    gap, top, ch = 70, 156, 326
+    cw = (848 - gap) / 2
+    for k, side in enumerate(("left", "right")):
+        col = s[side]
+        x = 56 + k * (cw + gap)
+        color = pal[k % len(pal)] if len(pal) > 1 else th["primary"]
+        sc.rect(x, top, cw, ch, th["card"], r=18, line=mix(th["tint"], color, 0.35), lw=1.2)
+        sc.rect(x, top, cw, 8, color, r=0)
+        y = top + 26
+        if col.get("heading"):
+            hs, hl = fit(col["heading"], cw - 48, 60, 26, 16, bold=True)
+            sc.text(x + 24, y, cw - 48, len(hl) * hs * LH, col["heading"], hs, _ds.ensure_contrast(color, th["card"], 3.0) if _ds else th["primary"],
+                    bold=True, lines=hl)
+            y += len(hl) * hs * LH + 14
+        area = top + ch - 20 - y
+        items = col.get("bullets") or []
+        size = 20
+        for size in range(20, 11, -1):
+            tot = sum(len(wrap(b, size, cw - 78)) * size * LH for b in items) + 10 * max(0, len(items) - 1)
+            if tot <= area:
+                break
+        for b in items:
+            lines = wrap(b, size, cw - 78)
+            hh = len(lines) * size * LH
+            d = max(7, round(size * 0.38))
+            sc.oval(x + 26, y + (size * LH - d) / 2, d, d, color)
+            sc.text(x + 48, y, cw - 78, hh, b, size, th["text"], lines=lines)
+            y += hh + 10
+    cx, cy = 56 + cw + gap / 2, top + ch / 2
+    sc.oval(cx - 28, cy - 28, 56, 56, th["primary"])
+    sc.text(cx - 28, cy - 28, 56, 56, "VS", 18, th.get("on_primary", "#FFFFFF"), bold=True, align="c", anchor="m", lines=["VS"])
+
+
+def _image_slide(sc: Scene, th: dict, s: dict, raw: Optional[bytes]) -> None:
+    """v78: katta rasm + izoh. Rasm topilmasa — izoh kartochkada (slayd bo'sh qolmaydi)."""
+    img = cover_jpeg(raw, 848, 268) if raw else None
+    cap = s.get("caption") or ""
+    if img:
+        sc.image(56, 150, 848, 268, img, 18)
+        if cap:
+            cs, cl = fit(cap, 820, 56, 20, 13)
+            sc.text(70, 430, 820, 60, cap, cs, th["text"], lines=cl)
+        return
+    sc.rect(56, 160, 848, 300, th["tint"], r=20)
+    sc.rect(56, 160, 10, 300, th["accent"], r=4)
+    cs, cl = fit(cap or s.get("title") or " ", 760, 240, 30, 16)
+    hh = len(cl) * cs * LH
+    sc.text(100, 160 + (300 - hh) / 2, 760, hh, cap or s.get("title") or "", cs, th["text"], lines=cl)
+
+
+def crossword_palette(th: dict) -> dict:
+    """js/56_crossword.js palette() — mavzu ranglari -> krossvord ranglari (bir xil qoida)."""
+    dark = bool(th.get("dark_bg"))
+    title = th.get("title") or th["primary"]
+    return {"cell": "#FFFFFF", "line": th["primary"] if dark else title, "num": "#334155" if dark else th["primary"],
+            "letter": "#0F172A" if dark else title, "head": th["primary"], "clue": th["text"]}
+
+
+def _crossword_slide(sc: Scene, th: dict, s: dict, lang: str, left: float = 56, top: float = 150, W_: float = 848,
+                     H_: float = 330) -> None:
+    """v78: saytdagi build() geometriyasi: chapda to'r, o'ngda «Eniga / Bo'yiga» savollari (yoki javoblar ro'yxati)."""
+    from backend.services import crossword as _cw
+    L = _cw.layout(s["words"], 1.6)
+    P = crossword_palette(th)
+    if not L["cells"]:
+        sc.text(left, top, W_, 40, "Krossvord uchun kamida 2 ta so'z kerak", 22, P["clue"])
+        return
+    show_answers = bool(s.get("show_answers"))
+    show_clues = s.get("show_clues", True) is not False and any(w["clue"] for w in L["words"])
+    answer_list = show_answers and not show_clues and bool(L["words"])
+    side = show_clues or answer_list
+    gap = 28
+    if side:
+        grid_w = round(W_ * (0.64 if answer_list else (0.56 if L["cols"] >= L["rows"] * 1.6 else 0.5)))
+    else:
+        grid_w = W_
+    clues_x, clues_w = left + grid_w + gap, W_ - grid_w - gap
+    cell = max(14, math.floor(min(grid_w / L["cols"], H_ / L["rows"], 54 if side else 64)))
+    gw, gh = cell * L["cols"], cell * L["rows"]
+    gx, gy = left + (grid_w - gw) / 2, top + (H_ - gh) / 2
+    if side and gx > left:
+        gx = left + max(0, (grid_w - gw) / 2)
+    lw = max(1.2, cell / 28)
+    for c in L["cells"]:
+        x, y = gx + c["c"] * cell, gy + c["r"] * cell
+        sc.rect(x, y, cell, cell, P["cell"], line=P["line"], lw=lw)
+        if c["n"]:
+            ns = max(8, round(cell * 0.27))
+            sc.text(x + cell * 0.08, y + cell * 0.05, cell * 0.6, ns * LH, str(c["n"]), ns, P["num"], bold=True, lines=[str(c["n"])])
+        if show_answers:
+            fs = round(cell * 0.56)
+            sc.text(x, y, cell, cell, c["ch"], fs, P["letter"], bold=True, align="c", anchor="m", lines=[c["ch"]])
+    if not side:
+        return
+    lb = _cw.labels(lang)
+    across = [w for w in L["words"] if w["dir"] == "across"]
+    down = [w for w in L["words"] if w["dir"] == "down"]
+
+    def lines_of(arr):
+        return [f"{w['num']}. " + ("".join(_cw.tokens(w["answer"])) if answer_list else (w["clue"] or "…")) for w in arr]
+
+    head_fs = 20
+    blocks = [(lb[0], lines_of(across)), (lb[1], lines_of(down))]
+    blocks = [b for b in blocks if b[1]]
+    avail = H_ - len(blocks) * (head_fs + 18) - 12
+
+    def measure(fs):
+        return [[ln for t in b[1] for ln in wrap(t, fs, clues_w)] for b in blocks]
+
+    fs = 18
+    while fs > 10 and sum(len(m) for m in measure(fs)) * fs * 1.25 > avail:
+        fs -= 1
+    wrapped = measure(fs)
+    h_total = sum(head_fs + 10 + len(m) * fs * 1.25 + 14 for m in wrapped)
+    y = top + max(0, (H_ - h_total) / 2)
+    for (head, _), m in zip(blocks, wrapped):
+        sc.text(clues_x, y, clues_w, head_fs + 4, head.upper(), head_fs, P["head"], bold=True, lines=[head.upper()])
+        y += head_fs + 10
+        hh = len(m) * fs * 1.25
+        sc.text(clues_x, y, clues_w, hh, "\n".join(m), fs, P["clue"], lines=m)
+        y += hh + 14
+
+
 def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: str = "uz") -> List[Scene]:
     th = THEMES.get(deck.get("theme"), THEMES[DEFAULT_THEME])
     slides = deck["slides"]
@@ -860,7 +1067,7 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
                 _buttons_row(sc, th, s["buttons"], 64, min(470, max(420, end_y + 22)), (500 if img else 700) - 10, 42, 17, dark=True)
         elif lay == "bullets":
             sc = Scene(th["bg"])
-            _topbar(sc, th)
+            _decor(sc, th)
             btns = s.get("buttons") or []
             area = 270 if btns else 330                         # tugmalar uchun pastda joy
             if s.get("media"):
@@ -899,7 +1106,7 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
             _footer(sc, th, deck_title, idx, total)
         elif lay == "cards":
             sc = Scene(th["bg"])
-            _topbar(sc, th)
+            _decor(sc, th)
             _heading(sc, th, s["title"], 848)
             n = len(s["cards"])
             gap = 22
@@ -910,7 +1117,7 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
                     sc.rect(x, y, cw, ch, th["card"], r=16, line=mix(th["tint"], th["primary"], 0.12), lw=1.2)
                     sc.rect(x, y + 14, 6, ch - 28, th["accent"], r=3)
                     sc.oval(x + 22, y + 20, 40, 40, th["primary"])
-                    sc.text(x + 22, y + 20, 40, 40, str(k + 1), 19, "#FFFFFF", bold=True, align="c", anchor="m", lines=[str(k + 1)])
+                    sc.text(x + 22, y + 20, 40, 40, str(k + 1), 19, th.get("on_primary", "#FFFFFF"), bold=True, align="c", anchor="m", lines=[str(k + 1)])
                     inner = cw - 92
                     hs, hl = fit(c["heading"] or " ", inner, 52, 21, 15, bold=True)
                     hh = len(hl) * hs * LH if c["heading"] else 0
@@ -929,7 +1136,7 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
                     sc.rect(x, y, cw, ch, th["card"], r=18, line=mix(th["tint"], th["primary"], 0.12), lw=1.2)
                     sc.rect(x, y, cw, 7, th["accent"], r=0)
                     sc.oval(x + 20, y + 26, 42, 42, th["primary"])
-                    sc.text(x + 20, y + 26, 42, 42, str(k + 1), 20, "#FFFFFF", bold=True, align="c", anchor="m", lines=[str(k + 1)])
+                    sc.text(x + 20, y + 26, 42, 42, str(k + 1), 20, th.get("on_primary", "#FFFFFF"), bold=True, align="c", anchor="m", lines=[str(k + 1)])
                     inner = cw - 40
                     hs, hl = fit(c["heading"] or " ", inner, 70, 24 if n == 2 else 22, 15, bold=True)
                     hh = len(hl) * hs * LH if c["heading"] else 0
@@ -942,7 +1149,7 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
             _footer(sc, th, deck_title, idx, total)
         elif lay == "stats":
             sc = Scene(th["bg"])
-            _topbar(sc, th)
+            _decor(sc, th)
             _heading(sc, th, s["title"], 848)
             n = len(s["stats"])
             gap = 22
@@ -962,15 +1169,33 @@ def build_scenes(deck: dict, images: Optional[Dict[int, bytes]] = None, lang: st
             _footer(sc, th, deck_title, idx, total)
         elif lay == "table":
             sc = Scene(th["bg"])
-            _topbar(sc, th)
+            _decor(sc, th)
             _heading(sc, th, s["title"], 848)
             _layout_table(sc, th, s["rows"])
             _footer(sc, th, deck_title, idx, total)
         elif lay == "chart":
             sc = Scene(th["bg"])
-            _topbar(sc, th)
+            _decor(sc, th)
             _heading(sc, th, s["title"], 848)
             sc.chart(56, 150, 848, 335, s["chart"], s["labels"], s["series"], th)
+            _footer(sc, th, deck_title, idx, total)
+        elif lay == "compare":
+            sc = Scene(th["bg"])
+            _decor(sc, th)
+            _heading(sc, th, s["title"], 848)
+            _compare_slide(sc, th, s)
+            _footer(sc, th, deck_title, idx, total)
+        elif lay == "image":
+            sc = Scene(th["bg"])
+            _decor(sc, th)
+            _heading(sc, th, s.get("title") or deck_title, 848)
+            _image_slide(sc, th, s, raw_img)
+            _footer(sc, th, deck_title, idx, total)
+        elif lay == "crossword":
+            sc = Scene(th["bg"])
+            _decor(sc, th)
+            _heading(sc, th, s.get("title") or deck_title, 848)
+            _crossword_slide(sc, th, s, lang)
             _footer(sc, th, deck_title, idx, total)
         elif lay == "quote":
             sc = Scene(th["tint"])
@@ -1196,7 +1421,7 @@ def _pptx_table(slide, it: dict, E: int, rgb) -> None:
             run.font.size = Pt(it["fs"])
             run.font.bold = ri == 0
             run.font.name = "Arial"
-            run.font.color.rgb = rgb("#FFFFFF" if ri == 0 else th["text"])
+            run.font.color.rgb = rgb(th.get("on_primary", "#FFFFFF") if ri == 0 else th["text"])
             # hujayra chegarasi
             tcPr = cell._tc.get_or_add_tcPr()
             from lxml import etree
@@ -1439,16 +1664,19 @@ def render_pptx(scenes: List[Scene], title: str) -> bytes:
                 tf.auto_size = MSO_AUTO_SIZE.NONE
                 tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
                 tf.vertical_anchor = MSO_ANCHOR.MIDDLE if it["anchor"] == "m" else MSO_ANCHOR.TOP
-                p = tf.paragraphs[0]
-                p.alignment = align_map.get(it["align"], PP_ALIGN.LEFT)
-                p.line_spacing = Pt(it["size"] * LH)
-                r = p.add_run()
-                r.text = it["text"]
-                r.font.size = Pt(it["size"])
-                r.font.bold = bool(it["bold"])
-                r.font.italic = bool(it["italic"])
-                r.font.name = "Arial"
-                r.font.color.rgb = rgb(it["color"])
+                # v78: «\n» li matn (krossvord savollari) — har qator ALOHIDA paragraf: PowerPoint ham, sayt muharririning
+                # PPTX importi ham qatorlarni bir xil ko'rsatadi (run ichidagi «\n» importda bitta qatorga qo'shilib ketardi)
+                for pi, part in enumerate(str(it["text"]).split("\n")):
+                    p = tf.paragraphs[0] if pi == 0 else tf.add_paragraph()
+                    p.alignment = align_map.get(it["align"], PP_ALIGN.LEFT)
+                    p.line_spacing = Pt(it["size"] * LH)
+                    r = p.add_run()
+                    r.text = part
+                    r.font.size = Pt(it["size"])
+                    r.font.bold = bool(it["bold"])
+                    r.font.italic = bool(it["italic"])
+                    r.font.name = "Arial"
+                    r.font.color.rgb = rgb(it["color"])
         _pptx_transition(slide, getattr(sc, "transition", "fade"))
         if sc.notes:
             try:

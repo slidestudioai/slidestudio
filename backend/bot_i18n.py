@@ -40,6 +40,8 @@ BUTTONS: List[Tuple[str, str, str]] = [
     ("⬅️ Orqaga", "⬅️ Назад", "⬅️ Back"),
     ("➕ Varaq sotib olish", "➕ Купить листы", "➕ Buy pages"),
     ("🔗 Google ulash", "🔗 Подключить Google", "🔗 Connect Google"),
+    ("✏️ Muharrirda tahrirlash", "✏️ Изменить в редакторе", "✏️ Edit in the editor"),
+    ("🤖 AI bilan o'zgartirish", "🤖 Изменить с AI", "🤖 Change with AI"),
     ("🔓 Google'ni uzish", "🔓 Отключить Google", "🔓 Disconnect Google"),
     ("💳 To'lovga o'tish", "💳 Перейти к оплате", "💳 Go to payment"),
     ("🌐 Saytda ulash", "🌐 Подключить на сайте", "🌐 Connect on website"),
@@ -62,46 +64,46 @@ BUTTONS: List[Tuple[str, str, str]] = [
 
 HELP_UZ = (
     "<b>Qanday ishlaydi</b>\n"
-    "1. <b>✨ Muharrirni ochish</b> ni bosing — slaydlarni jonli ko'rib, AI bilan yarating va tahrirlang.\n"
-    "2. Tayyor bo'lgach muharrirda <b>PPTX / PDF</b> ni bosing — fayl shu chatga keladi.\n"
-    "3. Tezkor yo'l: mavzuni shu yerga yozing — bot slayd tayyorlab beradi.\n"
+    "1. <b>🆕 Yangi slayd</b> ni bosing va mavzuni yozing — bot taqdimot yasab, PPTX faylni yuboradi.\n"
+    "2. <b>✏️ Muharrirda tahrirlash</b> — aynan o'sha taqdimot muharrirda ochiladi, xohlagan joyini o'zgartirasiz.\n"
+    "3. <b>🚀 Muharrir</b> — bo'sh muharrir: slaydlarni jonli ko'rib, AI bilan yarating.\n"
     "4. 1 slayd = 1 varaq. Varaq tugasa — «💳 Balans» orqali sotib oling.\n\n"
     "<b>Buyruqlar</b>\n"
     "/my — slaydlarim\n"
     "/credits — balans\n"
     "/buy — varaq sotib olish\n"
     "/invite — do'st taklif qilish (+15 varaq)\n"
-    "/settings — Google akkaunt\n"
+    "/settings — sozlamalar\n"
     "/support — adminga yozish\n"
     "/lang — til"
 )
 HELP_RU = (
     "<b>Как это работает</b>\n"
-    "1. Нажмите <b>✨ Открыть редактор</b> — создавайте и меняйте слайды с AI, сразу видя результат.\n"
-    "2. Когда всё готово, нажмите в редакторе <b>PPTX / PDF</b> — файл придёт в этот чат.\n"
-    "3. Быстрый путь: напишите тему сюда — бот подготовит слайды.\n"
+    "1. Нажмите <b>🆕 Новые слайды</b> и напишите тему — бот сделает презентацию и пришлёт PPTX.\n"
+    "2. <b>✏️ Изменить в редакторе</b> — эта же презентация откроется в редакторе, меняйте что угодно.\n"
+    "3. <b>🚀 Редактор</b> — пустой редактор: создавайте слайды с AI, сразу видя результат.\n"
     "4. 1 слайд = 1 лист. Закончились листы — купите через «💳 Баланс».\n\n"
     "<b>Команды</b>\n"
     "/my — мои слайды\n"
     "/credits — баланс\n"
     "/buy — купить листы\n"
     "/invite — пригласить друга (+15 листов)\n"
-    "/settings — аккаунт Google\n"
+    "/settings — настройки\n"
     "/support — написать админу\n"
     "/lang — язык"
 )
 HELP_EN = (
     "<b>How it works</b>\n"
-    "1. Tap <b>✨ Open the editor</b> — create and edit slides with AI while you see them live.\n"
-    "2. When ready, tap <b>PPTX / PDF</b> in the editor — the file comes to this chat.\n"
-    "3. Quick way: write a topic here — the bot prepares the slides.\n"
+    "1. Tap <b>🆕 New slides</b> and write a topic — the bot builds the deck and sends the PPTX.\n"
+    "2. <b>✏️ Edit in the editor</b> — the same deck opens in the editor, change anything by hand.\n"
+    "3. <b>🚀 Editor</b> — an empty editor: create slides with AI while you see them live.\n"
     "4. 1 slide = 1 page. Out of pages? Buy more via «💳 Balance».\n\n"
     "<b>Commands</b>\n"
     "/my — my slides\n"
     "/credits — balance\n"
     "/buy — buy pages\n"
     "/invite — invite a friend (+15 pages)\n"
-    "/settings — Google account\n"
+    "/settings — settings\n"
     "/support — contact support\n"
     "/lang — language"
 )
@@ -134,6 +136,14 @@ PHRASES: List[Tuple[str, str, str]] = BUTTONS + [
      "Чтобы видеть слайды вживую, легко менять их с AI и брать готовые шаблоны — откройте редактор 👇",
      "Open the editor to see your slides live, edit them easily with AI and use ready templates 👇"),
     ("📩 Muharrirdan:", "📩 Из редактора:", "📩 From the editor:"),
+    # ---- v78: mustaqil Telegram akkaunti ----
+    ("\n✅ Akkauntingiz tayyor · ", "\n✅ Аккаунт готов · ", "\n✅ Your account is ready · "),
+    ("Mavzuni yozing — AI taqdimot tayyorlaydi 👇", "Напишите тему — AI подготовит презентацию 👇", "Write a topic — AI will prepare the presentation 👇"),
+    ("<i>Chek uchun email to'lov oynasida so'raladi.</i>", "<i>Email для чека запросит окно оплаты.</i>", "<i>The payment page asks for an email for the receipt.</i>"),
+    ("Do'stingiz havolangiz orqali botga (yoki saytga) kirsa, balansingizga", "Если друг зайдёт в бот (или на сайт) по вашей ссылке, на ваш баланс добавится",
+     "When a friend opens the bot (or the website) with your link, your balance gets"),
+    ("ta pullik varaq qo'shiladi.", "платных листов.", "paid pages."),
+    ("📦 Fayl yuborilmoqda...", "📦 Отправляю файл...", "📦 Sending the file..."),
     ("🔗 Balans va slaydlar uchun avval <b>Google akkauntni ulang</b>.", "🔗 Для баланса и слайдов сначала <b>подключите аккаунт Google</b>.", "🔗 To get a balance and slides, first <b>connect your Google account</b>."),
     ("🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.\nBu balansingizni saqlab qolish uchun kerak.", "🔗 Чтобы создавать слайды, сначала <b>подключите аккаунт Google</b>.\nЭто нужно, чтобы сохранить ваш баланс.", "🔗 To create slides, first <b>connect your Google account</b>.\nThis keeps your balance safe."),
     ("🔗 Slayd yaratish uchun avval <b>Google akkauntni ulang</b>.", "🔗 Чтобы создавать слайды, сначала <b>подключите аккаунт Google</b>.", "🔗 To create slides, first <b>connect your Google account</b>."),
@@ -372,7 +382,7 @@ def picker_markup() -> Dict[str, Any]:
 
 COMMANDS = {
     "ru": [("new", "Новые слайды"), ("my", "Мои слайды"), ("credits", "Баланс"), ("buy", "Купить листы"),
-           ("invite", "Пригласить друга (+15 листов)"), ("settings", "Аккаунт Google"), ("support", "Написать админу"), ("lang", "Язык"), ("help", "Помощь")],
+           ("invite", "Пригласить друга (+15 листов)"), ("settings", "Настройки"), ("support", "Написать админу"), ("lang", "Язык"), ("help", "Помощь")],
     "en": [("new", "New slides"), ("my", "My slides"), ("credits", "Balance"), ("buy", "Buy pages"),
-           ("invite", "Invite a friend (+15 pages)"), ("settings", "Google account"), ("support", "Contact support"), ("lang", "Language"), ("help", "Help")],
+           ("invite", "Invite a friend (+15 pages)"), ("settings", "Settings"), ("support", "Contact support"), ("lang", "Language"), ("help", "Help")],
 }

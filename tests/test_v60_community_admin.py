@@ -249,14 +249,19 @@ def test_merge_all(sb, monkeypatch):
     assert r["emails"] == 1 and r["merged"] == 3 and not r["errors"]
 
 
-def test_telegram_without_google_has_no_free_pages():
-    assert mon.daily_units_for({"email": "tg123@t.me"}) == 0
-    assert mon.daily_units_for({"email": "a@x.uz"}) == mon.free_daily_units()
+def test_telegram_account_gets_free_pages(monkeypatch):
+    """v78: Telegram akkaunti — mustaqil akkaunt, Google'siz ham bepul varaq oladi; balans tugasa «sotib olish»."""
+    monkeypatch.delenv("TG_FREE_DAILY_PAGES", raising=False)
+    assert mon.daily_units_for({"email": "tg123@t.me"}) == mon.free_daily_units()
     u = mon.apply_24h_reset({"email": "tg123@t.me", "free_credits": 200, "paid_credits": 0})
-    assert mon.total_credits(u) == 0
+    assert mon.total_credits(u) == 200
+    monkeypatch.setenv("TG_FREE_DAILY_PAGES", "0")                     # ixtiyoriy: Telegram'ga bepul varaq yo'q
+    assert mon.daily_units_for({"email": "tg123@t.me"}) == 0
+    monkeypatch.setenv("TG_FREE_DAILY_PAGES", "3")
+    assert mon.daily_units_for({"email": "tg123@t.me"}) == 3 * mon.fast_page_units()
     from backend import telegram_bot as tb
     text, kb = tb._no_credit_reply("fast", {"email": "tg123@t.me"})
-    assert text == tb.LINK_FIRST and kb["inline_keyboard"][0][0]["callback_data"] == "linkinfo"
+    assert "Google" not in text and kb["inline_keyboard"][0][0]["callback_data"] == "buy"
 
 
 # ---------------------------------------------------------------------------------------------

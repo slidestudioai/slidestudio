@@ -245,9 +245,10 @@ def test_account_context_has_real_balance():
     assert str(tg._fmt_pages(tg._pages_left(usage, "fast"))) in ctx
 
 
-def test_account_context_unlinked():
+def test_account_context_telegram_account_has_balance():
+    """v78: Telegram akkaunti — AI ham haqiqiy balansni biladi (Google so'ralmaydi)."""
     ctx = tg._account_context({"free_credits": 200}, tg._tg_email(98), {"id": 98})
-    assert "NOT linked" in ctx
+    assert "Balance" in ctx and "NOT linked" not in ctx and "Google" not in ctx
 
 
 def test_new_mode_sends_balance_to_ai(sb, monkeypatch):

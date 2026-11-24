@@ -51,6 +51,15 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 > v69: `tg_pending_refs` jadvali (botdagi do'st taklifi bonusi server qayta ishga tushganda yo'qolmasligi uchun).
 > v70: `support_messages` jadvali — **💬 Yordam (Support)**: foydalanuvchi saytda (⚙️ Sozlamalar → 💬 Yordam) yoki botda (⚙️ Sozlamalar → 💬 Adminga yozish, `/support`) adminga yozadi. Admin javobni sayt **Admin panel → 💬 Yordam** da yoki botdagi admin menyuda (`admin` → 💬 Yordam) beradi. Yangi xabar Telegram admin(lar)ga «✍️ Javob yozish» tugmasi bilan keladi; javob foydalanuvchiga saytda va (Telegram ulangan bo'lsa) botda ko'rinadi.
 > v71: **Krossvord** — muharrirda «Qo'shish → Krossvord» (yoki asboblar panelidagi to'r belgisi), AI esa `{"type":"crossword"}` elementi bilan yasaydi; universitet taqdimotlari (mustaqil ish, seminar, referat) uchun AI promptida alohida tuzilma va oxirida krossvord + javoblar kaliti. SQL o'zgarishi yo'q.
+> v78: **Mustaqil Telegram akkaunti va umumiy dizayn yadrosi.** `SUPABASE_SCHEMA.sql` ni qayta ishga tushiring (17-bo'lim:
+> `user_usage.telegram_id`, `auth_provider`, `contact_email` + `public.users` ko'rinishi).
+> - Bot / Mini App: Google ulash shart emas, `/link` olib tashlandi. `/start` — 🆕 Yangi slayd · 🚀 Muharrir · 💳 Balans;
+>   yangi foydalanuvchiga darhol akkaunt va bepul varaq (`TG_FREE_DAILY_PAGES` bilan alohida sozlanadi).
+> - Dodo: checkout `metadata` da `user_id` + `telegram_id`; webhook shu ID bo'yicha balansni to'ldiradi. Telegram akkauntida email
+>   bo'lmasa — to'lov oynasi o'zi so'raydi, kiritilgan email chek uchun `contact_email` ga saqlanadi.
+> - Bot generatori saytdagi 32 ta dizayn mavzusini (`js/51_design_themes.js` — yagona manba, `backend/services/design_system.py`),
+>   mavzuga mos rang tanlashni, krossvord (`backend/services/crossword.py` — `js/56_crossword.js` ning aynan nusxasi), ikki ustunli
+>   taqqoslash va katta rasm maketlarini ishlatadi. Tayyor PPTX darhol yuboriladi (`TG_AUTO_SEND`), ostida «✏️ Muharrirda tahrirlash».
 >
 > **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida
 > `[GUNICORN] RAM limit ... -> N worker(s)` qatori). Qo'lda: `WEB_CONCURRENCY`.

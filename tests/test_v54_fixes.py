@@ -121,10 +121,11 @@ def test_balance_footer_linked_user():
     assert "Qoldi" in foot and "varaq" in foot
 
 
-def test_balance_footer_hidden_for_unlinked_user():
+def test_balance_footer_shown_for_telegram_account():
+    """v78: Telegram akkaunti mustaqil — balans har doim ko'rinadi (avval Google ulanmaguncha yashirilardi)."""
     user = {"id": 556}
     usage = {"free_credits": 200, "paid_credits": 0}
-    assert tg._balance_footer(usage, "fast", tg._tg_email(556), user) == ""
+    assert "Qoldi" in tg._balance_footer(usage, "fast", tg._tg_email(556), user)
 
 
 def test_balance_footer_unlimited():
@@ -134,7 +135,7 @@ def test_balance_footer_unlimited():
 
 
 def test_welcome_is_short_and_not_blocked_by_slow_db(monkeypatch):
-    """v75: salomlashuv qisqa (balanssiz); baza sekin bo'lsa ham darhol chiqadi va alohida balans xabari yuborilmaydi."""
+    """v78: salomlashuv qisqa; baza sekin bo'lsa ham darhol chiqadi (balans qatorisiz) va alohida xabar yuborilmaydi."""
     sent = []
 
     async def fake_send(cid, text, kb=None):
@@ -156,5 +157,5 @@ def test_welcome_is_short_and_not_blocked_by_slow_db(monkeypatch):
     asyncio.run(tg._send_welcome(1, {"id": 1, "first_name": "Ali"}))
     assert len(sent) == 1 and not spawned
     text, kb = sent[0]
-    assert "Salom" in text and "Muharrirni oching" in text and "Balans" not in text
-    assert kb["inline_keyboard"][0][0]["text"] == "✨ Muharrirni ochish"
+    assert "Salom" in text and "Mavzuni yozing" in text and "Google" not in text and "Akkauntingiz tayyor" not in text
+    assert [b.get("callback_data") or b["text"] for row in kb["inline_keyboard"] for b in row] == ["new", "🚀 Muharrir", "bal"]

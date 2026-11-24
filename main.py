@@ -1801,7 +1801,11 @@ async def create_checkout(payload: Dict[str, Any] = None):
         if client_gross_cents != quote["gross_cents"]:
             return JSONResponse({"error": "Narx yangilandi. Oynani yopib, qaytadan urinib ko'ring.",
                                  "quote": _topup_quote_public(quote)}, status_code=409)
-    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack", quote=quote)
+    # v78: Mini App ichida Telegram akkaunti (tg<ID>@t.me) — metadata'ga telegram_id, ichki email Dodo'ga ketmaydi
+    m_tg = _TG_INTERNAL_EMAIL_RE.match(user_email or "")
+    tg_id = int(user_email[2:user_email.index("@")]) if m_tg else None
+    code, data = await _build_checkout(user_id, user_email, str(payload.get("return_url") or ""), "pack", quote=quote,
+                                       telegram_id=tg_id)
     return data if code == 200 else JSONResponse(data, status_code=code)
 
 
@@ -1942,7 +1946,7 @@ def _safe_return_url(base: str, hint: str) -> str:
 
 
 async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", product: str = "pack",
-                          quote: Dict[str, Any] = None, embed: bool = False):
+                          quote: Dict[str, Any] = None, embed: bool = False, telegram_id: Optional[int] = None):
     """Sayt VA Telegram bot uchun umumiy Dodo checkout session. (http_status, dict) qaytaradi."""
     d = _dodo_env()
     if not d["api_key"] or not d["product_id"]:
@@ -1959,12 +1963,16 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
         "net_cents": str(q["net_cents"]), "credits": str(q["credits"]), "gross_cents": str(q["gross_cents"]),
         "sig": _topup_sig(str(user_id), q["package"], q["net_cents"], q["credits"], q["gross_cents"]),
     }
+    if telegram_id:                       # v78: Telegram akkaunti — webhook shu ID bo'yicha ham topadi (user_id bilan birga)
+        metadata["telegram_id"] = str(int(telegram_id))
+        metadata["source"] = "telegram"
     body: Dict[str, Any] = {
         # "Pay What You Want" mahsuloti: amount — mijoz to'laydigan narx, SENTLARDA ($5 -> 500)
         "product_cart": [{"product_id": d["product_id"], "quantity": 1, "amount": int(q["gross_cents"])}],
         "metadata": metadata,
     }
-    if user_email:
+    # v78: ichki texnik manzil (tg<ID>@t.me) hech qachon Dodo'ga ketmaydi — email bo'lmasa Dodo to'lov oynasi o'zi so'raydi
+    if user_email and not _TG_INTERNAL_EMAIL_RE.match(user_email):
         body["customer"] = {"email": user_email, "name": user_email.split("@")[0][:60] or "Customer"}
     return_url = _safe_return_url(d["base_url"], return_url_hint)
     if return_url:
@@ -2018,9 +2026,13 @@ def _dodo_error_reason(raw: str) -> str:
     return str(js.get("message") or js.get("error") or js.get("detail") or "").strip()[:300]
 
 
-async def _checkout_for_bot(user_id: str, email: str = "", return_url: str = "", product: str = "pack") -> dict:
+_TG_INTERNAL_EMAIL_RE = _re.compile(r"^tg\d+@t\.me$", _re.I)
+
+
+async def _checkout_for_bot(user_id: str, email: str = "", return_url: str = "", product: str = "pack",
+                            telegram_id: Optional[int] = None) -> dict:
     """Telegram bot «To'ldirish» tugmasi uchun. {'url','pages','price'} yoki {'error'}."""
-    code, data = await _build_checkout(user_id, (email or "").strip(), return_url, product)
+    code, data = await _build_checkout(user_id, (email or "").strip(), return_url, product, telegram_id=telegram_id)
     if code == 200:
         return {"url": data["checkout_url"], "pages": data.get("pages"), "days": data.get("days"), "price": data.get("price_usd"), "product": product}
     return {"error": data.get("error") or "checkout_error", "hint": data.get("hint") or data.get("detail") or ""}
@@ -2049,6 +2061,35 @@ def _apply_payment_sync(key: str, user_id: str, pages: int, sign: int, event_nam
     if isinstance(data, list):
         data = data[0] if data else {}
     return data if isinstance(data, dict) else {}
+
+def _find_user_by_telegram_id(tid: Any) -> str:
+    """v78: Telegram akkaunti (user_usage.telegram_id, eski qatorlarda — tg<ID>@t.me) bo'yicha user_id."""
+    try:
+        tid = int(str(tid or "").strip())
+    except (TypeError, ValueError):
+        return ""
+    if not supabase or tid <= 0:
+        return ""
+    for col, val in (("telegram_id", tid), ("email", f"tg{tid}@t.me")):
+        try:
+            res = supabase.table("user_usage").select("user_id").eq(col, val).limit(2).execute()
+            if res.data and len(res.data) == 1:
+                return str(res.data[0].get("user_id") or "")
+        except Exception as e:
+            print(f"[DODO WEBHOOK] telegram_id qidiruv ({col}): {str(e)[:120]}")
+    return ""
+
+
+def _save_contact_email_sync(user_id: str, email: str) -> None:
+    """v78: Telegram akkauntida email yo'q — to'lov oynasida kiritilgan email chek / keyingi to'lov uchun saqlanadi."""
+    if not supabase or not user_id or not email or "@" not in email or _TG_INTERNAL_EMAIL_RE.match(email):
+        return
+    try:
+        supabase.table("user_usage").update({"contact_email": email[:200]}).eq("user_id", str(user_id)) \
+            .like("email", "tg%@t.me").execute()
+    except Exception as e:
+        print(f"[DODO WEBHOOK] contact_email saqlanmadi (SUPABASE_SCHEMA.sql v78?): {str(e)[:120]}")
+
 
 def _find_user_by_email(email: str) -> str:
     if not supabase or not email:
@@ -2217,6 +2258,8 @@ async def dodo_webhook(request: Request):
             if str(meta.get("product") or "pack") != "pack":
                 return {"ok": True, "ignored": "other_product"}
             user_id = str(meta.get("user_id") or "").strip()
+            if (not user_id or user_id == "unknown") and meta.get("telegram_id"):     # v78: Telegram akkaunti
+                user_id = await asyncio.to_thread(_find_user_by_telegram_id, meta.get("telegram_id"))
             if not user_id or user_id == "unknown":
                 user_id = await asyncio.to_thread(_find_user_by_email, email)
             if not user_id:
@@ -2236,6 +2279,8 @@ async def dodo_webhook(request: Request):
             u = await _credit_user(user_id, email, pay_key, pages, +1, etype, payment_id, usd_cents=paid)
             if u is None:
                 return {"ok": True, "duplicate": True}
+            if meta.get("telegram_id") and email:
+                await asyncio.to_thread(_save_contact_email_sync, user_id, email)
             _metrics.inc("webhook_events_total", {"result": "credited"})
             print(f"[DODO WEBHOOK] {etype}: +{pages} -> {user_id} (payment={payment_id}, mode={d['mode']})")
             return {"ok": True, "user_id": user_id, "paid_credits": u.get("paid_credits"), "pages": pages}

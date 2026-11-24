@@ -771,3 +771,47 @@ revoke all on public.support_messages from anon, authenticated;
 revoke all on sequence public.support_messages_id_seq from anon, authenticated;
 grant all on public.support_messages to service_role;
 grant all on sequence public.support_messages_id_seq to service_role;
+
+
+-- ============================================================================
+-- 17) v78: MUSTAQIL TELEGRAM AKKAUNTI (Google shart emas). Qayta ishga tushirish xavfsiz.
+--   * user_usage.telegram_id   — Telegram foydalanuvchisining ASOSIY identifikatori (unikal; Google akkauntda NULL).
+--   * user_usage.auth_provider — 'telegram' | 'google'.
+--   * user_usage.contact_email — chek uchun email (Telegram akkauntida ixtiyoriy; Dodo to'lov oynasida kiritilgani saqlanadi).
+--   * Supabase Auth login uchun texnik manzil tg<ID>@t.me (eskicha) qoladi — u foydalanuvchiga ko'rinmaydi, unga xat
+--     yuborilmaydi va Dodo'ga uzatilmaydi. Shu sababli public.users ko'rinishida (view) Telegram akkauntining
+--     email va google_id ustunlari NULL bo'ladi.
+--   * Telegram akkauntiga ham boshlang'ich (kunlik) bepul varaq beriladi. Alohida miqdor kerak bo'lsa — server env:
+--     TG_FREE_DAILY_PAGES (varaqda; 0 = Telegram akkauntlariga bepul varaq yo'q).
+-- ============================================================================
+alter table public.user_usage add column if not exists telegram_id   bigint;
+alter table public.user_usage add column if not exists auth_provider text not null default 'google';
+alter table public.user_usage add column if not exists contact_email text;
+do $$ begin
+  alter table public.user_usage add constraint user_usage_provider_chk check (auth_provider in ('google','telegram'));
+exception when duplicate_object then null; end $$;
+
+-- eski Telegram qatorlarini to'ldirish (tg<ID>@t.me -> telegram_id). Bir xil ID bir nechta qatorda bo'lsa — eng eskisi.
+update public.user_usage u
+   set telegram_id = substring(u.email from '^tg([0-9]+)@t\.me$')::bigint,
+       auth_provider = 'telegram'
+ where u.telegram_id is null
+   and u.email ~ '^tg[0-9]+@t\.me$'
+   and not exists (select 1 from public.user_usage o
+                    where o.telegram_id = substring(u.email from '^tg([0-9]+)@t\.me$')::bigint);
+create unique index if not exists user_usage_telegram_id_uq on public.user_usage (telegram_id) where telegram_id is not null;
+
+-- Yagona «users» ko'rinishi: bitta qator = bitta akkaunt (Telegram yoki Google). Faqat server o'qiydi.
+create or replace view public.users as
+select u.user_id,
+       u.telegram_id,
+       case when u.auth_provider = 'telegram' then null else nullif(u.email, '') end                     as email,
+       case when u.auth_provider = 'telegram' then null
+            else (select i.provider_id from auth.identities i
+                   where i.user_id::text = u.user_id and i.provider = 'google' limit 1) end              as google_id,
+       u.contact_email,
+       u.auth_provider,
+       u.created_at
+  from public.user_usage u;
+revoke all on public.users from anon, authenticated;
+grant select on public.users to service_role;
