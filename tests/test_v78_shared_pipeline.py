@@ -157,8 +157,7 @@ def test_bot_prompt_knows_all_site_layouts_and_themes():
 # ------------------------------------------------------------------ 4) akkaunt / UX
 def test_no_google_gate_left_in_bot():
     src = open(os.path.join(ROOT, "backend", "telegram_bot.py"), encoding="utf-8").read()
-    assert "_google_ok" not in src and "LINK_FIRST" not in src and '"linkinfo")]' not in src
-    assert '"command": "link"' not in src
+    assert "_google_ok" not in src and "LINK_FIRST" not in src      # Google ulash MAJBURIY emas (ixtiyoriy tugma qoldi)
 
 
 def test_provision_marks_telegram_account(sb):
@@ -180,28 +179,30 @@ def test_balance_screen_has_buy_for_telegram_account(monkeypatch):
     asyncio.run(tb._show_balance(1, {"id": 1}))
     text, kb = sent[-1]
     assert "10" in text and "Google" not in text
-    assert [b["callback_data"] for row in kb["inline_keyboard"] for b in row] == ["buy", "new"]
+    assert [b["callback_data"] for row in kb["inline_keyboard"] for b in row] == ["buy", "linkinfo", "new"]   # ixtiyoriy ulash
 
 
-def test_old_link_buttons_and_commands_lead_to_balance_and_home(monkeypatch):
-    seen = []
+def test_link_and_unlink_toggle_is_back_in_the_bot(monkeypatch):
+    """Bitta tugma: ulanmagan — «🔗 Google ulash», ulangan — «🔓 Google'ni uzish» (avvalgi ishlagan tizim)."""
+    sent = []
 
-    async def bal(cid, user):
-        seen.append("bal")
+    async def fake_edit(cid, mid, text, kb=None):
+        sent.append((text, kb))
 
-    async def welcome(cid, user):
-        seen.append("home")
+    async def info_no(user):
+        return {"free": 1, "paid": 0, "linked": False, "email": "tg1@t.me"}
 
-    async def fake_tg(*a, **k):
-        return True
-    monkeypatch.setattr(tb, "_show_balance", bal)
-    monkeypatch.setattr(tb, "_send_welcome", welcome)
-    monkeypatch.setattr(tb, "tg", fake_tg)
-    tb._rl.pop(31, None)
-    asyncio.run(tb._handle_callback({"id": "q", "data": "linkinfo", "from": {"id": 31}, "message": {"chat": {"id": 31}, "message_id": 1}}))
-    monkeypatch.setattr(tb, "_saved_lang", lambda tid: asyncio.sleep(0, "uz"))
-    asyncio.run(tb.handle_update({"update_id": 99031, "message": {"chat": {"id": 31, "type": "private"}, "from": {"id": 31}, "text": "/link"}}))
-    assert seen == ["bal", "home"]
+    async def info_yes(user):
+        return {"free": 1, "paid": 0, "linked": True, "email": "ali@gmail.com"}
+    monkeypatch.setattr(tb, "_edit", fake_edit)
+    monkeypatch.setattr(tb, "_balance_info", info_no)
+    asyncio.run(tb._show_settings(1, {"id": 1}))
+    assert sent[-1][1]["inline_keyboard"][0][0]["callback_data"] == "linkinfo"
+    monkeypatch.setattr(tb, "_balance_info", info_yes)
+    asyncio.run(tb._show_settings(1, {"id": 1}))
+    assert sent[-1][1]["inline_keyboard"][0][0]["callback_data"] == "unl" and "a***@gmail.com" in sent[-1][0]
+    for name in ("_link_help", "_do_link", "_unlink_sync", "_link_apply"):
+        assert hasattr(tb, name), name
 
 
 def test_generation_sends_file_then_editor_card(monkeypatch):

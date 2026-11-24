@@ -471,6 +471,8 @@ def kb_balance(info: Optional[dict] = None) -> dict:
     rows = []
     if not info.get("unlimited"):
         rows.append([_btn("➕ Varaq sotib olish", "buy")])
+    if not info.get("linked"):                       # ixtiyoriy: Google akkauntni ulash (balans va slaydlar bir xil)
+        rows.append([_btn("🔗 Google ulash", "linkinfo")])
     rows.append([_btn("🆕 Yangi slayd", "new")])
     return {"inline_keyboard": rows}
 
@@ -3944,6 +3946,17 @@ def _contact_email_sync(uid: str) -> str:
         return ""
 
 
+async def _link_help(cid: int) -> None:
+    url = f"{SITE_URL}/?tglink={_make_token('L', cid, 0, LINK_TTL)}"
+    await _send(
+        cid,
+        "🔗 <b>Sayt akkauntini ulash</b> (Google)\n\n1️⃣ Pastdagi tugmani bosing — sayt ochiladi\n2️⃣ Google bilan kiring — ulash <b>o'zi</b> tugaydi ✅\n\n"
+        "<i>Telegram ichida Google kirishga ruxsat bermasa: havolani ⋮ → «Brauzerda ochish» orqali oching.</i>\n"
+        "Yoki saytda: ⚙️ Sozlamalar → <b>«Telegram botni ulash»</b> (bir bosish).",
+        {"inline_keyboard": [[{"text": "🌐 Saytda ulash", "url": url}]]},
+    )
+
+
 def _linked_text(res: dict) -> str:
     extra = f"\n💎 Botdagi {_fmt_pages(res['moved_pages'])} pullik varaq sayt akkauntingizga ko'chirildi." if res.get("moved_pages") else ""
     return f"✅ <b>Ulandi!</b> Sayt akkauntingiz ({esc(_mask_email(res['email']))}) bilan balans endi <b>bir xil</b>.{extra}"
@@ -4078,8 +4091,15 @@ async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> Non
         info = None
     deep = st.get("mode") == "deep"
     bal = f"\n{_balance_block(info)}" if info else ""
-    text = f"⚙️ <b>Sozlamalar</b>{bal}\n🤖 AI: <b>{'🧠 Chuqur' if deep else '⚡ Tez'}</b>"
+    if info and info.get("linked"):                  # bitta tugma: ulangan bo'lsa — uzish, aks holda — ulash
+        acc = f"\n🔗 Google: <b>ulangan</b> ({esc(_mask_email(info['email']))})"
+        first = [_btn("🔓 Google'ni uzish", "unl")]
+    else:
+        acc = "\n🔗 Google: <b>ulanmagan</b> (ixtiyoriy)"
+        first = [_btn("🔗 Google ulash", "linkinfo")]
+    text = f"⚙️ <b>Sozlamalar</b>{bal}{acc}\n🤖 AI: <b>{'🧠 Chuqur' if deep else '⚡ Tez'}</b>"
     kb = {"inline_keyboard": [
+        first,
         [_btn(("✅ " if not deep else "") + "⚡ Tez", "smode:fast"), _btn(("✅ " if deep else "") + "🧠 Chuqur", "smode:deep")],
         [_btn("💳 Balans", "bal")],
         [_btn(SUP_BTN, "sup")],
@@ -4167,9 +4187,17 @@ async def _handle_callback(cb: dict) -> None:
         await _do_buy(cid, user, "pack")
     elif data in ("pro", "buypro"):                      # eski xabarlardagi Pro tugmalari
         await _show_balance(cid, user)
-    elif data in ("linkinfo", "unl", "unl_yes", "unl_no"):   # v78: eski xabarlardagi «Google ulash/uzish» — endi kerak emas
+    elif data == "linkinfo":
+        await _link_help(cid)
+    elif data == "unl":
+        await _send(cid, "🔓 <b>Google akkaunt uzilsinmi?</b>\nBot o'zining Telegram akkauntiga qaytadi. Sayt akkauntingiz va uning balansi o'zgarmaydi.",
+                    {"inline_keyboard": [[_btn("✅ Ha, uzish", "unl_yes"), _btn("↩️ Yo'q", "unl_no")]]})
+    elif data == "unl_yes":
+        ok = await asyncio.to_thread(_unlink_sync, user["id"])
         await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
-        await _show_balance(cid, user)
+        await _send(cid, "🔓 Google akkaunt uzildi. Qayta ulash: «⚙️ Sozlamalar» → «Google akkauntni ulash»." if ok else "⚙️ Hozir bajarib bo'lmadi. Keyinroq urinib ko'ring.")
+    elif data == "unl_no":
+        await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
     elif data == "dismiss":
         await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
     elif data == "about":
@@ -4614,8 +4642,14 @@ async def handle_update(data: dict) -> None:
             await _send(chat_id, f"🆔 Sizning Telegram ID: <code>{int(user['id'])}</code>")
         elif cmd in ADMIN_CMDS or cmd == "/admin":
             await _admin_command(chat_id, user, cmd, arg)
-        elif cmd in ("/link", "/unlink"):                     # v78: ulash shart emas — Telegram akkaunti o'zi to'liq akkaunt
-            await _send_welcome(chat_id, user)
+        elif cmd == "/link":
+            if arg:
+                await _do_link(chat_id, user, arg)
+            else:
+                await _link_help(chat_id)
+        elif cmd == "/unlink":
+            ok = await asyncio.to_thread(_unlink_sync, user["id"])
+            await _send(chat_id, "🔓 Sayt akkaunti uzildi. Bot endi o'zining Telegram akkauntidan foydalanadi." if ok else "⚙️ Hozir bajarib bo'lmadi.")
         elif cmd == "/site":
             await _menu_action(chat_id, user, "site")
         elif cmd in ("/support", "/yordam", "/admin_yoz"):
@@ -5208,16 +5242,55 @@ async def telegram_latest_deck(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    user = verify_init_data(str((body or {}).get("init_data") or ""))
-    if not user:
-        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
-    tid = int(user["id"])
+    user = verify_init_data(str((body or {}).get("init_data") or "")) if (body or {}).get("init_data") else None
+    if user:
+        tid = int(user["id"])
+    else:
+        # v81: saytda Google bilan kirgan, Telegram'i ulangan foydalanuvchi — o'sha Telegram'ning oxirgi bot taqdimoti
+        token = str((body or {}).get("token") or "").strip()
+        sb = _sb()
+        if not token or token == "dev-token" or not sb:
+            return JSONResponse({"error": "invalid_init_data"}, status_code=401)
+        try:
+            res = await asyncio.to_thread(sb.auth.get_user, token)
+            uid = str(res.user.id) if res and res.user else ""
+        except Exception:
+            uid = ""
+        if not uid:
+            return JSONResponse({"error": "login_required"}, status_code=401)
+        lk = await asyncio.to_thread(_tg_for_uid_sync, uid)
+        if not lk:
+            return JSONResponse({"deck": None}, headers={"Cache-Control": "no-store"})
+        tid = int(lk[0])
     row = await asyncio.to_thread(_deck_latest_sync, tid)
     if not row or not row.get("id"):
         return JSONResponse({"deck": None}, headers={"Cache-Control": "no-store"})
     return JSONResponse({"deck": {"id": int(row["id"]), "title": str(row.get("title") or "")[:120],
                                   "updated_ms": _iso_ms(row.get("updated_at")),
                                   "token": _make_token("D", int(row["id"]), tid, 3600)}},
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.post("/api/telegram/account")
+async def telegram_account(request: Request):
+    """v81: Mini App har ochilishda so'raydi: shu Telegram QAYSI akkaunt bilan kirishi kerak (Google ulangan bo'lsa —
+    Google akkaunt, aks holda Telegram akkaunti). Brauzerdagi eski sessiya boshqa bo'lsa — Mini App qayta kiradi
+    (avval Google ulangandan keyin ham Mini App eski Telegram sessiyasida qolib ketardi)."""
+    if not ENABLED:
+        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    user = verify_init_data(str((body or {}).get("init_data") or ""))
+    if not user:
+        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
+    tid = int(user["id"])
+    try:
+        linked = await asyncio.to_thread(_linked_sync, tid)
+    except Exception:
+        linked = None
+    return JSONResponse({"email": (linked[1] if linked else _tg_email(tid)).lower(), "linked": bool(linked)},
                         headers={"Cache-Control": "no-store"})
 
 
@@ -5257,6 +5330,7 @@ async def _set_commands() -> None:
         {"command": "clear", "description": "Slaydlarimni tozalash"},
         {"command": "credits", "description": "Balans"},
         {"command": "invite", "description": "Do'st taklif qilish (+15 varaq)"},
+        {"command": "link", "description": "Google akkauntni ulash (ixtiyoriy)"},
         {"command": "settings", "description": "Sozlamalar"},
         {"command": "support", "description": "Adminga yozish (Support)"},
         {"command": "mode", "description": "Tez ⚡ / Chuqur 🧠 AI"},

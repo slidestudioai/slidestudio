@@ -83,7 +83,18 @@
     if (!c) return false;
     var sess = null;
     try { var r = await c.auth.getSession(); sess = r && r.data ? r.data.session : null; } catch (e) {}
-    if (sess) return true;                                   // allaqachon kirgan
+    if (sess) {
+      // v81: sessiya TO'G'RI akkauntdami? Google ulangan bo'lsa Mini App Google akkaunt bilan ochilishi kerak
+      // (avval eski Telegram sessiyasida qolib, balans va oxirgi slayd boshqa bo'lib ko'rinardi).
+      var want = '';
+      try {
+        var a = await fetch('/api/telegram/account', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ init_data: tg.initData }) });
+        if (a.ok) want = String((await a.json()).email || '').toLowerCase();
+      } catch (e) {}
+      var have = String((sess.user && sess.user.email) || '').toLowerCase();
+      if (!want || want === have) return true;               // allaqachon to'g'ri akkauntda
+    }
 
     for (var attempt = 0; attempt < 3; attempt++) {          // Render uyg'onguncha 2-3 marta urinadi
       try {

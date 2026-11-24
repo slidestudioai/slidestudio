@@ -18,9 +18,45 @@
     return confirm(title + '\n' + text);
   }
 
-  /* v78: Mini App ichida Telegram akkaunti — TO'LIQ mustaqil akkaunt. Google ulash tugmasi/taklifi YO'Q
-   * (window.ssGoogleLink aniqlanmaydi — Sozlamalardagi «Google akkaunt» qatori ko'rinmaydi). */
-  if (tgw && tgw.initData) return;
+  /* v61: Mini App ichida — Google akkaunt holati: ulangan bo'lsa «Uzish», bo'lmasa «Google akkauntni ulash» */
+  if (tgw && tgw.initData) {
+    var gState = null, gAt = 0;
+    var mpost = async function (action) {
+      var r = await fetch('/api/telegram/miniapp-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ init_data: tgw.initData, action: action }) });
+      var j = {}; try { j = await r.json(); } catch (e) {}
+      return { ok: r.ok, data: j };
+    };
+    window.ssGoogleStatus = async function (force) {
+      if (!force && gState && Date.now() - gAt < 60000) return gState;
+      try { var r = await mpost('status'); if (r.ok) { gState = r.data; gAt = Date.now(); } } catch (e) {}
+      return gState || { linked: false };
+    };
+    window.ssGoogleDecorate = async function (root) {
+      var els = (root || document).querySelectorAll('[data-google-link]');
+      if (!els.length) return;
+      var st = await window.ssGoogleStatus();
+      els.forEach(function (el) {
+        el.textContent = st.linked ? ('✅ Google ulangan' + (st.email ? ' (' + st.email + ')' : '') + ' · Uzish') : '🔗 Google akkauntni ulash';
+        el.classList.toggle('is-linked', !!st.linked);
+      });
+    };
+    window.ssGoogleLink = async function () {
+      var st = await window.ssGoogleStatus(true);
+      if (st.linked) {
+        if (!(await ask('Google akkaunt uzilsinmi?', 'Bot va sayt balansi ajraladi. Keyin /link bilan qayta ulash mumkin.', 'Uzish'))) return;
+        var u = await mpost('unlink');
+        if (u.ok) { toast('Google akkaunt uzildi.'); setTimeout(function () { location.reload(); }, 900); }
+        else toast('Uzib bo\u2018lmadi. Keyinroq urinib ko\u2018ring.', 'error');
+        return;
+      }
+      var r = await mpost('link');
+      if (!r.ok || !r.data.url) { toast('Ulab bo\u2018lmadi. Keyinroq urinib ko\u2018ring.', 'error'); return; }
+      toast('Brauzer ochiladi — Google bilan kiring, ulash o\u2018zi tugaydi.');
+      try { tgw.openLink(r.data.url); } catch (e) { window.open(r.data.url, '_blank'); }
+    };
+    return;
+  }
+
   function token() { try { return (typeof supabaseToken !== 'undefined') ? supabaseToken : ''; } catch (e) { return ''; } }
   function logged() { var t = token(); return !!t && t !== 'dev-token'; }
 

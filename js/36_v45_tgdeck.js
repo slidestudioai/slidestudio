@@ -1,7 +1,7 @@
 /* =====================================================================
  * 36_v45_tgdeck.js  (v45) — botdan keladigan havolalar
  *  ?tgdeck=TOKEN  — botdagi «Muharrirda ochish»: SHU slaydning o'zi PPTX qilib olinadi va editorga import qilinadi.
- *  ?tglink=TOKEN  — botdagi «Saytda ulash»: Google bilan kirilgach Telegram akkaunti o'zi ulanadi.
+ *  ?tglink=TOKEN  — botdagi YAGONA «🔗 Google akkauntni ulash» (v81): Google bilan kirilgach ulash o'zi tugaydi.
  * Token sahifa yangilansa / Google'ga o'tib qaytsa ham yo'qolmasin deb 'ss-auth-v39-*' kaliti ostida saqlanadi (vaqtincha).
  * ===================================================================== */
 (function () {
@@ -60,7 +60,7 @@
   }
   async function askLogin() {
     var inApp = inTgBrowser();
-    var title = 'Telegram botni ulash';
+    var title = 'Google akkauntni ulash';
     var text = inApp
       ? "Google Telegram ichidagi brauzerda kirishga ruxsat bermaydi. Yuqoridagi ⋮ (yoki ⋯) tugmasini bosing → «Brauzerda ochish». Ulash o'sha yerda o'zi tugaydi."
       : 'Ulash uchun Google bilan kiring — qolgani o\u2018zi bajariladi.';
@@ -105,7 +105,7 @@
 
   async function runLink() {
     if (!linkTok) return;
-    if (tokExp(linkTok) < Date.now()) { linkFinished(); toast('Havola eskirgan — botdan «Sayt akkauntini ulash» ni qayta bosing.', 'error'); return; }
+    if (tokExp(linkTok) < Date.now()) { linkFinished(); toast('Havola eskirgan — botdagi «🔗 Google ulash» ni qayta bosing.', 'error'); return; }
     var ok = await waitFor(logged, 6000);
     if (!ok) {
       askLogin();
@@ -118,9 +118,20 @@
       try {
         var r = await fetch('/api/telegram/link-complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token(), link: linkTok }) });
         var j = {}; try { j = await r.json(); } catch (e) {}
-        if (r.ok && j.ok) { linkFinished(); toast('✅ Telegram ulandi! Balans endi bot bilan bir xil.'); try { window.ssTgDecorate && window.ssTgDecorate(); } catch (e) {} return; }
-        if (r.status === 410) { linkFinished(); toast('Havola eskirgan — botdan «Sayt akkauntini ulash» ni qayta bosing.', 'error'); return; }
-        if (r.status === 409) { linkFinished(); toast('Bu havola allaqachon ishlatilgan.', 'error'); return; }
+        if (r.ok && j.ok) {
+          linkFinished(); toast('✅ Google akkaunt ulandi! Balans va oxirgi taqdimot endi bot bilan bir xil.');
+          try { window.ssTgDecorate && window.ssTgDecorate(); } catch (e) {}
+          try { if (typeof loadUserStats === 'function') loadUserStats(true); } catch (e) {}
+          deckTok = ''; runLatest();                                // botdagi oxirgi taqdimot shu yerda ham
+          return;
+        }
+        if (r.status === 410) { linkFinished(); toast('Havola eskirgan — botdagi «🔗 Google ulash» ni qayta bosing.', 'error'); return; }
+        if (r.status === 409) {                                     // v81: ulanish doimiy — boshqasiga o'tkazilmaydi
+          linkFinished();
+          toast(j.error === 'used' ? 'Bu havola allaqachon ishlatilgan.' : (j.error === 'google_taken' ? 'Bu Google akkaunt boshqa Telegram\u2019ga ulangan.'
+            : 'Bu Telegram allaqachon boshqa Google akkauntga ulangan.'), 'error');
+          return;
+        }
         if (r.status === 400) { linkFinished(); toast('Bu akkaunt Telegram akkaunti — Google bilan kirib ulang.', 'error'); return; }
         if (r.status === 401) await waitFor(logged, 8000);        // session was refreshing — try again with the new token
       } catch (e) {}
@@ -134,14 +145,17 @@
    * ochiladi: bot va muharrir bitta akkaunt, doim eng oxirgi ish ko'rinadi. Qoralamada ish bo'lsa — avval so'raladi
    * (eski ish bexosdan almashmasin). Rad etilgan taqdimot qayta so'ralmaydi. */
   async function runLatest() {
-    if (!inTg || deckTok) return;
+    if (deckTok) return;
+    // v81: saytda ham (Google bilan kirgan, Telegram'i ulangan) — botdagi oxirgi taqdimot shu yerda ham eng oxirgisi
+    if (!inTg && !(await waitFor(logged, 20000, 500))) return;
     var ready = await waitFor(function () {
       return window.importPptxClient && window.JSZip && typeof slides !== 'undefined' && slides && slides.length && window.__ssRestoreChecked;
     }, 45000);
     if (!ready) return;
     var j = null;
     try {
-      var r = await fetch('/api/telegram/latest-deck', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ init_data: tgw.initData }) });
+      var r = await fetch('/api/telegram/latest-deck', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(inTg ? { init_data: tgw.initData } : { token: token() }) });
       if (r.ok) j = await r.json();
     } catch (e) { return; }
     var d = j && j.deck;

@@ -17,15 +17,47 @@
   var cache = { frame: null, sig: '', ready: false, booting: null };
   var presOpen = false, skipRequested = false;
 
+  // v81: imzo slayd JSON'ining TO'LIQ xeshi. Avval ~400 ta belgi tanlab olinardi — kichik o'zgarish (matn, joy)
+  // ko'pincha sezilmay, namoyish ESKI holatni ko'rsatardi. Har slayd uchun natija eslab qolinadi (qayta hisob yo'q).
+  var sigMemo = new WeakMap();
+  function jsonHash(s) {
+    var j = String(s.json || ''), m = sigMemo.get(s);
+    if (m && m.j === j) return m.h;
+    var h = 2166136261;
+    for (var i = 0; i < j.length; i++) h = Math.imul(h ^ j.charCodeAt(i), 16777619);
+    h = (h >>> 0).toString(36) + ':' + j.length;
+    sigMemo.set(s, { j: j, h: h });
+    return h;
+  }
   function slideSig() {
     var parts = [String((window.slides || slides).length)];
     (window.slides || slides).forEach(function (s) {
-      var j = String(s.json || ''), n = j.length, h = n;
-      var step = Math.max(1, Math.floor(n / 400));
-      for (var i = 0; i < n; i += step) h = ((h * 31) + j.charCodeAt(i)) | 0;
-      parts.push(n + ':' + h + ':' + (s.transition || '') + ':' + (s.transDur || 0) + ':' + (s.transAuto || 0));
+      parts.push(jsonHash(s) + ':' + (s.transition || '') + ':' + (s.transDur || 0) + ':' + (s.transAuto || 0));
     });
     return parts.join('|');
+  }
+
+  // v81: GIF / rasm / video namoyishda QAYTA YUKLANMAYDI. Muharrirning MediaRAM xotirasida bor media — tayyor blob
+  // nusxasi bilan beriladi (iframe internetga bormaydi); yo'qlari fonda xotiraga olinadi — keyingi safar darhol.
+  // Avval har tahrirdan keyin namoyish butunlay qayta qurilib, barcha GIF'lar qaytadan yuklanardi (telefonda uzoq).
+  function mediaFromRam(list) {
+    var R = window.MediaRAM, urls = [], all = [];
+    if (!R || typeof R.peek !== 'function') return { all: all, missing: urls };
+    (function walk(n, depth) {
+      if (!n || typeof n !== 'object' || depth > 8) return;
+      Object.keys(n).forEach(function (k) {
+        var v = n[k];
+        if (k === 'text') return;
+        if (typeof v === 'string') {
+          if (!/^(https?:|\/api\/proxy-image)/i.test(v)) return;
+          var hit = null; try { hit = R.peek(v); } catch (e) {}
+          all.push(v);
+          if (hit && hit.objectUrl) n[k] = hit.objectUrl;
+          else urls.push(v);
+        } else if (v && typeof v === 'object') walk(v, depth + 1);
+      });
+    })(list, 0);
+    return { all: all, missing: urls };
   }
 
   function collectHeadAssets() {
@@ -67,6 +99,13 @@
     try { saveCurrentSlideState(); } catch (e) {  }
     var list = (window.slides || slides);
     var parsed = list.map(function (s) { try { return JSON.parse(s.json || '{}'); } catch (e) { return {}; } });
+    try {
+      var med = mediaFromRam(parsed);                        // nusxa (parsed) o'zgaradi, slaydlarning o'zi emas
+      if (med.all.length && window.MediaRAM) {
+        try { MediaRAM.setPinned(med.all); } catch (e) {}    // namoyish media'si xotiradan chiqarib yuborilmasin
+        if (med.missing.length) { try { MediaRAM.warm(med.missing); } catch (e) {} }
+      }
+    } catch (e) {  }
     var sprites = {};
     try { if (window.ssBuildSprites) sprites = await window.ssBuildSprites(parsed); } catch (e) {  }
     window.__ssPresData = {
