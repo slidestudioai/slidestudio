@@ -82,7 +82,13 @@
   };
 
   async function api(url) {
-    var r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token() }) });
+    // v81.3: har doim YANGI token (eskirgani 401 berardi); 401 bo'lsa — sessiya yangilanib bir marta qayta
+    var t = window.ssFreshToken ? await window.ssFreshToken(false) : token();
+    var r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: t }) });
+    if (r.status === 401 && window.ssFreshToken) {
+      t = await window.ssFreshToken(true);
+      r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: t }) });
+    }
     var j = {}; try { j = await r.json(); } catch (e) {}
     return { ok: r.ok, status: r.status, data: j };
   }

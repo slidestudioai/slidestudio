@@ -446,6 +446,20 @@
         return true;
       } catch (e) { return false; }
     }
+    /** v81.3: YANGI kirish tokeni (Supabase access token 1 soat yashaydi). Eskirgan bo'lsa yoki force=true — yangilanadi.
+     *  Telegram ulash / oxirgi taqdimot so'rovlari avval xotiradagi ESKI tokenni yuborib, 401 olardi. */
+    window.ssFreshToken = async function (force) {
+      try {
+        if (!supabaseClient) return supabaseToken;
+        let s = (await supabaseClient.auth.getSession()).data.session;
+        if (force || !s || (s.expires_at && s.expires_at * 1000 < Date.now() + 60000)) {
+          const r = await supabaseClient.auth.refreshSession();
+          if (r && r.data && r.data.session) s = r.data.session;
+        }
+        if (s && s.access_token) { supabaseToken = s.access_token; return s.access_token; }
+      } catch (e) { console.warn('[auth] token yangilanmadi', e); }
+      return supabaseToken;
+    };
     async function handleGoogleLogin() {
       // v36.9: eski ishonchli usul — to'liq sahifa redirect (popup sessiya yangilanmasligi muammosini berardi)
       if (window._ssLoginBusy && Date.now() - window._ssLoginBusy < 4000) return;

@@ -282,7 +282,7 @@ def register_support(app: FastAPI, ctx: Dict[str, Any]) -> None:
             return r.user if r and r.user else None
         except Exception as e:
             print(f"[SUPPORT AUTH] {str(e)[:120]}")
-            return None
+            return _token_fallback(token)
 
     def _err(msg: str, code: int):
         return JSONResponse({"error": msg}, status_code=code)
@@ -332,3 +332,17 @@ def register_support(app: FastAPI, ctx: Dict[str, Any]) -> None:
         if not user:
             return {"unread": 0}
         return {"unread": await asyncio.to_thread(user_unread, str(user.id))}
+
+
+def _token_fallback(token: str):
+    """v81.3: Supabase Auth (get_user) xato bersa — saytning qolgan qismi bilan bir xil tekshiruv (lokal imzo, kesh).
+    Avval bunday paytda foydalanuvchi «kirmagan» hisoblanib, 401 olardi."""
+    try:
+        from types import SimpleNamespace
+        from backend.services.auth import auth_user_cached
+        who = auth_user_cached(token)
+        if who:
+            return SimpleNamespace(id=str(who[0]), email=str(who[1] or ""), user_metadata={}, app_metadata={})
+    except Exception:
+        pass
+    return None

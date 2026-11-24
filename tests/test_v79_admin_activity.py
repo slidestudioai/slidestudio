@@ -230,3 +230,36 @@ def test_schema_v78_backfill_survives_duplicate_telegram_rows():
     assert "select distinct on (s.tid)" in before[-1500:]
     assert "tg_decks_tg_updated_idx" in sql
     assert "c.relkind <> 'v'" in sql                    # public.users jadval bo'lsa — ko'rinish yaratilmaydi
+
+
+def test_telegram_web_endpoints_accept_valid_token_when_supabase_get_user_fails(sb, client, monkeypatch):
+    """v81.3: brauzer konsolida link-complete / link-status / link-code / latest-deck 401 edi. Bu endpointlar
+    sb.auth.get_user ni to'g'ridan-to'g'ri chaqirib, u xato bersa 401 qaytarardi. Endi saytning qolgan qismi bilan bir xil
+    tekshiruv (auth_user_cached)."""
+    monkeypatch.setattr(tb, "ENABLED", True)
+    sb.add_user("tok-g", "00000000-0000-0000-0000-0000000000aa", "ali@gmail.com")
+
+    def broken(token):
+        raise RuntimeError("gotrue: Invalid API key")
+    monkeypatch.setattr(sb.auth, "get_user", broken)
+    monkeypatch.setitem(tb._deps, "auth_user", lambda tok: ("00000000-0000-0000-0000-0000000000aa", "ali@gmail.com") if tok == "tok-g" else None)
+    sb.tables["tg_links"] = []
+    r = client.post("/api/telegram/link-status", json={"token": "tok-g"})
+    assert r.status_code == 200 and r.json()["linked"] is False
+    sb.tables["user_usage"] = [{"user_id": "00000000-0000-0000-0000-0000000000aa", "email": "ali@gmail.com", "free_credits": 0, "paid_credits": 0}]
+
+    async def fake_send(*a, **k):
+        return None
+    monkeypatch.setattr(tb, "_send", fake_send)
+    tok = tb._make_token("L", 4545, 0, 600)
+    r = client.post("/api/telegram/link-complete", json={"token": "tok-g", "link": tok})
+    assert r.status_code == 200 and r.json()["ok"]
+    assert client.post("/api/telegram/latest-deck", json={"token": "tok-g"}).status_code == 200
+    assert client.post("/api/telegram/link-status", json={"token": "bad"}).status_code == 401      # haqiqatan yaroqsiz — 401
+
+
+def test_site_sends_fresh_token_for_telegram_calls():
+    js = {n: open(os.path.join(ROOT, "js", n), encoding="utf-8").read() for n in ("03_auth_project.js", "35_v45_tglink.js", "36_v45_tgdeck.js")}
+    assert "window.ssFreshToken = async function" in js["03_auth_project.js"] and "refreshSession()" in js["03_auth_project.js"]
+    assert "ssFreshToken(true)" in js["35_v45_tglink.js"]                      # 401 -> yangilab qayta
+    assert js["36_v45_tgdeck.js"].count("ssFreshToken") >= 2                  # link-complete va latest-deck

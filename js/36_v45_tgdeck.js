@@ -116,7 +116,8 @@
     // up to 5 attempts with a growing pause; the server answers «ok» again if this account is already linked.
     for (var a = 0; a < 5; a++) {
       try {
-        var r = await fetch('/api/telegram/link-complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: token(), link: linkTok }) });
+        var tk = window.ssFreshToken ? await window.ssFreshToken(a > 0) : token();      // v81.3: eskirgan token 401 berardi
+        var r = await fetch('/api/telegram/link-complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tk, link: linkTok }) });
         var j = {}; try { j = await r.json(); } catch (e) {}
         if (r.ok && j.ok) {
           linkFinished(); toast('✅ Google akkaunt ulandi! Balans va oxirgi taqdimot endi bot bilan bir xil.');
@@ -155,7 +156,7 @@
     var j = null;
     try {
       var r = await fetch('/api/telegram/latest-deck', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(inTg ? { init_data: tgw.initData } : { token: token() }) });
+        body: JSON.stringify(inTg ? { init_data: tgw.initData } : { token: (window.ssFreshToken ? await window.ssFreshToken(false) : token()) }) });
       if (r.ok) j = await r.json();
     } catch (e) { return; }
     var d = j && j.deck;

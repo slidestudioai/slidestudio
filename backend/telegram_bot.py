@@ -4907,16 +4907,29 @@ async def _web_user(request: Request) -> Optional[Tuple[str, str]]:
         body = await request.json()
     except Exception:
         return None
-    token = str((body or {}).get("token") or "").strip()
+    return await _token_user(str((body or {}).get("token") or "").strip())
+
+
+async def _token_user(token: str) -> Optional[Tuple[str, str]]:
+    """v81.3: token -> (user_id, email). Saytning qolgan qismi bilan BIR XIL tekshiruv (main.auth_user_cached: imzo
+    lokal tekshiriladi, Supabase Auth vaqtincha javob bermasa ham to'g'ri token qabul qilinadi). Avval to'g'ridan-to'g'ri
+    sb.auth.get_user edi — u xato bersa Telegram ulash / oxirgi taqdimot doim 401 qaytarardi."""
     sb = _sb()
     if not token or token == "dev-token" or not sb:
         return None
+    fn = _deps.get("auth_user")
+    if fn:
+        try:
+            who = await asyncio.to_thread(fn, token)
+            return (str(who[0]), str(who[1] or "")) if who else None
+        except Exception as e:
+            _warn("auth-user", f"token tekshiruvi: {type(e).__name__}: {str(e)[:100]}")
     try:
         res = await asyncio.to_thread(sb.auth.get_user, token)
         if res and res.user:
             return str(res.user.id), str(res.user.email or "")
-    except Exception:
-        pass
+    except Exception as e:
+        _warn("auth-get-user", f"sb.auth.get_user: {type(e).__name__}: {str(e)[:100]}")
     return None
 
 
@@ -5247,15 +5260,8 @@ async def telegram_latest_deck(request: Request):
         tid = int(user["id"])
     else:
         # v81: saytda Google bilan kirgan, Telegram'i ulangan foydalanuvchi — o'sha Telegram'ning oxirgi bot taqdimoti
-        token = str((body or {}).get("token") or "").strip()
-        sb = _sb()
-        if not token or token == "dev-token" or not sb:
-            return JSONResponse({"error": "invalid_init_data"}, status_code=401)
-        try:
-            res = await asyncio.to_thread(sb.auth.get_user, token)
-            uid = str(res.user.id) if res and res.user else ""
-        except Exception:
-            uid = ""
+        who = await _token_user(str((body or {}).get("token") or "").strip())
+        uid = who[0] if who else ""
         if not uid:
             return JSONResponse({"error": "login_required"}, status_code=401)
         lk = await asyncio.to_thread(_tg_for_uid_sync, uid)

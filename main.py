@@ -1290,6 +1290,7 @@ try:
         ai_sem=GEMINI_SEMAPHORE,                   # v59: bot va sayt bitta AI kalitini UMUMIY navbat bilan ishlatadi
         checkout=lambda *a, **k: _checkout_for_bot(*a, **k),   # v45: botdan to'lov havolasi (kech bog'lanadi — NameError bo'lmasin)
         touch=lambda *a, **k: touch_user(*a, **k),   # v79: oxirgi faollik + Telegram ism / @username (admin panel)
+        auth_user=lambda tok: auth_user_cached(tok),   # v81.3: Telegram ulash endpointlari ham sayt bilan bir xil token tekshiruvi
         ai=lambda: {
             "api_key": (config.get("api_key") or "").strip(),
             "base_url": config.get("deepseek_base_url") or "https://api.deepseek.com",
@@ -1804,16 +1805,16 @@ async def _payment_user_from_token(payload: Dict[str, Any]):
     token = str(payload.get("token") or "").strip()     # a number / list in the body must not crash with 500
     if not token or token == "dev-token" or not supabase:
         return None, "", JSONResponse({"error": "To'lov uchun avval tizimga kiring."}, status_code=401)
-    try:
-        user_res = await asyncio.to_thread(supabase.auth.get_user, token)
+    try:                                                # v81.3: sayt bilan bir xil tekshiruv (lokal imzo + Supabase Auth)
+        who = await asyncio.to_thread(auth_user_cached, token)
     except Exception as e:
         return None, "", JSONResponse({"error": f"Sessiya xato: {str(e)[:120]}"}, status_code=401)
-    if not user_res or not user_res.user:
+    if not who:
         return None, "", JSONResponse({"error": "Sessiya tugagan. Qayta kiring."}, status_code=401)
     claimed = str(payload.get("user_id") or "").strip()
-    if claimed and claimed != str(user_res.user.id):
+    if claimed and claimed != str(who[0]):
         return None, "", JSONResponse({"error": "user_id sessiyaga mos emas."}, status_code=403)
-    return str(user_res.user.id), str(user_res.user.email or payload.get("email") or "").strip(), None
+    return str(who[0]), str(who[1] or payload.get("email") or "").strip(), None
 
 
 @app.post("/api/create-checkout")
@@ -2376,13 +2377,13 @@ def _ad_free_for_token(token: str) -> bool:
         return hit[0]
     ok = False
     try:
-        r = supabase.auth.get_user(token)
-        if r and r.user:
-            u = get_or_create_user_usage(r.user.id, r.user.email or "")
+        who = auth_user_cached(token)                   # v81.3: sayt bilan bir xil token tekshiruvi
+        if who:
+            u = get_or_create_user_usage(who[0], who[1] or "")
             ok = bool(is_ad_free(u))
             if not ok:       # v49.3: admin (Telegram ID + ulangan Google) reklama ko'rmaydi
                 try:
-                    lk = admin_core._linked_row_by_uid(str(r.user.id))
+                    lk = admin_core._linked_row_by_uid(str(who[0]))
                     ok = bool(lk and admin_core.is_tg_admin(lk.get("tg_id")))
                 except Exception:
                     ok = False
@@ -2488,11 +2489,11 @@ async def me_admin_entry(payload: Dict[str, Any] = None):
     token = str((payload or {}).get("token") or "").strip()
     if not token or token == "dev-token" or not supabase:
         return nf
-    try:
-        r = await asyncio.to_thread(supabase.auth.get_user, token)
-        if not r or not r.user:
+    try:                                                # v81.3: sayt bilan bir xil token tekshiruvi
+        who = await asyncio.to_thread(auth_user_cached, token)
+        if not who:
             return nf
-        chk = await asyncio.to_thread(admin_core.check_admin_user, str(r.user.id), r.user.email or "")
+        chk = await asyncio.to_thread(admin_core.check_admin_user, str(who[0]), who[1] or "")
     except Exception:
         return nf
     if not chk.get("ok"):

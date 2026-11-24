@@ -72,9 +72,10 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             r = sb.auth.get_user(token)
             if r and r.user:
                 return r.user
+            return None
         except Exception as e:
             print(f"[COMMUNITY AUTH] {str(e)[:120]}")
-        return None
+        return _token_fallback(token)
 
     def display_name(user) -> str:
         meta = getattr(user, "user_metadata", None) or {}
@@ -452,3 +453,17 @@ def register_community(app: FastAPI, ctx: Dict[str, Any]):
             print(f"[FEEDBACK DELETE] {str(e)[:200]}")
             return _json({"error": "O'chirib bo'lmadi"}, 503)
         return {"ok": True}
+
+
+def _token_fallback(token: str):
+    """v81.3: Supabase Auth (get_user) xato bersa — saytning qolgan qismi bilan bir xil tekshiruv (lokal imzo, kesh).
+    Avval bunday paytda foydalanuvchi «kirmagan» hisoblanib, 401 olardi."""
+    try:
+        from types import SimpleNamespace
+        from backend.services.auth import auth_user_cached
+        who = auth_user_cached(token)
+        if who:
+            return SimpleNamespace(id=str(who[0]), email=str(who[1] or ""), user_metadata={}, app_metadata={})
+    except Exception:
+        pass
+    return None
