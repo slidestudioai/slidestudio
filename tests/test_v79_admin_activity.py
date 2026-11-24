@@ -219,3 +219,14 @@ def test_presentation_sees_every_edit_and_reuses_loaded_media():
     src = open(os.path.join(ROOT, "js", "30_v40_present_persist.js"), encoding="utf-8").read()
     assert "Math.floor(n / 400)" not in src and "function jsonHash" in src
     assert "mediaFromRam(parsed)" in src and "R.peek(v)" in src
+
+
+def test_schema_v78_backfill_survives_duplicate_telegram_rows():
+    """SUPABASE_SCHEMA.sql: bitta Telegram ID uchun bir nechta eski qator bo'lsa — telegram_id FAQAT bittasiga yoziladi
+    (avval hammasiga yozilib, unikal indeks yaratilmay fayl xato bilan to'xtardi). PostgreSQL 16 da qo'lda tekshirilgan."""
+    sql = open(os.path.join(ROOT, "SUPABASE_SCHEMA.sql"), encoding="utf-8").read()
+    i = sql.index("create unique index if not exists user_usage_telegram_id_uq")
+    before = sql[:i]
+    assert "select distinct on (s.tid)" in before[-1500:]
+    assert "tg_decks_tg_updated_idx" in sql
+    assert "c.relkind <> 'v'" in sql                    # public.users jadval bo'lsa — ko'rinish yaratilmaydi

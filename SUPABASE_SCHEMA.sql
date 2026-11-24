@@ -791,17 +791,38 @@ do $$ begin
   alter table public.user_usage add constraint user_usage_provider_chk check (auth_provider in ('google','telegram'));
 exception when duplicate_object then null; end $$;
 
--- eski Telegram qatorlarini to'ldirish (tg<ID>@t.me -> telegram_id). Bir xil ID bir nechta qatorda bo'lsa — eng eskisi.
+-- eski Telegram qatorlarini to'ldirish (tg<ID>@t.me -> telegram_id).
+-- v79.1: bir Telegram ID bir nechta qatorda bo'lsa (eski dublikatlar) — FAQAT BITTASIGA yoziladi (pullik balansi ko'prog'i,
+-- keyin eng so'nggi faoli). Avval hammasiga yozilib, quyidagi unikal indeks yaratilmay, fayl xato bilan to'xtardi.
+update public.user_usage set auth_provider = 'telegram'
+ where email ~ '^tg[0-9]+@t\.me$' and auth_provider <> 'telegram';
 update public.user_usage u
-   set telegram_id = substring(u.email from '^tg([0-9]+)@t\.me$')::bigint,
-       auth_provider = 'telegram'
- where u.telegram_id is null
-   and u.email ~ '^tg[0-9]+@t\.me$'
-   and not exists (select 1 from public.user_usage o
-                    where o.telegram_id = substring(u.email from '^tg([0-9]+)@t\.me$')::bigint);
+   set telegram_id = x.tid
+  from (select distinct on (s.tid) s.user_id, s.tid
+          from (select user_id, substring(email from '^tg([0-9]+)@t\.me$')::bigint as tid,
+                       paid_credits, last_active, created_at
+                  from public.user_usage
+                 where email ~ '^tg[0-9]+@t\.me$' and telegram_id is null) s
+         where not exists (select 1 from public.user_usage o where o.telegram_id = s.tid)
+         order by s.tid, s.paid_credits desc nulls last, s.last_active desc nulls last, s.created_at asc) x
+ where u.user_id = x.user_id and u.telegram_id is null;
 create unique index if not exists user_usage_telegram_id_uq on public.user_usage (telegram_id) where telegram_id is not null;
+do $$ begin
+  alter table public.user_usage add constraint user_usage_contact_email_chk
+    check (contact_email is null or (length(contact_email) <= 320 and contact_email like '%_@_%'));
+exception when duplicate_object then null; end $$;
+-- bot / Mini App «eng oxirgi taqdimot» so'rovi (tg_id bo'yicha, updated_at bo'yicha tartib)
+create index if not exists tg_decks_tg_updated_idx on public.tg_decks (tg_id, updated_at desc);
 
 -- Yagona «users» ko'rinishi: bitta qator = bitta akkaunt (Telegram yoki Google). Faqat server o'qiydi.
+-- v79.1: loyihada public.users nomli JADVAL allaqachon bo'lsa — unga tegilmaydi (ko'rinish yaratilmaydi, xato ham yo'q).
+do $do$ begin
+  if exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+              where n.nspname = 'public' and c.relname = 'users' and c.relkind <> 'v') then
+    raise notice 'public.users jadval sifatida bor — ko''rinish yaratilmadi';
+    return;
+  end if;
+  execute $v$
 create or replace view public.users as
 select u.user_id,
        u.telegram_id,
@@ -812,9 +833,10 @@ select u.user_id,
        u.contact_email,
        u.auth_provider,
        u.created_at
-  from public.user_usage u;
-revoke all on public.users from anon, authenticated;
-grant select on public.users to service_role;
+  from public.user_usage u$v$;
+  execute 'revoke all on public.users from anon, authenticated';
+  execute 'grant select on public.users to service_role';
+end $do$;
 
 
 -- ============================================================================
