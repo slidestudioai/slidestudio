@@ -180,11 +180,15 @@ def test_balance_screen_has_buy_for_telegram_account(monkeypatch):
     asyncio.run(tb._show_balance(1, {"id": 1}))
     text, kb = sent[-1]
     assert "10" in text and "Google" not in text
-    assert [b["callback_data"] for row in kb["inline_keyboard"] for b in row] == ["buy", "new"]
+    assert [b["callback_data"] for row in kb["inline_keyboard"] for b in row] == ["buy", "glink", "new"]   # v81: yagona ulash
 
 
-def test_old_link_buttons_and_commands_lead_to_balance_and_home(monkeypatch):
+def test_one_google_link_button_and_no_unlink(monkeypatch):
+    """v81: «Google ulash» (eski tugma ham), /link — YAGONA ulash yo'li; uzish tugmalari / /unlink — balans / bosh menyu."""
     seen = []
+
+    async def offer(cid, user):
+        seen.append("offer")
 
     async def bal(cid, user):
         seen.append("bal")
@@ -194,14 +198,37 @@ def test_old_link_buttons_and_commands_lead_to_balance_and_home(monkeypatch):
 
     async def fake_tg(*a, **k):
         return True
+    monkeypatch.setattr(tb, "_google_link_offer", offer)
     monkeypatch.setattr(tb, "_show_balance", bal)
     monkeypatch.setattr(tb, "_send_welcome", welcome)
     monkeypatch.setattr(tb, "tg", fake_tg)
-    tb._rl.pop(31, None)
-    asyncio.run(tb._handle_callback({"id": "q", "data": "linkinfo", "from": {"id": 31}, "message": {"chat": {"id": 31}, "message_id": 1}}))
     monkeypatch.setattr(tb, "_saved_lang", lambda tid: asyncio.sleep(0, "uz"))
-    asyncio.run(tb.handle_update({"update_id": 99031, "message": {"chat": {"id": 31, "type": "private"}, "from": {"id": 31}, "text": "/link"}}))
-    assert seen == ["bal", "home"]
+    cb = lambda d: {"id": "q", "data": d, "from": {"id": 31}, "message": {"chat": {"id": 31}, "message_id": 1}}  # noqa: E731
+    msg = lambda t, n: {"update_id": n, "message": {"chat": {"id": 31, "type": "private"}, "from": {"id": 31}, "text": t}}  # noqa: E731
+    for d in ("glink", "linkinfo", "unl_yes"):
+        tb._rl.pop(31, None)
+        asyncio.run(tb._handle_callback(cb(d)))
+    asyncio.run(tb.handle_update(msg("/link", 99031)))
+    asyncio.run(tb.handle_update(msg("/unlink", 99032)))
+    assert seen == ["offer", "offer", "bal", "offer", "home"]
+    for name in ("_link_code_sync", "_link_consume_sync", "_do_link", "_unlink_sync", "_mark_link_used_sync"):
+        assert not hasattr(tb, name), name
+
+
+def test_google_link_offer_gives_site_link_or_shows_linked(monkeypatch):
+    sent = []
+
+    async def fake_send(cid, text, kb=None):
+        sent.append((text, kb))
+    monkeypatch.setattr(tb, "_send", fake_send)
+    monkeypatch.setattr(tb, "SITE_URL", "https://s.example")
+    monkeypatch.setattr(tb, "_linked_sync", lambda tid: None)
+    asyncio.run(tb._google_link_offer(77, {"id": 77}))
+    url = sent[-1][1]["inline_keyboard"][0][0]["url"]
+    assert url.startswith("https://s.example/?tglink=") and tb._check_token("L", url.split("tglink=")[1]) == (77, 0)
+    monkeypatch.setattr(tb, "_linked_sync", lambda tid: ("g-1", "ali@gmail.com"))
+    asyncio.run(tb._google_link_offer(77, {"id": 77}))
+    assert "ulangan" in sent[-1][0] and sent[-1][1] is None
 
 
 def test_generation_sends_file_then_editor_card(monkeypatch):

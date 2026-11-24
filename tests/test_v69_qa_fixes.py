@@ -38,76 +38,31 @@ async def _no_sleep(*_a, **_k):
     await _real_sleep(0)
 
 
-def _code(sb, minutes=20):
-    sb.tables["user_usage"] = [_usage_row("site-u", "a@x.com", paid=0)]
-    exp = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
-    sb.tables["tg_link_codes"] = [{"code": "ABCD2345", "user_id": "site-u", "email": "a@x.com", "expires_at": exp}]
-
-
 def test_link_lives_30_minutes():
     assert tg.LINK_TTL >= 1800
 
 
-def test_failed_link_gives_the_code_back(sb, monkeypatch):
-    """The DB failed while linking: the SAME code must still work (before it was already deleted)."""
-    _code(sb)
-    sent = []
+def test_link_complete_retry_is_ok_and_foreign_account_refused(sb, client, monkeypatch):
+    """v81: the site retries after a network error — linked to THIS account -> ok; another Google account -> 409."""
+    monkeypatch.setattr(tg, "ENABLED", True)
+    tok = tg._make_token("L", 4242, 0, 600)
+    sb.tables["user_usage"] = [_usage_row("site-u", "a@x.com", paid=0)]
+    who = {"me": ("site-u", "a@x.com")}
 
-    async def fake_send(cid, text, kb=None):
-        sent.append(text)
-
-    async def bad_apply(*a, **k):
-        return {"error": "db"}
-    monkeypatch.setattr(tg, "_send", fake_send)
-    monkeypatch.setattr(tg, "_link_apply", bad_apply)
-    monkeypatch.setattr(tg.asyncio, "sleep", _no_sleep)
-    asyncio.run(tg._do_link(111, {"id": 111}, "ABCD2345"))
-    assert [r["code"] for r in sb.tables["tg_link_codes"]] == ["ABCD2345"]
-    assert "kod hali ishlaydi" in sent[-1]
-    # second try with the same code now works
-    res = tg._link_consume_sync({"id": 111}, "ABCD2345")
-    assert res.get("ok") and res["user_id"] == "site-u"
-
-
-def test_new_bot_user_is_linked_before_the_language_question(sb, monkeypatch):
-    """/start link_CODE from a user who never picked a language: link at once (the code is not kept only in RAM)."""
-    done = []
-
-    async def no_lang(tid):
-        return ""
-
-    async def fake_link(cid, user, code):
-        done.append(code)
+    async def me(request):
+        return who["me"]
 
     async def fake_send(*a, **k):
         return None
-    monkeypatch.setattr(tg, "_saved_lang", no_lang)
-    monkeypatch.setattr(tg, "_do_link", fake_link)
-    monkeypatch.setattr(tg, "_send", fake_send)
-    cid = 555000111
-    tg._chats.pop(cid, None)
-    asyncio.run(tg.handle_update({"update_id": 99011, "message": {"chat": {"id": cid, "type": "private"},
-                                  "from": {"id": cid, "first_name": "A"}, "text": "/start link_ABCD2345"}}))
-    assert done == ["ABCD2345"]
-    assert not tg._state(cid).get("start_arg")
-
-
-def test_link_complete_retry_after_lost_answer_is_ok(client, monkeypatch):
-    """The site retries after a network error: the token is already used, but linked to THIS account -> ok, not 409."""
-    monkeypatch.setattr(tg, "ENABLED", True)
-    tok = tg._make_token("L", 4242, 0, 600)
-    tg._used_links[tok] = 0.0
-
-    async def me(request):
-        return ("site-u", "a@x.com")
     monkeypatch.setattr(tg, "_web_user", me)
-    monkeypatch.setattr(tg, "_linked_sync", lambda tid: ("site-u", "a@x.com") if tid == 4242 else None)
-    r = client.post("/api/telegram/link-complete", json={"token": "t", "link": tok})
-    assert r.status_code == 200 and r.json()["ok"] is True
-    # someone else's account -> still refused
-    monkeypatch.setattr(tg, "_linked_sync", lambda tid: ("other-u", "b@x.com"))
-    assert client.post("/api/telegram/link-complete", json={"token": "t", "link": tok}).status_code == 409
-    tg._used_links.pop(tok, None)
+    monkeypatch.setattr(tg, "_send", fake_send)
+    r1 = client.post("/api/telegram/link-complete", json={"token": "t", "link": tok})
+    r2 = client.post("/api/telegram/link-complete", json={"token": "t", "link": tok})
+    assert r1.status_code == 200 and r1.json()["ok"] and r2.json().get("already")
+    who["me"] = ("attacker-u", "evil@x.com")                       # havola begona qo'lga tushdi
+    r3 = client.post("/api/telegram/link-complete", json={"token": "t", "link": tok})
+    assert r3.status_code == 409 and r3.json()["error"] == "tg_taken"
+    assert [(r["tg_id"], r["user_id"]) for r in sb.tables["tg_links"]] == [(4242, "site-u")]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -229,21 +184,6 @@ def test_invite_code_counts_at_once_for_telegram_account(sb, monkeypatch):
     asyncio.run(tg._handle_ref_start(777, {"id": 777}, "ABCD2345"))
     assert claimed == ["ABCD2345"]
     assert not sb.tables.get("tg_pending_refs")  # nothing has to wait
-
-
-def test_link_token_single_use_across_workers(sb, client, monkeypatch):
-    """Another worker does not know this worker's RAM: the «used» mark is in the DB."""
-    monkeypatch.setattr(tg, "ENABLED", True)
-    tok = tg._make_token("L", 4343, 0, 600)
-
-    async def me(request):
-        return ("attacker-u", "evil@x.com")
-    monkeypatch.setattr(tg, "_web_user", me)
-    monkeypatch.setattr(tg, "_linked_sync", lambda tid: ("victim-u", "v@x.com"))
-    assert tg._mark_link_used_sync(tok, "victim-u", "v@x.com") is True      # used by the owner on worker A
-    tg._used_links.pop(tok, None)                                           # worker B: empty RAM
-    r = client.post("/api/telegram/link-complete", json={"token": "t", "link": tok})
-    assert r.status_code == 409
 
 
 def test_like_on_deleted_post_is_404(sb, client, monkeypatch):

@@ -169,3 +169,53 @@ def test_editor_never_saves_one_account_into_another():
     auth = open(os.path.join(ROOT, "js", "03_auth_project.js"), encoding="utf-8").read()
     i = auth.index("window.__ssAcctSwitch = true")
     assert i < auth.index("location.reload()", i)
+
+
+# ------------------------------------------------------------------ v81: yagona ulash, Mini App akkaunti, sayt — oxirgi taqdimot
+def test_miniapp_account_follows_the_google_link(sb, client, monkeypatch):
+    """Mini App har ochilishda so'raydi: Google ulangan bo'lsa — Google akkaunt bilan kirish kerak."""
+    monkeypatch.setattr(tb, "ENABLED", True)
+    monkeypatch.setattr(tb, "BOT_TOKEN", "123:TEST")
+    sb.tables["tg_links"] = []
+    r = client.post("/api/telegram/account", json={"init_data": _init_data()})
+    assert r.json() == {"email": "tg5551@t.me", "linked": False}
+    sb.tables["tg_links"] = [{"tg_id": 5551, "user_id": "g-1", "email": "Ali@Gmail.com"}]
+    assert client.post("/api/telegram/account", json={"init_data": _init_data()}).json() == {"email": "ali@gmail.com", "linked": True}
+    assert client.post("/api/telegram/account", json={"init_data": "fake"}).status_code == 401
+
+
+def test_site_google_user_gets_the_bot_latest_deck(sb, client, monkeypatch):
+    """Saytda Google bilan kirgan, Telegram'i ulangan foydalanuvchi — o'sha Telegram'ning oxirgi bot taqdimoti."""
+    monkeypatch.setattr(tb, "ENABLED", True)
+    sb.add_user("tok-g", "g-1", "ali@gmail.com")
+    sb.add_user("tok-x", "x-1", "other@gmail.com")
+    sb.tables["tg_links"] = [{"tg_id": 5551, "user_id": "g-1", "email": "ali@gmail.com"}]
+    sb.tables["user_usage"] = [{"user_id": "g-1", "email": "ali@gmail.com"}, {"user_id": "x-1", "email": "other@gmail.com"}]
+    sb.tables["tg_decks"] = [{"id": 7, "tg_id": 5551, "title": "Bot", "updated_at": _ago(1), "deck": {}},
+                             {"id": 8, "tg_id": 6000, "title": "Begona", "updated_at": _ago(0), "deck": {}}]
+    d = client.post("/api/telegram/latest-deck", json={"token": "tok-g"}).json()["deck"]
+    assert d["id"] == 7 and tb._check_token("D", d["token"]) == (7, 5551)
+    assert client.post("/api/telegram/latest-deck", json={"token": "tok-x"}).json() == {"deck": None}     # ulanmagan
+    assert client.post("/api/telegram/latest-deck", json={"token": "bad"}).status_code == 401
+
+
+def test_site_has_no_link_or_unlink_buttons_left():
+    import glob
+    js = "".join(open(f, encoding="utf-8").read() for f in glob.glob(os.path.join(ROOT, "js", "*.js")))
+    for gone in ("window.ssTgLink", "window.ssGoogleLink", "/api/telegram/link-code", "/api/telegram/unlink",
+                 "/api/telegram/miniapp-link", "Telegram botni ulash</button>"):
+        assert gone not in js, gone
+    paths = {getattr(r, "path", "") for r in tb.router.routes}
+    assert "/api/telegram/link-complete" in paths                                  # yagona yo'l qoldi
+    for gone in ("/api/telegram/link-code", "/api/telegram/link-status", "/api/telegram/unlink", "/api/telegram/miniapp-link"):
+        assert gone not in paths, gone
+    sql = open(os.path.join(ROOT, "SUPABASE_SCHEMA.sql"), encoding="utf-8").read()
+    assert "create table if not exists public.tg_link_codes" not in sql
+
+
+def test_presentation_sees_every_edit_and_reuses_loaded_media():
+    """js/30_v40_present_persist.js: imzo — to'liq xesh (avval ~400 belgi tanlanib, kichik tahrir sezilmasdi);
+    GIF/rasm muharrir xotirasidan (MediaRAM) beriladi — namoyish ularni qayta yuklamaydi."""
+    src = open(os.path.join(ROOT, "js", "30_v40_present_persist.js"), encoding="utf-8").read()
+    assert "Math.floor(n / 400)" not in src and "function jsonHash" in src
+    assert "mediaFromRam(parsed)" in src and "R.peek(v)" in src

@@ -471,6 +471,8 @@ def kb_balance(info: Optional[dict] = None) -> dict:
     rows = []
     if not info.get("unlimited"):
         rows.append([_btn("➕ Varaq sotib olish", "buy")])
+    if not info.get("linked"):                       # v81: yagona ulash tugmasi (ixtiyoriy)
+        rows.append([_btn("🔗 Google akkauntni ulash", "glink")])
     rows.append([_btn("🆕 Yangi slayd", "new")])
     return {"inline_keyboard": rows}
 
@@ -1146,58 +1148,6 @@ async def _bot_username() -> str:
     return _BOT_USER
 
 
-def _link_code_sync(user_id: str, email: str) -> str:
-    sb = _sb()
-    alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-    code = "".join(secrets.choice(alphabet) for _ in range(8))
-    sb.table("tg_link_codes").delete().eq("user_id", user_id).execute()
-    sb.table("tg_link_codes").insert({
-        "code": code, "user_id": user_id, "email": email,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=LINK_TTL)).isoformat(),
-    }).execute()
-    return code
-
-
-def _link_consume_sync(user: dict, code: str) -> dict:
-    """Kodni ATOMIK ishlatadi: DELETE ... RETURNING — bir kodni faqat bitta so'rov oladi (ikki marta ishlatib bo'lmaydi).
-    Natija: {"ok": True, "tid", "user_id", "email"} yoki {"error": ...}. Ulashning o'zi — async _link_apply()."""
-    sb = _sb()
-    if not sb:
-        return {"error": "db"}
-    tid = int(user["id"])
-    code = re.sub(r"[^A-Za-z0-9]", "", code or "").upper()[:16]
-    if not code:
-        return {"error": "bad_code"}
-    try:
-        res = sb.table("tg_link_codes").delete().eq("code", code).execute()     # bir martalik
-    except Exception as e:
-        _db_warn(e)
-        return {"error": "db"}
-    if not res.data:
-        return {"error": "bad_code"}
-    row = res.data[0]
-    try:
-        exp = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        expired = exp < datetime.now(timezone.utc)
-    except Exception:
-        expired = True
-    if expired:
-        return {"error": "bad_code"}
-    return {"ok": True, "tid": tid, "user_id": str(row["user_id"]), "email": str(row["email"]),
-            "code": code, "expires_at": str(row["expires_at"])}
-
-
-def _link_code_restore_sync(res: dict) -> None:
-    """v69: the code was used but linking failed (DB hiccup) — put it back so the SAME button works again."""
-    try:
-        _sb().table("tg_link_codes").insert({"code": res["code"], "user_id": res["user_id"], "email": res["email"],
-                                              "expires_at": res["expires_at"]}).execute()
-    except Exception as e:
-        _db_warn(e)
-
-
 def _tg_src_uid_sync(tid: int, uid: str) -> Optional[str]:
     """Botda yaratilgan tg<ID>@t.me akkaunti (sayt akkauntidan boshqa bo'lsa) — pullik varaqlar shu yerdan ko'chadi."""
     sb = _sb()
@@ -1253,17 +1203,40 @@ def _move_paid_sync(src_uid: str, uid: str, email: str, tid: int) -> int:
     return paid
 
 
+def _link_state_sync(tid: int, uid: str) -> str:
+    """v81: 'free' | 'same' (shu ikkalasi allaqachon ulangan) | 'tg_taken' | 'google_taken'. Ulash DOIMIY (uzish yo'q),
+    shuning uchun boshqa Google / boshqa Telegram'ga qayta ulab bo'lmaydi — havola begona qo'lga tushsa ham."""
+    sb = _sb()
+    by_tg = sb.table("tg_links").select("user_id").eq("tg_id", int(tid)).limit(1).execute().data or []
+    if by_tg:
+        return "same" if str(by_tg[0]["user_id"]) == str(uid) else "tg_taken"
+    by_uid = sb.table("tg_links").select("tg_id").eq("user_id", str(uid)).limit(1).execute().data or []
+    return "google_taken" if by_uid else "free"
+
+
 def _link_rows_sync(tid: int, uid: str, email: str) -> bool:
     sb = _sb()
     try:
-        sb.table("tg_links").delete().eq("tg_id", tid).execute()
-        sb.table("tg_links").delete().eq("user_id", uid).execute()
         sb.table("tg_links").insert({"tg_id": tid, "user_id": uid, "email": email}).execute()
     except Exception as e:
         _db_warn(e)
         return False
     _uids[tid] = (uid, email)
     return True
+
+
+_link_locks: Dict[int, Tuple[Any, asyncio.Lock]] = {}
+
+
+def _link_lock(tid: int) -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    hit = _link_locks.get(int(tid))
+    if hit is None or hit[0] is not loop:
+        if len(_link_locks) > 2000:
+            for k in [k for k, v in list(_link_locks.items()) if not v[1].locked()][:1000]:
+                _link_locks.pop(k, None)
+        hit = _link_locks[int(tid)] = (loop, asyncio.Lock())
+    return hit[1]
 
 
 async def _link_apply(tid: int, uid: str, email: str) -> dict:
@@ -1273,6 +1246,20 @@ async def _link_apply(tid: int, uid: str, email: str) -> dict:
     Ikkala akkauntning lock'i (sayt/bot/webhook bilan umumiy) ushlanadi — to'lov yoki slayd yechish bilan poyga bo'lmaydi."""
     if not _sb():
         return {"error": "db"}
+    async with _link_lock(tid):               # v81: ikki marta bosish / parallel so'rov — bitta ulash, varaq bir marta ko'chadi
+        return await _link_apply_locked(tid, uid, email)
+
+
+async def _link_apply_locked(tid: int, uid: str, email: str) -> dict:
+    try:
+        state = await asyncio.to_thread(_link_state_sync, tid, uid)
+    except Exception as e:
+        _db_warn(e)
+        return {"error": "db"}
+    if state == "same":
+        return {"ok": True, "email": email, "moved_pages": 0, "already": True}
+    if state != "free":
+        return {"error": state}
     moved = 0
     try:
         src_uid = await asyncio.to_thread(_tg_src_uid_sync, tid, uid)
@@ -1291,20 +1278,6 @@ async def _link_apply(tid: int, uid: str, email: str) -> dict:
     except Exception:
         pass
     return {"ok": True, "email": email, "moved_pages": pages}
-
-
-def _unlink_sync(tid: int) -> bool:
-    sb = _sb()
-    if not sb:
-        return False
-    try:
-        sb.table("tg_links").delete().eq("tg_id", int(tid)).execute()
-        _uids.pop(int(tid), None)
-        _uid_ts.pop(int(tid), None)
-        return True
-    except Exception as e:
-        _db_warn(e)
-        return False
 
 
 def _tg_for_uid_sync(user_id: str) -> Optional[Tuple[int, str]]:
@@ -3944,28 +3917,29 @@ def _contact_email_sync(uid: str) -> str:
         return ""
 
 
+BTN_GLINK = "🔗 Google akkauntni ulash"
+
+
+async def _google_link_offer(cid: int, user: dict) -> None:
+    """v81: YAGONA ulash yo'li. Sayt ochiladi -> Google bilan kirish -> ulash o'zi tugaydi.
+    Ulangandan keyin: bitta balans, bitta «oxirgi taqdimot», Mini App ham Google akkaunt bilan ochiladi. Uzish yo'q."""
+    try:
+        linked = await asyncio.to_thread(_linked_sync, int(user["id"]))
+    except Exception:
+        linked = None
+    if linked:
+        await _send(cid, f"✅ Google akkaunt ulangan: <b>{esc(_mask_email(linked[1]))}</b>\nBalans va oxirgi taqdimot sayt bilan bir xil.")
+        return
+    url = f"{SITE_URL}/?tglink={_make_token('L', int(user['id']), 0, LINK_TTL)}"
+    await _send(cid, "🔗 <b>Google akkauntni ulash</b>\nTugmani bosing → saytda Google bilan kiring → tayyor ✅\n"
+                     "Shundan keyin bot, sayt va muharrir — <b>bitta balans</b> va <b>bitta oxirgi taqdimot</b>.\n\n"
+                     "<i>Telegram ichida Google kirishga ruxsat bermasa: ⋮ → «Brauzerda ochish».</i>",
+                {"inline_keyboard": [[{"text": "🌐 Google bilan ulash", "url": url}]]})
+
+
 def _linked_text(res: dict) -> str:
     extra = f"\n💎 Botdagi {_fmt_pages(res['moved_pages'])} pullik varaq sayt akkauntingizga ko'chirildi." if res.get("moved_pages") else ""
     return f"✅ <b>Ulandi!</b> Sayt akkauntingiz ({esc(_mask_email(res['email']))}) bilan balans endi <b>bir xil</b>.{extra}"
-
-
-async def _do_link(cid: int, user: dict, code: str) -> None:
-    res = await asyncio.to_thread(_link_consume_sync, user, code)
-    if res.get("ok"):
-        got = res
-        res = await _link_apply(got["tid"], got["user_id"], got["email"])
-        if not res.get("ok"):                                  # v69: one retry (short DB / network hiccup)
-            await asyncio.sleep(1.5)
-            res = await _link_apply(got["tid"], got["user_id"], got["email"])
-        if not res.get("ok"):
-            await asyncio.to_thread(_link_code_restore_sync, got)
-    if res.get("ok"):
-        await _send(cid, _linked_text(res), kb_linked())
-        await _claim_pending_ref(cid, user)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
-    elif res.get("error") == "db":
-        await _send(cid, "⚙️ Ulashni hozir bajarib bo'lmadi. 1 daqiqadan keyin saytdagi o'sha tugmani qayta bosing — kod hali ishlaydi.")
-    else:
-        await _send(cid, "❌ Kod noto'g'ri yoki eskirgan (30 daqiqa yashaydi). Saytda «Telegram botni ulash» ni bosib yangi kod oling.")
 
 
 def _ref_api() -> dict:
@@ -4078,8 +4052,11 @@ async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> Non
         info = None
     deep = st.get("mode") == "deep"
     bal = f"\n{_balance_block(info)}" if info else ""
-    text = f"⚙️ <b>Sozlamalar</b>{bal}\n🤖 AI: <b>{'🧠 Chuqur' if deep else '⚡ Tez'}</b>"
-    kb = {"inline_keyboard": [
+    acc = ""
+    if info and info.get("linked"):
+        acc = f"\n🔗 Google: <b>{esc(_mask_email(info.get('email') or ''))}</b> (balans va slaydlar bir xil)"
+    text = f"⚙️ <b>Sozlamalar</b>{bal}{acc}\n🤖 AI: <b>{'🧠 Chuqur' if deep else '⚡ Tez'}</b>"
+    kb = {"inline_keyboard": ([] if (info and info.get("linked")) else [[_btn("🔗 Google akkauntni ulash", "glink")]]) + [
         [_btn(("✅ " if not deep else "") + "⚡ Tez", "smode:fast"), _btn(("✅ " if deep else "") + "🧠 Chuqur", "smode:deep")],
         [_btn("💳 Balans", "bal")],
         [_btn(SUP_BTN, "sup")],
@@ -4167,7 +4144,9 @@ async def _handle_callback(cb: dict) -> None:
         await _do_buy(cid, user, "pack")
     elif data in ("pro", "buypro"):                      # eski xabarlardagi Pro tugmalari
         await _show_balance(cid, user)
-    elif data in ("linkinfo", "unl", "unl_yes", "unl_no"):   # v78: eski xabarlardagi «Google ulash/uzish» — endi kerak emas
+    elif data in ("glink", "linkinfo"):                     # v81: yagona «Google akkauntni ulash» (eski tugma ham shu yerga)
+        await _google_link_offer(cid, user)
+    elif data in ("unl", "unl_yes", "unl_no"):              # v81: uzish yo'q — eski xabarlardagi tugma balansni ko'rsatadi
         await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
         await _show_balance(cid, user)
     elif data == "dismiss":
@@ -4494,9 +4473,7 @@ async def _choose_lang(cid: int, mid: Optional[int], user: dict, code: str) -> N
         await tg("setChatMenuButton", chat_id=cid, menu_button=_menu_button())
     st = _state(cid)
     arg = st.pop("start_arg", None) or ""
-    if arg.lower().startswith("link_"):
-        await _do_link(cid, user, arg[5:])
-    elif arg.lower().startswith("ref_"):
+    if arg.lower().startswith("ref_"):
         await _handle_ref_start(cid, user, arg[4:])
     await _send_welcome(cid, user)
 
@@ -4582,9 +4559,7 @@ async def handle_update(data: dict) -> None:
                 await asyncio.to_thread(_lang_save_sync, int(user["id"]), lang)
                 _lang_remember(int(user["id"]), lang)
                 _ctx_lang.set(lang)
-            if arg.lower().startswith("link_"):               # ixtiyoriy: SAYTdagi Google foydalanuvchi o'zi «Telegram» ni bossa
-                await _do_link(chat_id, user, arg[5:])
-            elif arg.lower().startswith("ref_"):              # do'st havolasi: t.me/bot?start=ref_KOD
+            if arg.lower().startswith("ref_"):              # do'st havolasi: t.me/bot?start=ref_KOD
                 await _handle_ref_start(chat_id, user, arg[4:])
             await _send_welcome(chat_id, user)
         elif cmd in ("/lang", "/language", "/til", "/язык"):
@@ -4614,7 +4589,9 @@ async def handle_update(data: dict) -> None:
             await _send(chat_id, f"🆔 Sizning Telegram ID: <code>{int(user['id'])}</code>")
         elif cmd in ADMIN_CMDS or cmd == "/admin":
             await _admin_command(chat_id, user, cmd, arg)
-        elif cmd in ("/link", "/unlink"):                     # v78: ulash shart emas — Telegram akkaunti o'zi to'liq akkaunt
+        elif cmd == "/link":                                  # v81: ixtiyoriy — yagona «Google akkauntni ulash»
+            await _google_link_offer(chat_id, user)
+        elif cmd == "/unlink":                                # v81: uzish yo'q
             await _send_welcome(chat_id, user)
         elif cmd == "/site":
             await _menu_action(chat_id, user, "site")
@@ -4886,128 +4863,6 @@ async def _web_user(request: Request) -> Optional[Tuple[str, str]]:
     return None
 
 
-@router.post("/api/telegram/link-code")
-async def telegram_link_code(request: Request):
-    """Saytdagi «✈️ Telegram» tugmasi: bir martalik kod (30 daqiqa) + botni ochish havolasi."""
-    if not ENABLED:
-        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
-    me = await _web_user(request)
-    if not me or not me[1]:
-        return JSONResponse({"error": "login_required"}, status_code=401)
-    if me[1].endswith("@" + TG_EMAIL_DOMAIN):
-        return JSONResponse({"error": "already_telegram"}, status_code=400)
-    try:
-        code = await asyncio.to_thread(_link_code_sync, me[0], me[1])
-    except Exception as e:
-        _db_warn(e)
-        return JSONResponse({"error": "db_not_ready"}, status_code=503)
-    uname = await _bot_username()
-    return JSONResponse({"code": code, "bot": uname, "expires_in": LINK_TTL,
-                         "url": f"https://t.me/{uname}?start=link_{code}" if uname else ""}, headers={"Cache-Control": "no-store"})
-
-
-@router.post("/api/telegram/link-status")
-async def telegram_link_status(request: Request):
-    if not ENABLED:
-        return JSONResponse({"linked": False, "enabled": False})
-    me = await _web_user(request)
-    if not me:
-        return JSONResponse({"error": "login_required"}, status_code=401)
-    linked = False
-    try:
-        sb = _sb()
-        r = await asyncio.to_thread(lambda: sb.table("tg_links").select("tg_id").eq("user_id", me[0]).limit(1).execute())
-        linked = bool(r.data)
-    except Exception:
-        pass
-    return JSONResponse({"linked": linked, "enabled": True}, headers={"Cache-Control": "no-store"})
-
-
-@router.post("/api/telegram/unlink")
-async def telegram_unlink_web(request: Request):
-    """v61: saytdan (Google akkaunt) Telegram botni UZISH. Balanslar ajraladi — bot o'z (Telegram) akkauntiga qaytadi."""
-    if not ENABLED:
-        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
-    me = await _web_user(request)
-    if not me:
-        return JSONResponse({"error": "login_required"}, status_code=401)
-    try:
-        sb = _sb()
-        r = await asyncio.to_thread(lambda: sb.table("tg_links").select("tg_id").eq("user_id", me[0]).execute())
-        tids = [int(x["tg_id"]) for x in (r.data or []) if x.get("tg_id") is not None]
-    except Exception as e:
-        _db_warn(e)
-        return JSONResponse({"error": "db_not_ready"}, status_code=503)
-    for tid in tids:
-        if await asyncio.to_thread(_unlink_sync, tid):
-            try:
-                await _send(tid, "🔌 Sayt akkauntingiz (Google) bu Telegram'dan <b>uzildi</b>. Qayta ulash: /link")
-            except Exception:
-                pass
-    return JSONResponse({"ok": True, "unlinked": len(tids)}, headers={"Cache-Control": "no-store"})
-
-
-@router.post("/api/telegram/miniapp-link")
-async def telegram_miniapp_link(request: Request):
-    """v61: Mini App ichida Google akkaunt holati: action = status | link | unlink (init_data bilan tasdiqlanadi)."""
-    if not ENABLED:
-        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    user = verify_init_data(str((body or {}).get("init_data") or ""))
-    if not user:
-        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
-    tid = int(user["id"])
-    action = str((body or {}).get("action") or "status")
-    if action == "link":
-        return JSONResponse({"url": f"{SITE_URL}/?tglink={_make_token('L', tid, 0, LINK_TTL)}"}, headers={"Cache-Control": "no-store"})
-    if action == "unlink":
-        ok = await asyncio.to_thread(_unlink_sync, tid)
-        return JSONResponse({"ok": bool(ok)} if ok else {"error": "db"}, status_code=200 if ok else 503)
-    try:
-        linked = await asyncio.to_thread(_linked_sync, tid)
-    except Exception:
-        linked = None
-    return JSONResponse({"linked": bool(linked), "email": _mask_email(linked[1]) if linked else ""},
-                        headers={"Cache-Control": "no-store"})
-
-
-_used_links: "OrderedDict[str, float]" = OrderedDict()
-
-
-def _mark_link_used_sync(key: str, uid: str, email: str) -> Optional[bool]:
-    """v69: «this link was used» is written to the DB, so it holds across ALL workers / instances (before only one
-    worker's RAM knew it — the same link could be used again through another worker). True = marked now,
-    False = already used, None = DB not reachable (then the RAM check alone decides, as before).
-    The marker code contains ':' — the bot strips it from typed codes, so a marker can never be consumed as a code."""
-    sb = _sb()
-    if not sb:
-        return None
-    try:
-        exp = int(str(key).split(".")[3])
-    except Exception:
-        exp = int(time.time()) + LINK_TTL
-    try:
-        sb.table("tg_link_codes").insert({"code": "used:" + str(key).rsplit(".", 1)[-1], "user_id": uid, "email": email,
-                                          "expires_at": datetime.fromtimestamp(exp, timezone.utc).isoformat()}).execute()
-        return True
-    except Exception as e:
-        m = str(e).lower()
-        if "duplicate" in m or "23505" in m or "unique" in m:
-            return False
-        _db_warn(e)
-        return None
-
-
-def _unmark_link_used_sync(key: str) -> None:
-    try:
-        _sb().table("tg_link_codes").delete().eq("code", "used:" + str(key).rsplit(".", 1)[-1]).execute()
-    except Exception:
-        pass
-
-
 @router.post("/api/telegram/link-complete")
 async def telegram_link_complete(request: Request):
     """Botdagi «Saytda ulash» havolasi (?tglink=TOKEN): sayt Google bilan kirgach shu yerga murojaat qiladi — ulash o'zi tugaydi."""
@@ -5026,24 +4881,15 @@ async def telegram_link_complete(request: Request):
         return JSONResponse({"error": "login_required"}, status_code=401)
     if me[1].endswith("@" + TG_EMAIL_DOMAIN):
         return JSONResponse({"error": "already_telegram"}, status_code=400)
-    mark = None if key in _used_links else await asyncio.to_thread(_mark_link_used_sync, key, me[0], me[1])
-    if key in _used_links or mark is False:   # already used (a retry, a parallel request, or another worker)
-        try:
-            cur = await asyncio.to_thread(_linked_sync, ids[0])
-        except Exception:
-            cur = None
-        if cur and str(cur[0]) == me[0]:      # v69: it is linked to THIS account — the earlier answer was just lost
-            return JSONResponse({"ok": True, "already": True}, headers={"Cache-Control": "no-store"})
-        return JSONResponse({"error": "used"}, status_code=409)
-    _used_links[key] = time.time()            # ishlatishdan OLDIN band qilinadi — bir havola ikki marta ishlamaydi
-    while len(_used_links) > 500:
-        _used_links.popitem(last=False)
-    res = await _link_apply(ids[0], me[0], me[1])
+    res = await _link_apply(ids[0], me[0], me[1])          # (qulf _link_apply ichida)
     if not res.get("ok"):
-        _used_links.pop(key, None)            # xato bo'lsa qayta urinish mumkin
-        if mark:
-            await asyncio.to_thread(_unmark_link_used_sync, key)
-        return JSONResponse({"error": res.get("error") or "link_failed"}, status_code=503)
+        err = res.get("error") or "link_failed"
+        if err in ("tg_taken", "google_taken"):          # v81: doimiy ulanish — boshqasiga o'tkazib bo'lmaydi
+            return JSONResponse({"error": err}, status_code=409)
+        return JSONResponse({"error": err}, status_code=503)
+    if res.get("already"):
+        return JSONResponse({"ok": True, "already": True}, headers={"Cache-Control": "no-store"})
+    _uid_ts.pop(int(ids[0]), None)            # bot darhol Google akkauntidan foydalanadi
     await _send(ids[0], _linked_text(res), kb_linked())
     try:                                      # v69: the invite bonus also counts when Google is linked from the WEBSITE
         await _claim_pending_ref(ids[0], {"id": ids[0]})
@@ -5208,16 +5054,55 @@ async def telegram_latest_deck(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    user = verify_init_data(str((body or {}).get("init_data") or ""))
-    if not user:
-        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
-    tid = int(user["id"])
+    user = verify_init_data(str((body or {}).get("init_data") or "")) if (body or {}).get("init_data") else None
+    if user:
+        tid = int(user["id"])
+    else:
+        # v81: saytda Google bilan kirgan, Telegram'i ulangan foydalanuvchi — o'sha Telegram'ning oxirgi bot taqdimoti
+        token = str((body or {}).get("token") or "").strip()
+        sb = _sb()
+        if not token or token == "dev-token" or not sb:
+            return JSONResponse({"error": "invalid_init_data"}, status_code=401)
+        try:
+            res = await asyncio.to_thread(sb.auth.get_user, token)
+            uid = str(res.user.id) if res and res.user else ""
+        except Exception:
+            uid = ""
+        if not uid:
+            return JSONResponse({"error": "login_required"}, status_code=401)
+        lk = await asyncio.to_thread(_tg_for_uid_sync, uid)
+        if not lk:
+            return JSONResponse({"deck": None}, headers={"Cache-Control": "no-store"})
+        tid = int(lk[0])
     row = await asyncio.to_thread(_deck_latest_sync, tid)
     if not row or not row.get("id"):
         return JSONResponse({"deck": None}, headers={"Cache-Control": "no-store"})
     return JSONResponse({"deck": {"id": int(row["id"]), "title": str(row.get("title") or "")[:120],
                                   "updated_ms": _iso_ms(row.get("updated_at")),
                                   "token": _make_token("D", int(row["id"]), tid, 3600)}},
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.post("/api/telegram/account")
+async def telegram_account(request: Request):
+    """v81: Mini App har ochilishda so'raydi: shu Telegram QAYSI akkaunt bilan kirishi kerak (Google ulangan bo'lsa —
+    Google akkaunt, aks holda Telegram akkaunti). Brauzerdagi eski sessiya boshqa bo'lsa — Mini App qayta kiradi
+    (avval Google ulangandan keyin ham Mini App eski Telegram sessiyasida qolib ketardi)."""
+    if not ENABLED:
+        return JSONResponse({"error": "telegram_disabled"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    user = verify_init_data(str((body or {}).get("init_data") or ""))
+    if not user:
+        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
+    tid = int(user["id"])
+    try:
+        linked = await asyncio.to_thread(_linked_sync, tid)
+    except Exception:
+        linked = None
+    return JSONResponse({"email": (linked[1] if linked else _tg_email(tid)).lower(), "linked": bool(linked)},
                         headers={"Cache-Control": "no-store"})
 
 

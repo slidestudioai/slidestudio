@@ -133,9 +133,8 @@
       const r = b.getBoundingClientRect();
       pop.style.top = (r.bottom + 8) + 'px';
       pop.innerHTML = metersHTML() + '<button type="button" class="ss-set-btn" id="ssQuotaBuy" style="margin-top:10px;width:100%">' + buyLabel() + '</button>' +
-        (window.ssTgLink && isLoggedIn() ? '<button type="button" class="ss-set-btn" id="ssQuotaTg" data-tg-link style="margin-top:8px;width:100%">✈️ Telegram botni ulash</button>' : '');
+        '';                       // v81: «Telegram botni ulash» yo'q (yagona yo'l — botdagi «Google akkauntni ulash»)
       document.body.appendChild(pop);
-      try { if (window.ssTgDecorate) window.ssTgDecorate(pop); } catch (e) {}   // v61
       // v45: oyna HECH QACHON ekrandan chiqmaydi (telefonda chap chetga ketib qolardi): chap/o'ng chegaraga qisiladi
       const pw = pop.offsetWidth || 280, vw = document.documentElement.clientWidth || window.innerWidth;
       pop.style.right = 'auto';
@@ -143,8 +142,6 @@
       animateMeters(pop);
       pop.addEventListener('click', function (ev) { ev.stopPropagation(); });
       pop.querySelector('#ssQuotaBuy').onclick = function () { pop.remove(); startCheckout(); };
-      const tgb = pop.querySelector('#ssQuotaTg');
-      if (tgb) tgb.onclick = function () { pop.remove(); try { window.ssTgLink(); } catch (_) {} };
     });
     document.addEventListener('click', function () { const p = document.getElementById('ssQuotaPop'); if (p) p.remove(); });
     return b;

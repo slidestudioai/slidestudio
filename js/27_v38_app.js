@@ -113,8 +113,6 @@
       '<div class="settings-user-info"><div class="settings-user-email">' + (li ? esc(email) : 'Tizimga kirmagan') + '</div><div class="settings-user-status">' + (li ? 'Tizimda' : 'Mehmon · slaydlar faqat shu oynada (RAM)') + '</div></div></div>' +
       (li ? '<div class="ss-set-sec">AI varaqlar</div><div class="ss-set-card ss-bal-card">' + safe(function () { return window.ssMetersHTML ? window.ssMetersHTML() : ''; }, '') +
         '<div class="ss-set-row"><span>Qo‘shimcha varaq kerakmi?</span><button type="button" class="ss-set-btn" data-a="buy">Sotib olish</button></div></div>' : '') +
-      (li && window.ssTgLink ? '<div class="ss-set-sec">Telegram bot</div><div class="ss-set-card"><div class="ss-set-row"><span>Botni ulash<small>Telegram va sayt balansi bir xil bo‘ladi</small></span><button type="button" class="ss-set-btn" data-a="tglink" data-tg-link="short">Ulash</button></div></div>' : '') +
-      (window.ssGoogleLink ? '<div class="ss-set-sec">Google akkaunt</div><div class="ss-set-card"><div class="ss-set-row"><span>Saytdagi akkaunt<small>Ulansa bot va sayt balansi bir xil bo‘ladi</small></span><button type="button" class="ss-set-btn" data-a="gglink" data-google-link>Ulash</button></div></div>' : '') +
       '<div class="ss-set-sec">Bir bosishda</div><div class="ss-set-card">' +
       '<div class="ss-set-row"><span>Hamma elementni tanlash</span><button type="button" class="ss-set-btn" data-a="selectAll">Tanlash</button></div>' +
       '<div class="ss-set-row"><span>Joriy fonni hamma slaydga<small>Rang / GIF / video</small></span><button type="button" class="ss-set-btn" data-a="bgToAll">Qo‘llash</button></div>' +
@@ -130,8 +128,6 @@
       '</div></div>';   // v70: «Huquqiy (Terms…)» olib tashlandi — Terms havolasi sidebar pastida doim ko'rinadi
     sidebar.appendChild(panel);
     safe(function () { if (window.ssAnimateMeters) window.ssAnimateMeters(panel); });
-    safe(function () { if (window.ssTgDecorate) window.ssTgDecorate(panel); });       // v61: ulangan bo'lsa «Uzish»
-    safe(function () { if (window.ssGoogleDecorate) window.ssGoogleDecorate(panel); });
     panel.addEventListener('click', function (e) {
       const t = e.target.closest('[data-a]'); if (!t) return;
       const a = t.getAttribute('data-a');
@@ -139,8 +135,6 @@
       else if (a === 'login') safe(function () { handleGoogleLogin(); });
       else if (a === 'logout') { safe(function () { handleLogout(); }); safe(function () { renderSidebar(true); }); }
       else if (a === 'buy') safe(function () { window.startCreditsCheckout(); });
-      else if (a === 'tglink') safe(function () { window.ssTgLink(); });
-      else if (a === 'gglink') safe(function () { window.ssGoogleLink(); });
       else if (a === 'fx') { /* change hodisasi */ }
       else if (actions[a]) { actions[a](); if (a === 'clearRam') openSettings(); }
     });

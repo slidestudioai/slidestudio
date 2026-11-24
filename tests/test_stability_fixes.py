@@ -125,22 +125,17 @@ def test_proxy_image_cache_hit_skips_queue(monkeypatch):
 def _link_setup(sb, src_paid=400, dst_paid=100):
     sb.tables["user_usage"] = [_usage_row("tg-acc", "tg111@t.me", paid=src_paid),
                                _usage_row("site-u", "a@x.com", paid=dst_paid)]
-    exp = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    sb.tables["tg_link_codes"] = [{"code": "ABCD2345", "user_id": "site-u", "email": "a@x.com", "expires_at": exp}]
 
 
-def test_link_code_is_single_use(sb):
+def test_link_is_permanent_one_to_one(sb):
+    """v81: kodlar yo'q; ulash doimiy va 1 ga 1 — boshqa Google / boshqa Telegram'ga qayta ulab bo'lmaydi."""
     _link_setup(sb)
-    r1 = tg._link_consume_sync({"id": 111}, "abcd2345")
-    r2 = tg._link_consume_sync({"id": 111}, "abcd2345")
-    assert r1.get("ok") and r1["user_id"] == "site-u"
-    assert r2 == {"error": "bad_code"}
-
-
-def test_link_code_expired(sb):
-    _link_setup(sb)
-    sb.tables["tg_link_codes"][0]["expires_at"] = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
-    assert tg._link_consume_sync({"id": 111}, "ABCD2345") == {"error": "bad_code"}
+    assert asyncio.run(tg._link_apply(111, "site-u", "a@x.com"))["ok"]
+    again = asyncio.run(tg._link_apply(111, "site-u", "a@x.com"))
+    assert again["ok"] and again.get("already")
+    assert asyncio.run(tg._link_apply(111, "other-u", "b@x.com")) == {"error": "tg_taken"}       # havola begona qo'lda
+    assert asyncio.run(tg._link_apply(222, "site-u", "a@x.com")) == {"error": "google_taken"}
+    assert [(r["tg_id"], r["user_id"]) for r in sb.tables["tg_links"]] == [(111, "site-u")]
 
 
 @pytest.mark.parametrize("use_rpc", [True, False])

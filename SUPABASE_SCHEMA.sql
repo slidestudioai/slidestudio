@@ -225,22 +225,13 @@ create index if not exists admin_audit_created_idx on public.admin_audit (create
 -- ============================================================================
 -- 8) Telegram bot jadvallari
 -- ============================================================================
--- Telegram ID <-> sayt akkaunti (Google orqali kirgan) bog'lanishi
+-- Telegram ID <-> Google akkaunt bog'lanishi (v81: YAGONA yo'l — botdagi «🔗 Google akkauntni ulash»; doimiy, 1 ga 1)
 create table if not exists public.tg_links (
   tg_id      bigint primary key,
   user_id    uuid   not null unique,
   email      text   not null,
   created_at timestamptz not null default now()
 );
-
--- Bir martalik ulash kodlari (10 daqiqa yashaydi)
-create table if not exists public.tg_link_codes (
-  code       text primary key,
-  user_id    uuid not null,
-  email      text not null,
-  expires_at timestamptz not null
-);
-create index if not exists tg_link_codes_user_idx on public.tg_link_codes (user_id);
 
 -- Oxirgi slaydlar (har foydalanuvchiga eng ko'pi 5 ta; faqat qisqa JSON matn)
 create table if not exists public.tg_decks (
@@ -273,7 +264,6 @@ alter table public.ad_sent         enable row level security;
 alter table public.app_settings    enable row level security;
 alter table public.admin_audit     enable row level security;
 alter table public.tg_links        enable row level security;
-alter table public.tg_link_codes   enable row level security;
 alter table public.tg_decks        enable row level security;
 
 -- Eski ochiq policy'larni (agar bo'lsa) olib tashlash
@@ -454,7 +444,6 @@ begin
     delete from public.usage_ledger   where user_id = old.id::text;
     delete from public.referral_codes where user_id = old.id::text;
     delete from public.tg_links       where user_id = old.id;
-    delete from public.tg_link_codes  where user_id = old.id;
     delete from public.tg_decks       where user_id = old.id;
   exception when others then
     raise warning 'cleanup_deleted_user(%): %', old.id, sqlerrm;
@@ -478,7 +467,7 @@ security definer
 set search_path = public
 as $$
 declare
-  n_usage int := 0; n_ledger int := 0; n_links int := 0; n_codes int := 0; n_decks int := 0; n_ref int := 0;
+  n_usage int := 0; n_ledger int := 0; n_links int := 0; n_decks int := 0; n_ref int := 0;
 begin
   delete from public.user_usage u
    where not exists (select 1 from auth.users a where a.id::text = u.user_id);
@@ -492,14 +481,11 @@ begin
   delete from public.tg_links t
    where not exists (select 1 from auth.users a where a.id = t.user_id);
   get diagnostics n_links = row_count;
-  delete from public.tg_link_codes c
-   where not exists (select 1 from auth.users a where a.id = c.user_id);
-  get diagnostics n_codes = row_count;
   delete from public.tg_decks d
    where d.user_id is not null and not exists (select 1 from auth.users a where a.id = d.user_id);
   get diagnostics n_decks = row_count;
   return jsonb_build_object('user_usage', n_usage, 'usage_ledger', n_ledger, 'referral_codes', n_ref,
-                            'tg_links', n_links, 'tg_link_codes', n_codes, 'tg_decks', n_decks);
+                            'tg_links', n_links, 'tg_decks', n_decks);
 end;
 $$;
 
@@ -829,3 +815,12 @@ alter table public.user_usage add column if not exists display_name text;
 update public.user_usage set last_active = coalesce(created_at, now()) where last_active is null;
 alter table public.user_usage alter column last_active set default now();
 create index if not exists user_usage_last_active_idx on public.user_usage (last_active desc nulls last);
+
+
+-- ============================================================================
+-- 19) v81: Ulash / uzish soddalashtirildi. Eski bir martalik kodlar (sayt -> bot «/link KOD») va «uzish» YO'Q.
+--     Yagona yo'l: botdagi «🔗 Google akkauntni ulash» -> saytda Google bilan kirish -> tg_links ga bitta qator.
+--     tg_links: tg_id (primary key) va user_id (unique) — 1 Telegram = 1 Google, qayta boshqasiga ulab bo'lmaydi.
+--     Eski public.tg_link_codes jadvali endi ISHLATILMAYDI (bu fayl uni yaratmaydi). Bu fayl hech narsani o'chirmaydi;
+--     jadvalni olib tashlash kerak bo'lsa — README dagi v81 izohiga qarang (qo'lda, bir marta).
+-- ============================================================================
