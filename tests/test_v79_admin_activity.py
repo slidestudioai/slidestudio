@@ -219,3 +219,75 @@ def test_presentation_sees_every_edit_and_reuses_loaded_media():
     src = open(os.path.join(ROOT, "js", "30_v40_present_persist.js"), encoding="utf-8").read()
     assert "Math.floor(n / 400)" not in src and "function jsonHash" in src
     assert "mediaFromRam(parsed)" in src and "R.peek(v)" in src
+
+
+def test_schema_v78_backfill_survives_duplicate_telegram_rows():
+    """SUPABASE_SCHEMA.sql: bitta Telegram ID uchun bir nechta eski qator bo'lsa — telegram_id FAQAT bittasiga yoziladi
+    (avval hammasiga yozilib, unikal indeks yaratilmay fayl xato bilan to'xtardi). PostgreSQL 16 da qo'lda tekshirilgan."""
+    sql = open(os.path.join(ROOT, "SUPABASE_SCHEMA.sql"), encoding="utf-8").read()
+    i = sql.index("create unique index if not exists user_usage_telegram_id_uq")
+    before = sql[:i]
+    assert "select distinct on (s.tid)" in before[-1500:]
+    assert "tg_decks_tg_updated_idx" in sql
+    assert "c.relkind <> 'v'" in sql                    # public.users jadval bo'lsa — ko'rinish yaratilmaydi
+
+
+def test_telegram_web_endpoints_accept_valid_token_when_supabase_get_user_fails(sb, client, monkeypatch):
+    """v81.3: brauzer konsolida link-complete / link-status / link-code / latest-deck 401 edi. Bu endpointlar
+    sb.auth.get_user ni to'g'ridan-to'g'ri chaqirib, u xato bersa 401 qaytarardi. Endi saytning qolgan qismi bilan bir xil
+    tekshiruv (auth_user_cached)."""
+    monkeypatch.setattr(tb, "ENABLED", True)
+    sb.add_user("tok-g", "00000000-0000-0000-0000-0000000000aa", "ali@gmail.com")
+
+    def broken(token):
+        raise RuntimeError("gotrue: Invalid API key")
+    monkeypatch.setattr(sb.auth, "get_user", broken)
+    monkeypatch.setitem(tb._deps, "auth_user", lambda tok: ("00000000-0000-0000-0000-0000000000aa", "ali@gmail.com") if tok == "tok-g" else None)
+    sb.tables["tg_links"] = []
+    r = client.post("/api/telegram/link-status", json={"token": "tok-g"})
+    assert r.status_code == 200 and r.json()["linked"] is False
+    sb.tables["user_usage"] = [{"user_id": "00000000-0000-0000-0000-0000000000aa", "email": "ali@gmail.com", "free_credits": 0, "paid_credits": 0}]
+
+    async def fake_send(*a, **k):
+        return None
+    monkeypatch.setattr(tb, "_send", fake_send)
+    tok = tb._make_token("L", 4545, 0, 600)
+    r = client.post("/api/telegram/link-complete", json={"token": "tok-g", "link": tok})
+    assert r.status_code == 200 and r.json()["ok"]
+    assert client.post("/api/telegram/latest-deck", json={"token": "tok-g"}).status_code == 200
+    assert client.post("/api/telegram/link-status", json={"token": "bad"}).status_code == 401      # haqiqatan yaroqsiz — 401
+
+
+def test_site_sends_fresh_token_for_telegram_calls():
+    js = {n: open(os.path.join(ROOT, "js", n), encoding="utf-8").read() for n in ("03_auth_project.js", "35_v45_tglink.js", "36_v45_tgdeck.js")}
+    assert "window.ssFreshToken = async function" in js["03_auth_project.js"] and "refreshSession()" in js["03_auth_project.js"]
+    assert "ssFreshToken(true)" in js["35_v45_tglink.js"]                      # 401 -> yangilab qayta
+    assert js["36_v45_tgdeck.js"].count("ssFreshToken") >= 2                  # link-complete va latest-deck
+
+
+def test_topup_prices_follow_the_admin_tariff(client, monkeypatch):
+    """v81.4: to'lov oynasi narxlari admin tarifidan; standart $1 = 100 Tez = 50 Chuqur."""
+    from backend import appsettings, monitoring as mon
+    saved = dict(appsettings._cache)
+    try:
+        appsettings._cache.update(slides_per_dollar=100, fast_ai_cost=1, deep_ai_cost=2)
+        monkeypatch.setattr(appsettings, "_loaded_at", 1e18)             # bazaga bormasin (kesh yangi)
+        appsettings._apply_runtime()
+        d = client.get("/api/billing/plans").json()
+        assert d["credits_per_usd"] == 100 and d["pages_per_usd"] == {"fast": 100, "deep": 50}
+        assert d["topup_packages"]["popular"]["credits"] == 550 and d["topup_packages"]["popular"]["pages"] == {"fast": 550, "deep": 275}
+        appsettings.set_many({"slides_per_dollar": 150})                 # admin o'zgartirdi -> hamma joyda
+        d = client.get("/api/billing/plans").json()
+        assert d["pages_per_usd"] == {"fast": 150, "deep": 75} and d["topup_packages"]["popular"]["credits"] == 825
+        assert main.credits_for_net_cents(100) == 150                     # webhook / checkout ham shu tarif
+    finally:
+        appsettings._cache.clear(); appsettings._cache.update(saved); appsettings._apply_runtime()
+    assert appsettings.DEFAULTS["slides_per_dollar"] == mon.PAGES_PER_PACK == 100
+
+
+def test_topup_modal_rebuilds_with_server_prices():
+    src = open(os.path.join(ROOT, "js", "46_topup.js"), encoding="utf-8").read()
+    assert "if (feeLoaded) return;" not in src                            # har ochilishda yangi narx
+    assert "buildGrid();\n      renderSub();" in src and "d.fast_ai_cost" in src
+    html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
+    assert "1 USD = 100 kredit" not in html
