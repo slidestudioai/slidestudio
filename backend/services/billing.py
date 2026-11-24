@@ -148,7 +148,7 @@ def charge_turn_atomic(uid: str, email: str, usage: Optional[dict], pages: int, 
     elif units_override is not None:
         units, reason = max(0, int(units_override)), "resume"
     else:
-        units, reason = turn_cost(pages, searches, mode)
+        units, reason = turn_cost(pages, searches, mode, apply_24h_reset(dict(usage)))
     job = {"uid": str(uid), "email": email or "", "units": units, "reason": kind_prefix + reason,
            "daily": daily_units_for(usage), "max_debt": max_debt_units(), "tokens": max(0, int(tokens or 0)),
            "searches": max(0, int(searches or 0)), "details": details,

@@ -54,7 +54,8 @@ def test_update_usage_atomic_retries_and_keeps_payment(sb):
     u, charged = main.update_usage_atomic("u1", "a@x.com", charge)
     row = sb.usage("u1")
     assert calls["n"] == 2 and charged == 60
-    assert row["free_credits"] + row["paid_credits"] == 40 + 2000 - 60     # to'lov ham, yechim ham saqlandi
+    # to'lov ham, yechim ham saqlandi. v76: pullik balans > 0 — bepul qoldiq (40) ishlatilmaydi, 60 pullikdan
+    assert row["paid_credits"] == 2000 - 60 and row["free_credits"] == 0
 
 
 def test_sequential_saves_use_new_version(sb):

@@ -69,6 +69,7 @@ try:
         PAGES_PER_PACK,
         plan_active, is_unlimited, is_ad_free,
         pack_pages, pack_units, free_daily_units, rt, daily_units_for,
+        page_units,
     )
 except ImportError as _mon_err:
     print(f"[ERROR] backend/monitoring.py yuklanmadi: {_mon_err}")
@@ -1488,11 +1489,12 @@ def public_config():
         "supabase_publishable_key": config.get("supabase_publishable_key"),
         "free_daily": rt("free_daily_pages"),
         "pack_pages": pack_pages(),
-        "pack_price_usd": round(topup_gross_cents(pack_pages()) / 100, 2),
+        "pack_price_usd": round(topup_gross_cents(PACK_NET_CENTS) / 100, 2),
         "announcement": appsettings.get("announcement", ""),
         "unit": UNIT,
         "modes": {k: {"page_units": v["page"], "chat_units": v["chat"], "search_units": v["search"],
-                      "free_daily_pages": free_daily_units() // v["page"], "pack_pages": pack_units() // v["page"]}
+                      "free_daily_pages": (rt("free_daily_deep_limit") if k == "deep" else rt("free_daily_pages")),
+                      "pack_pages": pack_units() // v["page"]}
                   for k, v in MODES.items()},
     }
 
@@ -1687,14 +1689,15 @@ def user_usage(request: Request, token: str = "", fresh: int = 0):
 def billing_plans():
     return {
         "plans": plans_public(),
-        "checkout_price_usd": round(topup_gross_cents(pack_pages()) / 100, 2),
+        "checkout_price_usd": round(topup_gross_cents(PACK_NET_CENTS) / 100, 2),
         "pages_per_pack": pack_pages(),
         "deep_pages_per_pack": pack_units() // MODES["deep"]["page"],
         "free_daily": rt("free_daily_pages"),
-        "deep_free_daily": free_daily_units() // MODES["deep"]["page"],
-        "note": f"Dodo Payments komissiyasi ({DODO_FEE_PERMILLE / 10:g}% + ${DODO_FEE_FIXED_CENTS / 100:.2f}) to'lovga qo'shiladi; 1 USD netto = 100 kredit",
+        "deep_free_daily": rt("free_daily_deep_limit"),
+        "note": f"Dodo Payments komissiyasi ({DODO_FEE_PERMILLE / 10:g}% + ${DODO_FEE_FIXED_CENTS / 100:.2f}) to'lovga qo'shiladi; 1 USD netto = {pack_pages()} kredit",
         "fee": topup_fee_public(),
-        "topup_packages": {k: _topup_quote_public(_topup_quote(k, v["net_cents"], v["credits"])) for k, v in TOPUP_PACKAGES.items()},
+        "topup_packages": {k: _topup_quote_public(_topup_quote(k, v["net_cents"], _pkg_credits(v))) for k, v in TOPUP_PACKAGES.items()},
+        "credits_per_usd": pack_pages(),
     }
 
 def _clean_env(name: str, bearer: bool = False) -> str:
@@ -1848,6 +1851,19 @@ def topup_fee_public() -> Dict[str, Any]:
             "permille": DODO_FEE_PERMILLE, "fixed_cents": DODO_FEE_FIXED_CENTS}
 
 
+PACK_NET_CENTS = 100            # standart paket = $1.00 netto (birlik soni — admin paneldagi slides_per_dollar)
+
+
+def credits_for_net_cents(net_cents: int) -> int:
+    """v76: $ netto -> birlik. Admin paneldagi «$1 = nechta varaq» (slides_per_dollar) bo'yicha, kodda qotirilmagan."""
+    return max(0, int(net_cents) * pack_pages() // 100)
+
+
+def _pkg_credits(p: Dict[str, Any]) -> int:
+    """Paket bonusi foizda saqlanadi (100 -> 110 = +10%), birliklar slides_per_dollar bo'yicha hisoblanadi."""
+    return int(p["credits"]) * pack_pages() // 100
+
+
 def _topup_quote(package: str, net_cents: int, credits: int) -> Dict[str, Any]:
     gross = topup_gross_cents(net_cents)
     return {"package": package, "net_cents": int(net_cents), "credits": int(credits),
@@ -1867,12 +1883,12 @@ def _topup_quote_from_payload(payload: Dict[str, Any]):
         p = TOPUP_PACKAGES.get(package)
         if not p:
             return None, "Noma'lum paket."
-        return _topup_quote(package, p["net_cents"], p["credits"]), None
+        return _topup_quote(package, p["net_cents"], _pkg_credits(p)), None
     raw = payload.get("net_amount")
     if raw in (None, "") and payload.get("amount_cents"):
         raw = _int_or(payload.get("amount_cents"), 0) / 100
     if raw in (None, ""):                                           # hech narsa tanlanmagan -> standart paket
-        return _topup_quote("pack", pack_pages(), pack_pages()), None
+        return _topup_quote("pack", PACK_NET_CENTS, pack_pages()), None
     try:
         net = float(raw)
     except (TypeError, ValueError):
@@ -1884,7 +1900,7 @@ def _topup_quote_from_payload(payload: Dict[str, Any]):
         return None, "Eng kam miqdor — $1.00."
     if net_cents > TOPUP_MAX_CENTS:
         return None, f"Eng ko'p miqdor — ${TOPUP_MAX_CENTS // 100}."
-    return _topup_quote("custom", net_cents, net_cents), None
+    return _topup_quote("custom", net_cents, credits_for_net_cents(net_cents)), None
 
 
 def _topup_sign_key() -> bytes:
@@ -1934,7 +1950,7 @@ async def _build_checkout(user_id, user_email: str, return_url_hint: str = "", p
             "error": "Dodo Payments sozlanmagan",
             "hint": "Render env'ga DODO_PAYMENTS_API_KEY va DODO_PRODUCT_ID yozing",
         }
-    q = quote or _topup_quote("pack", pack_pages(), pack_pages())
+    q = quote or _topup_quote("pack", PACK_NET_CENTS, pack_pages())
     if q["gross_cents"] < TOPUP_MIN_CENTS:
         return 400, {"error": "Eng kam miqdor — $1.00."}
     # Dodo metadata: faqat satr qiymatlar (webhookda _int_or bilan o'qiladi)
@@ -2135,7 +2151,8 @@ def _paid_cents_usd(data: dict) -> int:
     return max(0, total - tax)
 
 
-async def _credit_user(user_id: str, email: str, key: str, pages: int, sign: int, event_name: str, ref: str):
+async def _credit_user(user_id: str, email: str, key: str, pages: int, sign: int, event_name: str, ref: str,
+                       usd_cents: int = 0):
     async with _user_lock(user_id):       # bot/sayt bilan BIR XIL lock
         await asyncio.to_thread(get_or_create_user_usage, user_id, email)     # qator borligiga ishonch
         res = await asyncio.to_thread(_apply_payment_sync, key, user_id, pages, sign, event_name)
@@ -2144,7 +2161,8 @@ async def _credit_user(user_id: str, email: str, key: str, pages: int, sign: int
         usage_cache_drop(user_id)
         u = await asyncio.to_thread(get_or_create_user_usage, user_id, email)
         await asyncio.to_thread(ledger_log, user_id, "refund" if sign < 0 else "purchase",
-                                sign * pages * UNIT, u, 0, {"order": ref})
+                                sign * pages * UNIT, u, 0,
+                                {"order": ref, **({"usd": round(int(usd_cents) / 100, 2)} if usd_cents else {})})
     try:   # Telegram foydalanuvchisiga darhol xabar (balans bazada allaqachon yangilangan)
         if tgbot is not None:
             asyncio.create_task(tgbot.notify_purchase(str(user_id), pages, sign < 0))
@@ -2211,11 +2229,11 @@ async def dodo_webhook(request: Request):
             # bo'lsa — to'langan summadan komissiyani ayirib (1 cent netto = 1 kredit).
             pages = _topup_verified_credits(meta, user_id, paid)
             if pages is None:
-                pages = topup_net_from_gross_cents(paid)
+                pages = credits_for_net_cents(topup_net_from_gross_cents(paid))
             if pages <= 0:
                 print(f"[DODO WEBHOOK] {payment_id}: summa 0 — kredit berilmadi.")
                 return {"ok": True, "ignored": "zero_amount"}
-            u = await _credit_user(user_id, email, pay_key, pages, +1, etype, payment_id)
+            u = await _credit_user(user_id, email, pay_key, pages, +1, etype, payment_id, usd_cents=paid)
             if u is None:
                 return {"ok": True, "duplicate": True}
             _metrics.inc("webhook_events_total", {"result": "credited"})
@@ -2235,7 +2253,7 @@ async def dodo_webhook(request: Request):
         amount = _int_or(data.get("amount"), 0)
         partial = bool(data.get("is_partial")) and amount > 0
         # qisman refund: qaytarilgan summadan foiz komissiya ulushi ayriladi (1 cent netto = 1 kredit); to'liq -> qolgani
-        pages = min(remaining, amount * (1000 - DODO_FEE_PERMILLE) // 1000) if partial else remaining
+        pages = min(remaining, credits_for_net_cents(amount * (1000 - DODO_FEE_PERMILLE) // 1000)) if partial else remaining
         if pages <= 0:
             return {"ok": True, "duplicate": True}
         # Audit M3: without refund_id the key used to be the amount, so two partial refunds of the same amount
@@ -3518,14 +3536,14 @@ async def _refuse_low_balance(websocket, usage: dict, bill_mode: str, mode: str,
     if is_unlimited(usage) or mode == "plan":
         return False
     bal_units = total_credits(usage)
-    if bal_units // MODES[bill_mode]["page"] >= 1 or not _wants_slide_work(prompt or "", deck_state):
+    if bal_units // page_units(bill_mode, usage) >= 1 or not _wants_slide_work(prompt or "", deck_state):
         return False
     _metrics.inc("ai_turns_total", {"result": "limit"})
     await websocket.send_json({
         "type": "error",
         "code": "LIMIT_EXCEEDED",
         "message": (f"Balansingizda {bal_units / MODES[bill_mode]['page']:.2f} varaq bor — yangi yoki o'zgartirilgan slayd uchun "
-                    f"kamida 1 varaq kerak. 24 soat kuting yoki ${topup_gross_cents(pack_pages()) / 100:.2f} ga "
+                    f"kamida 1 varaq kerak. 24 soat kuting yoki ${topup_gross_cents(PACK_NET_CENTS) / 100:.2f} ga "
                     f"{pack_pages()} Tez-varaq sotib oling. Oddiy savol berishingiz mumkin."),
         **usage_payload(usage),
     })
@@ -4049,21 +4067,21 @@ async def ws_chat(websocket: WebSocket):
                     await websocket.send_json({
                         "type": "error",
                         "code": "LIMIT_EXCEEDED",
-                        "message": f"Limit tugadi.{_alt} 24 soat kuting, ${topup_gross_cents(pack_pages()) / 100:.2f} ga {pack_pages()} Tez-varaq ({pack_units() // MODES['deep']['page']} Chuqur-varaq) sotib oling.",
+                        "message": f"Limit tugadi.{_alt} 24 soat kuting, ${topup_gross_cents(PACK_NET_CENTS) / 100:.2f} ga {pack_pages()} Tez-varaq ({pack_units() // MODES['deep']['page']} Chuqur-varaq) sotib oling.",
                         **payload,
                     })
                     continue
-                if mode == "generate" and not is_unlimited(usage) and bal_units < MODES[bill_mode]["page"]:
+                if mode == "generate" and not is_unlimited(usage) and bal_units < page_units(bill_mode, usage):
                     # v53: reja bo'yicha slayd yaratish (1 so'rov = 1 slayd = 1 varaq). Avval faqat 1 ta savol-javobga
                     # yetadigan balans tekshirilardi va 0.25 varaq bilan TO'LIQ slayd olinardi (yechim balansdan oshmaydi).
                     await websocket.send_json({
                         "type": "error",
                         "code": "LIMIT_EXCEEDED",
-                        "message": f"Limit tugadi: yangi slayd uchun kamida 1 varaq kerak. 24 soat kuting yoki ${topup_gross_cents(pack_pages()) / 100:.2f} ga {pack_pages()} Tez-varaq sotib oling.",
+                        "message": f"Limit tugadi: yangi slayd uchun kamida 1 varaq kerak. 24 soat kuting yoki ${topup_gross_cents(PACK_NET_CENTS) / 100:.2f} ga {pack_pages()} Tez-varaq sotib oling.",
                         **usage_payload(usage),
                     })
                     continue
-                bal = bal_units // MODES[bill_mode]["page"]       # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
+                bal = bal_units // page_units(bill_mode, usage)   # shu rejimdagi VARAQ soni (tashlab yuborilgan qoldiq birlik hisobga olinmaydi)
                 if await _refuse_low_balance(websocket, usage, bill_mode, mode, prompt, deck_state):
                     continue
                 session_key = register_session(uid, email, model)

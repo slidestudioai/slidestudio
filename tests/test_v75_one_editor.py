@@ -31,7 +31,7 @@ def test_home_keyboard_one_primary_button(monkeypatch):
     monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
     rows = tb.kb_home()["inline_keyboard"]
     assert len(rows[0]) == 1 and rows[0][0]["text"] == "✨ Muharrirni ochish" and "web_app" in rows[0][0]
-    assert [b["callback_data"] for b in rows[1]] == ["bal", "about"]
+    assert [b["callback_data"] for b in rows[1]] == ["new", "bal", "about"]          # v76: + «🆕 Yangi slayd»
 
 
 def test_start_greets_short_and_sets_menu_button(sb, monkeypatch):

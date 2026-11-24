@@ -138,8 +138,9 @@ def test_admin_take_reports_same_balance_as_site(sb, monkeypatch):
     res = admin_core.user_action("t", {"user_id": "u1", "action": "add_credits", "pages": -80})
     site = mon.apply_24h_reset(dict(sb.usage("u1")))
     shown = res["user"]["free_pages"] + res["user"]["paid_pages"]
-    # bot va sayt BIR XIL raqam; pullik olinganda bepul limit darhol qayta to'lmaydi (qolgan 9.75 qoladi)
-    assert shown == (site["free_credits"] + site["paid_credits"]) / U == 9.75
+    # bot va sayt BIR XIL raqam; admin pullikni olganda bepul limit darhol qayta to'lmaydi.
+    # v76: pullik holatda bepul qoldiq (9.75) umuman yo'q — admin hammasini olsa 0 qoladi
+    assert shown == (site["free_credits"] + site["paid_credits"]) / U == 0
 
 
 def test_admin_sequence_from_bug_report(sb, monkeypatch):
@@ -152,7 +153,7 @@ def test_admin_sequence_from_bug_report(sb, monkeypatch):
     for p in (-80, -80, -80, 80, 80):
         b = admin_core.user_action("t", {"user_id": "u1", "action": "add_credits", "pages": p})["user"]
         shown.append(b["free_pages"] + b["paid_pages"])
-    assert shown == [9.75, 0, 0, 80, 160]
+    assert shown == [0, 0, 0, 80, 160]                    # v76: pullik holatda bepul qoldiq hisoblanmaydi
 
 
 def test_admin_give_does_not_lose_parallel_spend(sb, monkeypatch):

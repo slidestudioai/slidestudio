@@ -246,21 +246,99 @@ def _select_users(q):
             raise AdminError(f"Bazadan o'qib bo'lmadi: {str(e)[:120]}", 502)
 
 
+_LINK_AT: Dict[str, Any] = {}          # user_id -> Telegram ulangan vaqt (tg_links.created_at), _tg_map to'ldiradi
+
+
 def _tg_map(user_ids: List[str]) -> Dict[str, int]:
     sb = _sb()
     out: Dict[str, int] = {}
     if not sb or not user_ids:
         return out
+    ids = [str(u) for u in user_ids]
     try:
-        rows = sb.table("tg_links").select("user_id,tg_id").in_("user_id", [str(u) for u in user_ids]).execute().data or []
+        try:
+            rows = sb.table("tg_links").select("user_id,tg_id,created_at").in_("user_id", ids).execute().data or []
+        except Exception:
+            rows = sb.table("tg_links").select("user_id,tg_id").in_("user_id", ids).execute().data or []
         for r in rows:
             out[str(r["user_id"])] = int(r["tg_id"])
+            if r.get("created_at"):
+                _LINK_AT[str(r["user_id"])] = r["created_at"]
+        while len(_LINK_AT) > 5000:
+            _LINK_AT.pop(next(iter(_LINK_AT)))
     except Exception:
         pass
     return out
 
 
-def _brief(row: Dict[str, Any], tgmap: Dict[str, int]) -> Dict[str, Any]:
+def _linked_uids(limit: int = 2000) -> List[str]:
+    """Google + Telegram bir profilga ulangan foydalanuvchilar (tg_links)."""
+    sb = _sb()
+    if not sb:
+        return []
+    try:
+        rows = sb.table("tg_links").select("user_id").limit(limit).execute().data or []
+        return [str(r["user_id"]) for r in rows if r.get("user_id")]
+    except Exception:
+        return []
+
+
+def _ledger_info(user_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """v76: har foydalanuvchi uchun jurnaldan: oxirgi AI sarfi (qancha, qachon), oxirgi to'ldirishdan keyingi
+    pullik balans («150 / 150» dagi maxraj) va jami to'langan dollar. Bitta so'rov bilan (N ta emas)."""
+    sb = _sb()
+    out: Dict[str, Dict[str, Any]] = {}
+    if not sb or not user_ids:
+        return out
+    try:
+        rows = (sb.table("usage_ledger").select("user_id,kind,amount,paid_after,created_at,details")
+                .in_("user_id", [str(u) for u in user_ids]).order("created_at", desc=True)
+                .limit(min(5000, 200 * len(user_ids))).execute().data or [])
+    except Exception:
+        return out
+    for r in rows:
+        uid = str(r.get("user_id"))
+        d = out.setdefault(uid, {"last_spend": None, "last_spend_at": None, "paid_cap_units": None, "usd_total": 0.0,
+                                 "last_topup_at": None})
+        amt = int(r.get("amount") or 0)
+        kind = str(r.get("kind") or "")
+        if amt < 0 and d["last_spend"] is None and kind not in ("refund",):
+            d["last_spend"], d["last_spend_at"] = amt, r.get("created_at")
+        if amt > 0 and d["paid_cap_units"] is None and kind in ("purchase", "admin_credit", "referral", "bonus"):
+            d["paid_cap_units"], d["last_topup_at"] = int(r.get("paid_after") or 0), r.get("created_at")
+        det = r.get("details") if isinstance(r.get("details"), dict) else {}
+        if kind in ("purchase", "refund") and det.get("usd") is not None:
+            try:
+                d["usd_total"] += float(det["usd"]) * (1 if kind == "purchase" else -1)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _balance_view(u: Dict[str, Any], led: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """v76: admin uchun aniq holat. Pullik balans > 0 — «Pullik: 150 / 150»; aks holda «Bepul: Tez 10/10 | Chuqur 5/5»."""
+    paid_units = int(u.get("paid_credits") or 0)
+    if mon.is_unlimited(u):
+        return {"mode": "unlimited", "text": "♾ Cheksiz"}
+    if mon.paid_mode(u):
+        cap_units = max(paid_units, int((led or {}).get("paid_cap_units") or 0))
+        paid, cap = round(paid_units / mon.UNIT, 2), round(cap_units / mon.UNIT, 2)
+        usd = round(float((led or {}).get("usd_total") or 0), 2)
+        return {"mode": "paid", "paid": paid, "paid_cap": cap, "usd_total": usd,
+                "deep_left": paid_units // mon.deep_page_units(),
+                "text": f"Pullik: {paid:g} / {cap:g}" + (f" (${usd:g})" if usd > 0 else "")}
+    free_units = max(0, int(u.get("free_credits") or 0) + min(0, paid_units))     # qarz bo'lsa bepuldan ayriladi
+    daily = mon.daily_units_for(u)
+    fp, dp = mon.fast_page_units(), mon.free_deep_page_units()
+    fast = {"left": free_units // fp, "limit": daily // fp}
+    deep = {"left": free_units // dp if daily else 0, "limit": (daily // dp) if daily else 0}
+    if not daily and TG_EMAIL_RE.match(str(u.get("email") or "")):
+        return {"mode": "free", "fast": fast, "deep": deep, "text": "Bepul limit yo'q (Google ulanmagan)"}
+    return {"mode": "free", "fast": fast, "deep": deep,
+            "text": f"Bepul: Tez {fast['left']}/{fast['limit']} | Chuqur {deep['left']}/{deep['limit']}"}
+
+
+def _brief(row: Dict[str, Any], tgmap: Dict[str, int], led: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     # Sayt va bot ko'rsatadigan HAQIQIY balans (24 soatlik bepul tiklanish hisobga olingan).
     # Avval xom qator ko'rsatilardi: bot «9.75» desa, sayt «10» ko'rsatardi.
     u = mon.apply_24h_reset(dict(row))
@@ -275,8 +353,17 @@ def _brief(row: Dict[str, Any], tgmap: Dict[str, int]) -> Dict[str, Any]:
     m = TG_EMAIL_RE.match(email)
     tg_id = tgmap.get(uid) or (int(m.group(1)) if m else None)
     plan = mon.plan_active(u)
+    li = (led or {}).get(uid) or {}
+    linked = uid in tgmap
+    source = "both" if linked else ("tg" if m else "google")
+    last_spend = li.get("last_spend")
     return {
-        "user_id": uid, "email": email, "tg_id": tg_id, "linked": uid in tgmap, "tg_only": bool(m),
+        "user_id": uid, "email": email, "tg_id": tg_id, "linked": linked, "tg_only": bool(m),
+        # v76: ulanish holati va vaqti, aniq balans holati, oxirgi AI sarfi
+        "source": source, "linked_at": _LINK_AT.get(uid) if linked else None,
+        "balance": _balance_view(u, li),
+        "last_spend": (round(int(last_spend) / mon.UNIT, 2) if last_spend is not None else None),
+        "last_spend_at": li.get("last_spend_at"), "last_topup_at": li.get("last_topup_at"),
         "plan": plan, "plan_until": None,
         "unlimited": mon.is_unlimited(u), "unlimited_flag": bool(row.get("unlimited")), "vip_admin": vip_rt,
         "free_pages": round(int(u["free_credits"]) / mon.UNIT, 2), "paid_pages": round(int(u["paid_credits"]) / mon.UNIT, 2),
@@ -287,14 +374,22 @@ def _brief(row: Dict[str, Any], tgmap: Dict[str, int]) -> Dict[str, Any]:
     }
 
 
+USER_FILTERS = ("all", "google", "tg", "linked", "tg_only", "vip", "unlimited", "blocked")
+
+
 def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any]]:
+    """v76: 4 ta asosiy filtr — bazadagi shart bo'yicha (yangi foydalanuvchilar ham darhol ko'rinadi):
+      google  — Google akkauntlar (email tg…@t.me emas; Telegram ulanganlari ham)
+      tg      — Telegram: faqat Telegram akkauntlar + Telegram ulangan Google akkauntlar
+      linked  — ikkalasi bitta profilga ulangan (tg_links)
+      all     — hammasi"""
     sb = _sb()
     q = (q or "").strip()
     limit = max(1, min(100, int(limit or 30)))
     offset = max(0, int(offset or 0))
+    flt = flt if flt in USER_FILTERS else "all"
 
-    def build(cols):
-        qq = sb.table("user_usage").select(cols)
+    def search(qq):
         if q:
             if UUID_RE.match(q):
                 qq = qq.eq("user_id", q)
@@ -303,17 +398,41 @@ def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any
             else:
                 safe = re.sub(r"[%,()*]", "", q)[:80]
                 qq = qq.ilike("email", f"%{safe}%")
-        if flt == "vip":
-            qq = qq.eq("plan", "vip")
-        elif flt == "unlimited":
-            qq = qq.eq("unlimited", True)
-        elif flt == "blocked":
-            qq = qq.eq("blocked", True)
-        elif flt == "tg":
-            qq = qq.like("email", "tg%@t.me")
-        return qq.order("last_active", desc=True).range(offset, offset + limit - 1)
+        return qq
 
-    rows, _full = _select_users(build)
+    def ordered(qq):
+        # nullsfirst: hali hech narsa qilmagan yangi foydalanuvchilar ham tepada ko'rinadi
+        return qq.order("last_active", desc=True, nullsfirst=True).order("created_at", desc=True)
+
+    def build(extra, a: int, b: int):
+        def _b(cols):
+            return ordered(extra(search(sb.table("user_usage").select(cols)))).range(a, b)
+        return _b
+
+    linked = _linked_uids() if flt in ("linked", "tg") else []
+    page = (offset, offset + limit - 1)
+    if flt == "tg":
+        # ikki so'rov (Telegram akkauntlar + ulanganlar), birlashtirib bir xil tartibda saralanadi
+        a, _ = _select_users(build(lambda x: x.like("email", "tg%@t.me"), 0, offset + limit - 1))
+        b, _ = _select_users(build(lambda x: x.in_("user_id", linked), 0, offset + limit - 1)) if linked else ([], True)
+        seen, merged = set(), []
+        # ordered() bilan bir xil tartib: last_active yo'q (yangi) qatorlar tepada, keyin eng so'nggi faollar
+        for r in sorted(a + b, key=lambda r: (r.get("last_active") is None, str(r.get("last_active") or ""),
+                                                str(r.get("created_at") or "")), reverse=True):
+            if r["user_id"] not in seen:
+                seen.add(r["user_id"])
+                merged.append(r)
+        rows = merged[offset:offset + limit]
+    else:
+        extra = {
+            "google": lambda x: x.not_.like("email", "tg%@t.me"),
+            "linked": lambda x: x.in_("user_id", linked or ["-"]),
+            "tg_only": lambda x: x.like("email", "tg%@t.me"),
+            "vip": lambda x: x.eq("plan", "vip"),
+            "unlimited": lambda x: x.eq("unlimited", True),
+            "blocked": lambda x: x.eq("blocked", True),
+        }.get(flt, lambda x: x)
+        rows, _full = _select_users(build(extra, *page))
     tg_by_uid = _tg_map([r["user_id"] for r in rows])
     # tg_id orqali qidirilganda: ulangan Google akkauntni ham topamiz
     if q.lstrip("@").isdigit() and not rows:
@@ -321,7 +440,8 @@ def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any
         if row:
             rows, _ = _select_users(lambda cols: sb.table("user_usage").select(cols).eq("user_id", str(row["user_id"])))
             tg_by_uid = _tg_map([r["user_id"] for r in rows])
-    return [_brief(r, tg_by_uid) for r in rows]
+    led = _ledger_info([r["user_id"] for r in rows])
+    return [_brief(r, tg_by_uid, led) for r in rows]
 
 
 def _get_user_row(uid: str) -> Dict[str, Any]:
@@ -484,7 +604,7 @@ def merge_all_duplicates(actor: str, limit: int = 500) -> Dict[str, Any]:
 
 
 def user_brief(uid: str) -> Dict[str, Any]:
-    return _brief(_get_user_row(uid), _tg_map([uid]))
+    return _brief(_get_user_row(uid), _tg_map([uid]), _ledger_info([uid]))
 
 
 CORE_KEYS = {"free_credits", "paid_credits", "slide_credits", "last_reset_time", "blocked"}
@@ -665,7 +785,7 @@ def user_action(actor: str, body: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:
             pass
     tgmap = _tg_map([uid])
-    return {"ok": True, "note": note, "user": _brief(merged, tgmap)}
+    return {"ok": True, "note": note, "user": _brief(merged, tgmap, _ledger_info([uid]))}
 
 
 # ----------------------------------------------------------------------------------------------
@@ -698,6 +818,7 @@ def stats() -> Dict[str, Any]:
         "users_7d": _count("user_usage", lambda q: q.gte("last_active", d7)),
         "new_7d": _count("user_usage", lambda q: q.gte("created_at", d7)),
         "tg_users": _count("user_usage", lambda q: q.like("email", "tg%@t.me")),
+        "google_users": _count("user_usage", lambda q: q.not_.like("email", "tg%@t.me")),
         "linked": _count("tg_links"),
         "vip": _count("user_usage", lambda q: q.eq("plan", "vip")),
         "unlimited": _count("user_usage", lambda q: q.eq("unlimited", True)),
@@ -715,6 +836,12 @@ def stats() -> Dict[str, Any]:
                 clk += int(r.get("clicks") or 0)
         except Exception:
             pass
+    # v76: filtrlar bilan bir xil raqamlar (Google / Telegram / Ikkalasi / Hammasi)
+    g, t, l = out.get("google_users"), out.get("tg_users"), out.get("linked")
+    out["google_only"] = (g - l) if g is not None and l is not None else None
+    out["tg_total"] = (t + l) if t is not None and l is not None else None
+    out.update(_balance_totals(sb, d30))
+    out["tariff"] = {k: appsettings.get(k) for k in appsettings.TARIFF_KEYS}
     out["ad_impressions"], out["ad_clicks"] = imp, clk
     out["ad_ctr"] = round(clk * 100.0 / imp, 2) if imp else 0
     st = _deps.get("state")
@@ -723,6 +850,42 @@ def stats() -> Dict[str, Any]:
             out.update(st())
         except Exception:
             pass
+    return out
+
+
+def _balance_totals(sb, since: str) -> Dict[str, Any]:
+    """Umumiy qolgan pullik balans va sarflangan / sotib olingan birliklar (30 kun). Birlik = Tez-varaq."""
+    out: Dict[str, Any] = {"paid_left_total": None, "paid_users": None, "spent_30d": None, "bought_30d": None}
+    if not sb:
+        return out
+    try:
+        tot = n = 0
+        for off in range(0, 50000, 1000):
+            rows = sb.table("user_usage").select("paid_credits").gte("paid_credits", 1).range(off, off + 999).execute().data or []
+            for r in rows:
+                tot += int(r.get("paid_credits") or 0)
+                n += 1
+            if len(rows) < 1000:
+                break
+        out["paid_left_total"], out["paid_users"] = round(tot / mon.UNIT, 2), n
+    except Exception:
+        pass
+    try:
+        spent = bought = 0
+        for off in range(0, 100000, 1000):
+            rows = (sb.table("usage_ledger").select("kind,amount").gte("created_at", since)
+                    .range(off, off + 999).execute().data or [])
+            for r in rows:
+                a, k = int(r.get("amount") or 0), str(r.get("kind") or "")
+                if a < 0 and k != "refund":
+                    spent += -a
+                elif a > 0 and k == "purchase":
+                    bought += a
+            if len(rows) < 1000:
+                break
+        out["spent_30d"], out["bought_30d"] = round(spent / mon.UNIT, 2), round(bought / mon.UNIT, 2)
+    except Exception:
+        pass
     return out
 
 
@@ -883,14 +1046,14 @@ def _dispatch(op: str, body: Dict[str, Any], actor: str):
     if op == "user":
         uid = str(body.get("user_id") or "")
         row = _get_user_row(uid)
-        brief = _brief(row, _tg_map([uid]))
+        brief = _brief(row, _tg_map([uid]), _ledger_info([uid]))
         sb = _sb()
         led = []
         try:
             led = sb.table("usage_ledger").select("kind,amount,free_after,paid_after,created_at,details").eq("user_id", uid).order("created_at", desc=True).limit(25).execute().data or []
         except Exception:
             pass
-        return {"user": brief, "ledger": led}
+        return {"user": brief, "ledger": led, "unit": mon.UNIT}
     if op == "user_action":
         return user_action(actor, body)
     # ---- reklamalar

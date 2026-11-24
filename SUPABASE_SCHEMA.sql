@@ -585,11 +585,12 @@ begin
   v_last := r.last_reset_time;
 
   -- 1) 24h free reset (same rules as backend/monitoring.py apply_24h_reset)
-  v_susp := p_daily_units > 0 and v_paid >= p_daily_units;
+  -- v76: paid balance > 0 -> PAID mode: the daily free limit does not work at all (leftover free is not used)
+  v_susp := v_paid > 0;
   if v_susp then
-    v_free := least(v_free, p_daily_units);
-    if v_free <= 0 and (v_last is null or v_now - v_last < interval '24 hours') then
-      v_last := v_now - interval '24 hours';
+    v_free := 0;
+    if v_last is null or v_now - v_last < interval '24 hours' then
+      v_last := v_now - interval '24 hours';           -- when paid reaches 0 the free limit is back at once
     end if;
   elsif v_last is null or v_now - v_last >= interval '24 hours' then
     v_free := p_daily_units;
@@ -615,7 +616,7 @@ begin
     else
       v_reason := 'no_credits';
     end if;
-    if v_susp and v_free <= 0 then
+    if v_susp and v_paid <= 0 then
       v_last := v_now - interval '24 hours';             -- paid balance used up -> free limit comes back at once
     end if;
   else

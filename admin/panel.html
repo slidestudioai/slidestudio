@@ -53,6 +53,7 @@ label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
 nav button i{position:relative}
 .sp-th{cursor:pointer}.sp-th.unread b{color:var(--pri)}.sp-th small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sp_user{color:var(--pri)}
+.item.ur .t small{display:block;margin-top:2px}.item.ur .t small b{display:inline}
 .sp-msgs{display:flex;flex-direction:column;gap:8px;margin:10px 0;max-height:52vh;overflow:auto;padding:2px}
 .sp-m{max-width:85%;padding:9px 12px;border-radius:14px;white-space:pre-wrap;word-break:break-word;background:var(--card2);border:1px solid var(--line);align-self:flex-start}
 .sp-m.adm{align-self:flex-end;background:var(--pri);color:#fff;border-color:var(--pri)}
@@ -87,6 +88,14 @@ function toast(m,err){const t=document.createElement('div');t.className='toast'+
 function sheet(html){closeSheet();const s=document.createElement('div');s.className='sheet';s.id='sheet';s.innerHTML='<div>'+html+'</div>';s.addEventListener('click',e=>{if(e.target===s)closeSheet();});document.body.appendChild(s);return s;}
 function closeSheet(){const s=$('#sheet');if(s)s.remove();}
 function fdate(v){if(!v)return '—';const d=new Date(v);return isNaN(d)?'—':d.toLocaleString('uz',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});}
+/* v76: «15 daqiqa oldin», «3 soat oldin», «2 kun oldin» */
+function ago(v){if(!v)return '—';const t=new Date(v).getTime();if(isNaN(t))return '—';const s=Math.max(0,(Date.now()-t)/1000);
+  if(s<60)return 'hozirgina';if(s<3600)return Math.floor(s/60)+' daqiqa oldin';if(s<86400)return Math.floor(s/3600)+' soat oldin';
+  if(s<86400*30)return Math.floor(s/86400)+' kun oldin';if(s<86400*365)return Math.floor(s/86400/30)+' oy oldin';return Math.floor(s/86400/365)+' yil oldin';}
+const SRC={google:['G','Google'],tg:['✈️','Telegram'],both:['G+✈️','Ikkalasi']};
+function srcBadge(u){const x=SRC[u.source]||SRC.google;return `<span class="badge ${u.source==='both'?'ok':u.source==='tg'?'pro':''}" title="${x[1]}">${x[0]}</span>`;}
+function balText(u){const b=u.balance||{};if(b.mode==='paid')return `<b class="pill-ok">${esc(b.text)}</b>`;if(b.mode==='unlimited')return '<b>♾ Cheksiz</b>';return esc(b.text||'—');}
+function spendText(u){return u.last_spend!=null?`Sarflandi: <b>${u.last_spend}</b> (${ago(u.last_spend_at)})`:'Hali sarf yo\'q';}
 function nav(){$('#nav').innerHTML=TABS.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="go('${t[0]}')"><i>${t[1]}${t[0]==='support'&&supUnread?`<span class="nbadge">${supUnread>99?'99+':supUnread}</span>`:''}</i>${t[2]}</button>`).join('');}
 async function refreshUnread(){try{const r=await api('support_unread');supUnread=+r.unread||0;nav();}catch(e){}}
 function go(t){tab=t;localStorage.setItem('adm_tab',t);nav();load();}
@@ -96,9 +105,11 @@ async function load(force){nav();const m=$('#main');try{await ({home,users,suppo
 async function home(m){
   const [s,sys]=await Promise.all([api('stats'),api('system')]);
   const st=(k,v,x)=>`<div class="card stat"><span>${k}</span><b>${v}</b>${x?`<span>${x}</span>`:''}</div>`;
+  const stf=(f,k,v,x)=>`<div class="card stat sp-th" onclick="uf='${f}';go('users')"><span>${k}</span><b>${v}</b>${x?`<span>${x}</span>`:''}</div>`;
   const mig=sys.migration||{};const bad=Object.keys(mig).filter(k=>!mig[k]);
   m.innerHTML=(bad.length?`<div class="card" style="border-color:var(--warn)">⚠️ Bazada yetishmaydi: <b>${bad.map(esc).join(', ')}</b><br><small style="color:var(--mut)">Supabase → SQL Editor da <b>SUPABASE_SCHEMA.sql</b> ni bir marta ishga tushiring.</small></div>`:'')+
-  `<h2>Foydalanuvchilar</h2><div class="grid">${st('Jami',num(s.users_total),'+'+num(s.new_7d)+' (7 kun)')}${st('Faol (24 soat)',num(s.users_24h),num(s.users_7d)+' (7 kun)')}${st('Telegram',num(s.tg_users),'ulangan: '+num(s.linked))}${st('VIP / cheksiz',num(s.vip)+' / '+num(s.unlimited))}${st('Bloklangan',num(s.blocked))}</div>
+  `<h2>Foydalanuvchilar</h2><div class="grid">${stf('all','Jami',num(s.users_total),'+'+num(s.new_7d)+' (7 kun)')}${stf('google','Google akkauntlar',num(s.google_users),'faqat Google: '+num(s.google_only))}${stf('tg','Telegram',num(s.tg_total),'faqat Telegram: '+num(s.tg_users))}${stf('linked','Ikkalasi ulangan',num(s.linked),'Google + Telegram')}${st('Faol (24 soat)',num(s.users_24h),num(s.users_7d)+' (7 kun)')}${st('VIP / cheksiz',num(s.vip)+' / '+num(s.unlimited))}${st('Bloklangan',num(s.blocked))}</div>
+  <h2>Balans (1 birlik = 1 Tez-varaq)</h2><div class="grid">${st('Qolgan pullik balans',num(s.paid_left_total),num(s.paid_users)+' ta pullik foydalanuvchida')}${st('Sarflangan (30 kun)',num(s.spent_30d),'AI slayd va tahrir')}${st('Sotib olingan (30 kun)',num(s.bought_30d))}${s.tariff?st('Tarif','$1 = '+num(s.tariff.slides_per_dollar),'Tez '+s.tariff.fast_ai_cost+' · Chuqur '+s.tariff.deep_ai_cost+' birlik'):''}</div>
   <h2>Daromad</h2><div class="grid">${st('Paket (30 kun)',num(s.purchases_30d))}${st('Jami buyurtma',num(s.orders_total))}</div>
   <h2>Reklama</h2><div class="grid">${st('Faol reklama',num(s.ads_active))}${st('Ko\'rsatildi',num(s.ad_impressions))}${st('Bosildi',num(s.ad_clicks),'CTR '+s.ad_ctr+'%')}</div>
   <h2>Yordam</h2><div class="grid"><div class="card stat sp-th" onclick="go('support')"><span>O'qilmagan xabarlar</span><b>${num(s.support_unread)}</b></div></div>
@@ -106,19 +117,39 @@ async function home(m){
 }
 
 /* ---------------- FOYDALANUVCHILAR ---------------- */
-let uq='',uf='all';
+let uq='',uf=localStorage.getItem('adm_uf')||'all',ucnt={};
+const UF_MAIN=[['google','Google','google_users'],['tg','Telegram','tg_total'],['linked','Ulanganlar','linked'],['all','Barchasi','users_total']];
+const UF_MORE=[['vip','VIP'],['unlimited','Cheksiz'],['blocked','Bloklangan']];
+function setUf(f){uf=f;localStorage.setItem('adm_uf',f);users($('#main'));}
 async function users(m){
-  m.innerHTML=`<input id="uq" placeholder="Email, Telegram ID yoki user_id…" value="${esc(uq)}"><div class="chips">${[['all','Hammasi'],['vip','VIP'],['unlimited','Cheksiz'],['blocked','Bloklangan'],['tg','Telegram']].map(c=>`<span class="chip ${uf===c[0]?'on':''}" onclick="uf='${c[0]}';users($('#main'))">${c[1]}</span>`).join('')}</div><div class="card" id="ulist" style="padding:0"><div class="empty">…</div></div>`;
-  let tm;$('#uq').addEventListener('input',e=>{uq=e.target.value;clearTimeout(tm);tm=setTimeout(fill,350);});
-  await fill();
-  async function fill(){const r=await api('users',{q:uq,filter:uf,limit:40});$('#ulist').innerHTML=r.users.length?r.users.map(u=>`<div class="item" onclick="openUser('${esc(u.user_id)}')"><div class="t"><b>${esc(u.email||u.user_id)}</b><small>${planBadge(u)} ${u.tg_id?'✈️ '+u.tg_id+' ':''}· ${u.unlimited?'∞':u.free_pages+' + '+u.paid_pages} varaq</small></div>${u.blocked?'<span class="badge bad">blok</span>':''}</div>`).join(''):'<div class="empty">Topilmadi</div>';}
+  const chip=(c,n)=>`<span class="chip ${uf===c[0]?'on':''}" onclick="setUf('${c[0]}')">${c[1]}${n!=null?' · '+num(n):''}</span>`;
+  m.innerHTML=`<input id="uq" placeholder="Email, Telegram ID yoki user_id…" value="${esc(uq)}"><div class="chips" id="uchips">${UF_MAIN.map(c=>chip(c,ucnt[c[2]])).join('')}${UF_MORE.map(c=>chip(c)).join('')}</div><div class="card" id="ulist" style="padding:0"><div class="empty">…</div></div><div class="row" style="margin-top:10px" id="umore"></div>`;
+  let tm;$('#uq').addEventListener('input',e=>{uq=e.target.value;clearTimeout(tm);tm=setTimeout(()=>fill(true),350);});
+  api('stats').then(s=>{ucnt=s;const box=$('#uchips');if(box)box.innerHTML=UF_MAIN.map(c=>chip(c,s[c[2]])).join('')+UF_MORE.map(c=>chip(c)).join('');}).catch(()=>{});
+  let off=0,all=[];
+  await fill(true);
+  async function fill(reset){
+    if(reset){off=0;all=[];}
+    const r=await api('users',{q:uq,filter:uf,limit:40,offset:off});all=all.concat(r.users);off+=r.users.length;
+    $('#ulist').innerHTML=all.length?all.map(userRow).join(''):'<div class="empty">Topilmadi</div>';
+    $('#umore').innerHTML=r.users.length===40?'<button class="btn sec" id="umb">Yana yuklash</button>':'';
+    if($('#umb'))$('#umb').onclick=()=>fill(false);
+  }
 }
-function planBadge(u){if(u.vip_admin||u.plan==='vip')return '<span class="badge vip">VIP</span>';if(u.unlimited)return '<span class="badge vip">∞</span>';return '<span class="badge">Bepul</span>';}
+function userRow(u){
+  const when=u.source==='google'?'kirgan: '+ago(u.created_at):(u.linked_at?'ulangan: '+ago(u.linked_at):'kirgan: '+ago(u.created_at));
+  return `<div class="item ur" onclick="openUser('${esc(u.user_id)}')"><div class="t"><b>${esc(u.email||u.user_id)}</b>
+  <small>${srcBadge(u)} ${planBadge(u)} ${u.tg_id?'✈️ '+u.tg_id+' · ':''}${when} · faol: ${ago(u.last_active)}</small>
+  <small>${balText(u)} · ${spendText(u)}</small></div>${u.blocked?'<span class="badge bad">blok</span>':''}</div>`;
+}
+function planBadge(u){if(u.vip_admin||u.plan==='vip')return '<span class="badge vip">VIP</span>';if(u.unlimited)return '<span class="badge vip">∞</span>';if((u.balance||{}).mode==='paid')return '<span class="badge ok">Pullik</span>';return '<span class="badge">Bepul</span>';}
 async function openUser(id){
   const r=await api('user',{user_id:id});const u=r.user;
   const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(u.email||'Foydalanuvchi')}</h3>
-  <div style="margin:4px 0 10px">${planBadge(u)} ${u.blocked?'<span class="badge bad">bloklangan</span>':''} ${u.linked?'<span class="badge ok">Google+TG ulangan</span>':''}</div>
-  <div class="card"><div class="kv"><span>ID</span><span style="font-size:11px">${esc(u.user_id)}</span></div><div class="kv"><span>Telegram</span><span>${u.tg_id||'—'}</span></div><div class="kv"><span>Bepul / Paket</span><span>${u.unlimited?'∞':u.free_pages+' / '+u.paid_pages} varaq</span></div><div class="kv"><span>Kunlik bepul</span><span>${u.daily_pages}${u.daily_override_pages!=null?' (shaxsiy)':''}</span></div><div class="kv"><span>Oxirgi faollik</span><span>${fdate(u.last_active)}</span></div></div>
+  <div style="margin:4px 0 10px">${srcBadge(u)} ${planBadge(u)} ${u.blocked?'<span class="badge bad">bloklangan</span>':''} ${u.linked?'<span class="badge ok">Google+TG ulangan</span>':''}</div>
+  <div class="card"><div class="kv"><span>Holat va balans</span><span>${balText(u)}</span></div><div class="kv"><span>Oxirgi AI sarfi</span><span>${u.last_spend!=null?'<b>'+u.last_spend+'</b> · '+ago(u.last_spend_at):'—'}</span></div>${u.last_topup_at?`<div class="kv"><span>Oxirgi to'ldirish</span><span>${ago(u.last_topup_at)}</span></div>`:''}
+  <div class="kv"><span>Ulanish</span><span>${(SRC[u.source]||SRC.google)[1]}${u.linked_at?' · '+ago(u.linked_at):''}</span></div><div class="kv"><span>Ro'yxatdan o'tgan</span><span>${fdate(u.created_at)} (${ago(u.created_at)})</span></div>
+  <div class="kv"><span>ID</span><span style="font-size:11px">${esc(u.user_id)}</span></div><div class="kv"><span>Telegram</span><span>${u.tg_id||'—'}</span></div><div class="kv"><span>Bepul / Pullik (birlik)</span><span>${u.unlimited?'∞':u.free_pages+' / '+u.paid_pages}</span></div><div class="kv"><span>Kunlik bepul</span><span>${u.daily_pages}${u.daily_override_pages!=null?' (shaxsiy)':''}</span></div><div class="kv"><span>Oxirgi faollik</span><span>${fdate(u.last_active)} (${ago(u.last_active)})</span></div></div>
   ${u.vip_admin?'<div class="card" style="margin-top:10px">👑 Bu admin akkaunt — doim VIP (cheksiz, reklamasiz). Env ro\'yxatidan boshqariladi.</div>':''}
   <h2>Reja</h2><div class="row"><button class="btn sec sm" onclick="act('${esc(id)}','set_plan',{plan:'free'})">Bepul</button><button class="btn sm vip" onclick="act('${esc(id)}','set_plan',{plan:'vip'})">VIP ∞</button></div>
   <h2>Varaqlar</h2><div class="row"><input id="cadd" type="number" step="1" placeholder="+100 yoki -20"><button class="btn ok fit" onclick="act('${esc(id)}','add_credits',{pages:+$('#cadd').value})">Qo'shish</button></div>
@@ -129,7 +160,7 @@ async function openUser(id){
   <div class="sw"><span>♾ Cheksiz</span><input type="checkbox" ${u.unlimited_flag?'checked':''} onchange="act('${esc(id)}','unlimited',{value:this.checked})"></div>
   <div class="sw"><span>⛔ Bloklash</span><input type="checkbox" ${u.blocked?'checked':''} onchange="act('${esc(id)}','block',{value:this.checked})"></div>
   <label>Izoh (faqat admin ko'radi)</label><div class="row"><input id="cnote" value="${esc(u.note)}"><button class="btn sec fit" onclick="act('${esc(id)}','note',{text:$('#cnote').value})">Saqlash</button></div>
-  <h2>Oxirgi harakatlar</h2><div class="card" style="padding:0">${(r.ledger||[]).map(l=>`<div class="item"><div class="t"><b>${esc(l.kind)}</b><small>${fdate(l.created_at)}</small></div><b>${l.amount>0?'+':''}${num(l.amount)}</b></div>`).join('')||'<div class="empty">Yo\'q</div>'}</div>`);
+  <h2>Oxirgi harakatlar</h2><div class="card" style="padding:0">${(r.ledger||[]).map(l=>`<div class="item"><div class="t"><b>${esc(l.kind)}</b><small>${fdate(l.created_at)}</small></div><b class="${l.amount>0?'pill-ok':''}">${l.amount>0?'+':''}${num(Math.round(l.amount/(r.unit||20)*100)/100)}</b></div>`).join('')||'<div class="empty">Yo\'q</div>'}</div>`);
 }
 async function act(id,action,extra){
   try{const r=await api('user_action',Object.assign({user_id:id,action},extra));toast('✓ '+(r.note||'Saqlandi'));await openUser(id);if(tab==='users')users($('#main'));}catch(e){}
@@ -196,15 +227,25 @@ async function delAd(id){if(!confirm('Reklama o\'chirilsinmi?'))return;try{await
 async function settings(m){
   const r=await api('settings');const s=r.settings;
   const n=(k,l,h)=>`<label>${l}</label><input type="number" min="0" id="s_${k}" value="${s[k]}">${h?`<small style="color:var(--mut)">${h}</small>`:''}`;
+  const nf=(k,l,h)=>`<label>${l}</label><input type="number" min="0.05" step="0.05" id="s_${k}" value="${s[k]}">${h?`<small style="color:var(--mut)">${h}</small>`:''}`;
   const sw=(k,l)=>`<div class="sw"><span>${l}</span><input type="checkbox" id="s_${k}" ${s[k]?'checked':''}></div>`;
   m.innerHTML=`${r.persisted?'':'<div class="card" style="border-color:var(--warn);margin-bottom:10px">⚠️ Sozlamalar faqat xotirada (restartda yo\'qoladi). SUPABASE_SCHEMA.sql ni ishga tushiring.</div>'}
-  <h2>Limitlar (Tez-varaq hisobida)</h2><div class="card">${n('free_daily_pages','Bepul kunlik varaq','Chuqur AI uchun 3 baravar kam hisoblanadi')}${n('pack_pages','Bitta paketdagi varaq (to\'lovdan keyin beriladi)','Narx: PACK_PRICE_USD (env), 1 USD = 100 kredit')}${n('daily_message_limit','Bir foydalanuvchi kunlik AI xabarlari (0 = cheksiz)')}</div>
+  <h2>Tarif (darhol hamma joyda ishlaydi)</h2><div class="card">${n('slides_per_dollar','$1 = nechta varaq (birlik)','To\'lovda: qo\'shiladigan balans = to\'lov ($, netto) × shu son')}${nf('fast_ai_cost','Tez AI: 1 varaq necha birlik')}${nf('deep_ai_cost','Chuqur AI: 1 varaq necha birlik')}${n('free_daily_fast_limit','Bepul kunlik Tez AI limiti (varaq)')}${n('free_daily_deep_limit','Bepul kunlik Chuqur AI limiti (varaq)')}
+  <div id="s_tex" style="margin-top:10px;color:var(--mut);font-size:13px"></div><small style="color:var(--mut)">Pullik balans &gt; 0 bo'lsa kunlik bepul limit ishlamaydi; pullik balans 0 ga tushishi bilan bepul limit qaytadi.</small></div>
+  <h2>Limitlar</h2><div class="card">${n('daily_message_limit','Bir foydalanuvchi kunlik AI xabarlari (0 = cheksiz)')}</div>
   <h2>Reklama</h2><div class="card">${sw('ads_enabled','Reklama umuman yoqilgan')}${sw('ads_site','Saytda (chap panel)')}${sw('ads_bot','Telegram botda')}${n('ad_bot_interval_min','Botda reklama oralig\'i (daqiqa)','Bir foydalanuvchiga ketma-ket reklama yuborilmasligi uchun')}</div>
   <h2>E'lon va texnik ishlar</h2><div class="card">${sw('maintenance','Texnik ishlar rejimi (AI faqat adminlarga)')}<label>Texnik ishlar matni</label><input id="s_maintenance_text" value="${esc(s.maintenance_text)}"><label>Saytdagi e'lon (bo'sh = ko'rinmaydi)</label><input id="s_announcement" maxlength="600" value="${esc(s.announcement)}"></div>
   <div class="row" style="margin-top:14px"><button class="btn" onclick="saveSettings()">Saqlash</button></div>`;
+  TARIFF.forEach(k=>$('#s_'+k).addEventListener('input',tariffExample));tariffExample();
+}
+const TARIFF=['slides_per_dollar','fast_ai_cost','deep_ai_cost','free_daily_fast_limit','free_daily_deep_limit'];
+function tariffExample(){
+  const v=k=>+$('#s_'+k).value||0,spd=v('slides_per_dollar'),f=v('fast_ai_cost'),d=v('deep_ai_cost');
+  $('#s_tex').innerHTML=f>0&&d>0?`Misol: <b>$1</b> to'lov → <b>${num(spd)}</b> birlik = <b>${num(Math.floor(spd/f))}</b> Tez varaq yoki <b>${num(Math.floor(spd/d))}</b> Chuqur varaq. Bepul: Tez <b>${v('free_daily_fast_limit')}</b> / Chuqur <b>${v('free_daily_deep_limit')}</b> kuniga.`:'<span class="pill-bad">Narx 0 dan katta bo\'lishi kerak</span>';
 }
 async function saveSettings(){
-  const v={};['free_daily_pages','pack_pages','daily_message_limit','ad_bot_interval_min'].forEach(k=>v[k]=+$('#s_'+k).value);
+  const v={};[...TARIFF,'daily_message_limit','ad_bot_interval_min'].forEach(k=>v[k]=+$('#s_'+k).value);
+  if(!(v.fast_ai_cost>0)||!(v.deep_ai_cost>0)||!(v.slides_per_dollar>=1))return toast('Tarif: narx va «$1 = …» 0 dan katta bo\'lsin',1);
   ['ads_enabled','ads_site','ads_bot','maintenance'].forEach(k=>v[k]=$('#s_'+k).checked);v.maintenance_text=$('#s_maintenance_text').value;v.announcement=$('#s_announcement').value;
   try{const r=await api('settings_set',{values:v});toast(r.persisted?'✓ Saqlandi':'⚠ Faqat xotirada: '+(r.error||''),!r.persisted);}catch(e){}
 }

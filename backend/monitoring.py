@@ -48,34 +48,96 @@ PACK_UNITS = PAGES_PER_PACK * UNIT
 # repaid from the next free reset or purchase. MAX_DEBT_PAGES bounds the damage of one abusive turn.
 MAX_DEBT_PAGES = max(0, _env_num("MAX_DEBT_PAGES", 10, int))     # Tez-varaq hisobida
 
-# ---- VIP / cheksiz + admin paneldan o'zgartiriladigan limitlar (Pro rejasi olib tashlangan) ----
-_RT: Dict[str, Any] = {"free_daily_pages": FREE_DAILY_PAGES, "pack_pages": PAGES_PER_PACK}
+# ---- v76: TARIF — hammasi admin paneldan (app_settings), kodda qotirilgan son yo'q ----
+#   slides_per_dollar     $1 netto -> shuncha birlik (Tez-varaq) pullik balansga
+#   fast_ai_cost          1 Tez slayd necha birlik
+#   deep_ai_cost          1 Chuqur slayd necha birlik
+#   free_daily_pages      bepul kunlik Tez limit (admin panelda: free_daily_fast_limit)
+#   free_daily_deep_limit bepul kunlik Chuqur limit
+# Ichki hisob: 1 birlik = UNIT (20) mayda birlik, shuning uchun 0.05 aniqlikdagi narxlar ham butun sonda qoladi.
+_RT: Dict[str, Any] = {"free_daily_pages": FREE_DAILY_PAGES, "pack_pages": PAGES_PER_PACK,
+                       "fast_ai_cost": 1.0, "deep_ai_cost": float(DEEP_MULT),
+                       "free_daily_deep_limit": FREE_DAILY_PAGES // DEEP_MULT}
+_RT_LIMITS = {"free_daily_pages": (0, 100000), "pack_pages": (1, 1000000), "free_daily_deep_limit": (0, 100000),
+              "fast_ai_cost": (0.05, 1000.0), "deep_ai_cost": (0.05, 1000.0)}
 
-def rt(name: str) -> int:
-    return int(_RT[name])
+def rt(name: str) -> Any:
+    v = _RT[name]
+    return v if name.endswith("_cost") else int(v)
 
 def set_runtime(**kw: Any) -> None:
-    """Admin paneldan: bepul kunlik / paket hajmi (Tez-varaq hisobida)."""
+    """Admin paneldan: tarif sozlamalari. Narx o'zgarsa MODES darhol qayta hisoblanadi."""
     for k, v in kw.items():
         if k in _RT and v is not None:
+            lo, hi = _RT_LIMITS.get(k, (0, 100000))
             try:
-                _RT[k] = max(0, min(100000, int(v)))
+                x = float(v)
+                if x != x:
+                    continue
+                x = max(lo, min(hi, x))
+                _RT[k] = round(x, 2) if k.endswith("_cost") else int(x)
             except (TypeError, ValueError):
                 pass
+    _rebuild_modes()
 
 def free_daily_units() -> int:
-    return rt("free_daily_pages") * UNIT
+    return rt("free_daily_pages") * fast_page_units()
 
 def pack_pages() -> int:
+    """$1 netto uchun beriladigan birlik (= slides_per_dollar)."""
     return rt("pack_pages")
 
 def pack_units() -> int:
     return rt("pack_pages") * UNIT
 
-MODES: Dict[str, Dict[str, int]] = {
-    "fast": {"page": UNIT,             "chat": UNIT // 4, "search": UNIT // 5, "chat_per_page": 4, "search_per_page": 5},
-    "deep": {"page": UNIT * DEEP_MULT, "chat": UNIT * DEEP_MULT // 4, "search": UNIT * DEEP_MULT // 4, "chat_per_page": 4, "search_per_page": 4},
-}
+def fast_page_units() -> int:
+    return max(1, int(round(float(_RT["fast_ai_cost"]) * UNIT)))
+
+def deep_page_units() -> int:
+    return max(1, int(round(float(_RT["deep_ai_cost"]) * UNIT)))
+
+def deep_mult() -> float:
+    """1 Chuqur slayd = shuncha Tez slayd (ma'lumot uchun)."""
+    return deep_page_units() / fast_page_units()
+
+def _mode_costs(page: int, search_div: int) -> Dict[str, int]:
+    return {"page": page, "chat": max(1, page // 4), "search": max(1, page // search_div),
+            "chat_per_page": 4, "search_per_page": search_div}
+
+MODES: Dict[str, Dict[str, int]] = {"fast": {}, "deep": {}}
+
+def _rebuild_modes() -> None:
+    MODES["fast"].update(_mode_costs(fast_page_units(), 5))     # joyida yangilanadi: import qilingan havolalar ham ko'radi
+    MODES["deep"].update(_mode_costs(deep_page_units(), 4))
+
+_rebuild_modes()
+
+def paid_mode(user: Optional[dict]) -> bool:
+    """v76: pullik balans > 0 — foydalanuvchi PULLIK holatda, kunlik bepul limit umuman ishlamaydi."""
+    try:
+        return int((user or {}).get("paid_credits") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+def free_deep_page_units() -> int:
+    """Bepul rejimda 1 Chuqur slayd narxi: kunlik bepul hovuz / kunlik Chuqur limit.
+    Standart: 10 Tez (200) / 5 Chuqur = 40 = oddiy Chuqur narx. Limit 0 bo'lsa — bepul Chuqur yo'q."""
+    lim = rt("free_daily_deep_limit")
+    pool = free_daily_units()
+    if lim <= 0 or pool <= 0:
+        return pool + 1
+    return max(1, pool // lim)
+
+def mode_costs(mode: str, user: Optional[dict] = None) -> Dict[str, int]:
+    """Shu foydalanuvchi uchun rejim narxlari. Bepul rejimdagi Chuqur — kunlik Chuqur limitiga moslangan."""
+    c = MODES.get(mode if mode in MODES else "fast")
+    if mode == "deep" and user is not None and not paid_mode(user) and daily_units_for(user) > 0:
+        return _mode_costs(free_deep_page_units(), 4)
+    return c
+
+def page_units(mode: str, user: Optional[dict] = None) -> int:
+    return mode_costs(mode, user)["page"]
+
 PROMPTS_PER_PAGE = 4
 SEARCHES_PER_PAGE = 5
 
@@ -421,22 +483,16 @@ def daily_units_for(user: Optional[dict]) -> int:
     return free_daily_units()
 
 def free_suspended(user: Optional[dict]) -> bool:
-    """Pullik balans kunlik bepul limitdan (masalan 10 varaq) KO'P yoki teng bo'lsa — kunlik bepul limit ishlamaydi.
-    Pullik balans shu chegaradan pastga tushganda avtomatik qayta tiklanadi."""
-    user = user or {}
-    try:
-        daily = daily_units_for(user)
-        paid = int(user.get("paid_credits") or 0)
-    except (TypeError, ValueError):
-        return False
-    return daily > 0 and paid >= daily
+    """v76: pullik balans > 0 (hatto 1 birlik) — kunlik bepul limit UMUMAN ishlamaydi va ko'rinmaydi.
+    Pullik balans 0 ga tushishi bilan bepul limit darhol qaytadi."""
+    return paid_mode(user)
 
 def plans_public() -> List[Dict[str, Any]]:
     fd, pk = rt("free_daily_pages"), rt("pack_pages")
     return [
-        {"id": "free", "name": "Bepul", "pages": fd, "deep_pages": fd // DEEP_MULT,
+        {"id": "free", "name": "Bepul", "pages": fd, "deep_pages": rt("free_daily_deep_limit"),
          "price_usd": 0, "price_display": "Bepul", "renew": "24 soat"},
-        {"id": f"pack_{pk}", "name": f"{pk} varaq", "pages": pk, "deep_pages": pk // DEEP_MULT,
+        {"id": f"pack_{pk}", "name": f"{pk} varaq", "pages": pk, "deep_pages": pack_units() // deep_page_units(),
          "price_usd": CHECKOUT_PRICE_USD, "price_display": f"${CHECKOUT_PRICE_USD:.2f}", "renew": "tugamaguncha"},
     ]
 
@@ -468,9 +524,10 @@ def apply_24h_reset(user: dict, free_daily: int = None) -> dict:
     now = _now()
     last = _parse_ts(user.get("last_reset_time"))
     if free_suspended(user):
-        # Pullik balans yetarli: yangi bepul varaq BERILMAYDI (qolgan eski bepul varaqlar avval ishlatiladi).
-        user["free_credits"] = min(user["free_credits"], free_daily)
-        if user["free_credits"] <= 0 and (last is None or (now - last) < timedelta(hours=24)):
+        # v76: pullik holat — bepul varaqlar umuman yo'q (qoldig'i ham ishlatilmaydi). Oyna «ochiq» turadi:
+        # pullik balans 0 ga tushishi bilan bepul limit DARHOL to'liq qaytadi.
+        user["free_credits"] = 0
+        if last is None or (now - last) < timedelta(hours=24):
             user["last_reset_time"] = (now - timedelta(hours=24)).isoformat()   # pullik balans tushishi bilan bepul limit DARHOL tiklansin
     elif last is None or (now - last) >= timedelta(hours=24):
         user["free_credits"] = free_daily
@@ -505,12 +562,12 @@ def can_afford(user: dict, mode: str = "fast") -> bool:
     """Shu rejimda kamida 1 ta savol-javobga yetadimi."""
     if is_unlimited(user):
         return not bool((user or {}).get("blocked"))
-    return total_credits(user) >= MODES.get(mode, MODES["fast"])["chat"]
+    return total_credits(user) >= mode_costs(mode, user)["chat"]
 
 def pages_left(user: dict, mode: str = "fast") -> int:
     if is_unlimited(user):
         return 999999
-    return total_credits(user) // MODES.get(mode, MODES["fast"])["page"]
+    return total_credits(user) // page_units(mode, user)
 
 def max_debt_units() -> int:
     return MAX_DEBT_PAGES * UNIT
@@ -536,9 +593,10 @@ def deduct_credits(user: dict, amount: int, allow_debt: bool = False) -> dict:
     user["slide_credits"] = user["free_credits"] + user["paid_credits"]
     return user
 
-def turn_cost(pages_from_actions: int, searches: int = 0, mode: str = "fast") -> Tuple[int, str]:
-    """Cost of one AI turn in UNITS + base reason. Shared by charge_for_ai_turn and the SQL charge (charge_units)."""
-    c = MODES.get(mode if mode in MODES else "fast")
+def turn_cost(pages_from_actions: int, searches: int = 0, mode: str = "fast", user: Optional[dict] = None) -> Tuple[int, str]:
+    """Cost of one AI turn in UNITS + base reason. Shared by charge_for_ai_turn and the SQL charge (charge_units).
+    user — v76: bepul rejimdagi Chuqur narxi kunlik Chuqur limitga moslanadi (mode_costs)."""
+    c = mode_costs(mode, user)
     pages_from_actions = max(0, int(pages_from_actions or 0))
     searches = max(0, int(searches or 0))
     if pages_from_actions > 0:
@@ -559,7 +617,6 @@ def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, m
     Audit C1: the full cost is charged even if it is above the balance (the user already received the slides);
     the part above the balance becomes debt, at most max_debt_units(). Returns: (user, charged_units, reason)
     """
-    c = MODES.get(mode if mode in MODES else "fast")
     user = apply_24h_reset(user)
     if is_unlimited(user):                      # v47: VIP / admin / "cheksiz" — hech narsa yechilmaydi
         return user, 0, "unlimited"
@@ -567,7 +624,7 @@ def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, m
     if not window_started(user) and not was_suspended:
         user["last_reset_time"] = _now().isoformat()
     total_credits_before = total_credits(user)
-    wanted, reason = turn_cost(pages_from_actions, searches, mode)
+    wanted, reason = turn_cost(pages_from_actions, searches, mode, user)
     take = max(0, min(wanted, raw_balance(user) + max_debt_units()))
     if take > 0:
         user = deduct_credits(user, take, allow_debt=True)
@@ -575,7 +632,7 @@ def charge_for_ai_turn(user: dict, pages_from_actions: int, searches: int = 0, m
             reason += "+debt"
     else:
         reason = "no_credits"
-    if was_suspended and int(user.get("free_credits") or 0) <= 0:
+    if was_suspended and int(user.get("paid_credits") or 0) <= 0:
         user["last_reset_time"] = (_now() - timedelta(hours=24)).isoformat()   # pullik balans tushsa, bepul limit darhol qaytadi
     return user, int(take), reason
 
@@ -594,14 +651,15 @@ def usage_payload(user: dict) -> dict:
     plan = plan_active(user)
     fdu = daily_units_for(user)
     modes = {}
-    for name, c in MODES.items():
+    for name in MODES:
+        c = mode_costs(name, user)
         modes[name] = {
             "page_units": c["page"], "chat_units": c["chat"], "search_units": c["search"],
             "chat_per_page": c["chat_per_page"], "search_per_page": c["search_per_page"],
             "pages_left": 999999 if unl else total // c["page"],
             "pages_exact": 999999 if unl else _fmt_pages(total, c["page"]),
             "free_pages": _fmt_pages(free, c["page"]), "paid_pages": _fmt_pages(paid, c["page"]),
-            "free_daily_pages": fdu // c["page"], "pack_pages": pack_units() // c["page"],
+            "free_daily_pages": fdu // c["page"], "pack_pages": pack_units() // MODES[name]["page"],
             "can_chat": True if unl else total >= c["chat"],
         }
     spent = user.get("spent_24h")
