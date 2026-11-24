@@ -1,5 +1,5 @@
 """v76: botda slayd yaratish qoidasi.
-1) Google ulanmagan — slayd yasalmaydi, faqat «Google ulash» tugmasi.
+1) v78: Google SHART EMAS — Telegram akkaunti ham darhol slayd yasaydi.
 2) «🆕 Yangi slayd» bosilmagan / sessiya eskirgan — slayd yasalmaydi; matn eslab qolinadi va 1 bosishda boshlanadi.
 3) «Yangi slayd» oldingi qoralama va qotib qolgan holatni tozalaydi; dizayn (uslub / rang) tanlanadi.
 """
@@ -63,21 +63,22 @@ def _buttons(kb):
     return [b.get("callback_data") or b.get("text") for row in (kb or {}).get("inline_keyboard", []) for b in row]
 
 
-# ---- 1) Google ulanmagan ----
-def test_unlinked_text_only_shows_link_button(bot, monkeypatch):
+# ---- 1) v78: Telegram akkaunti (Google ulanmagan) — hech qanday to'siq yo'q ----
+def test_telegram_account_text_makes_slides(bot, monkeypatch):
     _linked(monkeypatch, False)
     st = _fresh(7601)
     st.update(ui="new", ui_ts=time.time())
     asyncio.run(tb._handle_text(7601, {"id": 7601}, "Kosmos haqida slayd"))
-    assert bot["spawned"] == []
-    assert _buttons(bot["sent"][-1][2]) == ["linkinfo"]
+    assert bot["spawned"] == [("new", "Kosmos haqida slayd")]
+    assert not any("linkinfo" in _buttons(kb) for _c, _t, kb in bot["sent"])
 
 
-def test_unlinked_new_button_does_not_open_session(bot, monkeypatch):
+def test_telegram_account_new_button_opens_session(bot, monkeypatch):
     _linked(monkeypatch, False)
     st = _fresh(7602)
     asyncio.run(tb._menu_action(7602, {"id": 7602}, "new"))
-    assert st.get("ui") is None and _buttons(bot["sent"][-1][2]) == ["linkinfo"]
+    assert st.get("ui") == "new" and "Google" not in bot["sent"][-1][1]
+    assert "linkinfo" not in _buttons(bot["sent"][-1][2])
 
 
 # ---- 2) «Yangi slayd» bosilmagan ----
@@ -149,11 +150,11 @@ def test_design_buttons_toggle(bot, monkeypatch):
     _linked(monkeypatch, True)
     st = _fresh(7609)
     asyncio.run(tb._handle_callback(_cb(7609, "sty:business")))
-    asyncio.run(tb._handle_callback(_cb(7609, "pth:forest")))
-    assert st["style"] == "business" and st["theme_pref"] == "forest"
+    asyncio.run(tb._handle_callback(_cb(7609, "pth:leaf")))            # v78: sayt mavzulari (js/51_design_themes.js)
+    assert st["style"] == "business" and st["theme_pref"] == "leaf"
     kb = bot["tg"][-1][1]["reply_markup"]
     labels = [b["text"] for row in kb["inline_keyboard"] for b in row]
-    assert "✅ 💼 Biznes" in labels and any(x.startswith("✅ ") and "O'rmon" in x for x in labels)
+    assert "✅ 💼 Biznes" in labels and any(x.startswith("✅ ") and "Yashil barg" in x for x in labels)
     asyncio.run(tb._handle_callback(_cb(7609, "pth:auto")))
     asyncio.run(tb._handle_callback(_cb(7609, "sty:business")))       # qayta bosish — bekor qiladi
     assert st["theme_pref"] is None and st["style"] is None
@@ -161,8 +162,9 @@ def test_design_buttons_toggle(bot, monkeypatch):
 
 def test_done_keyboard_has_ux_buttons():
     btns = _buttons(tb.kb_done({"deck_id": 1, "cid": 2}))
-    for need in ("dl:pptx", "dl:pdf", "theme", "edit", "regen", "new", "🚀 Muharrirda ochish"):
+    for need in ("dl:pptx", "dl:pdf", "theme", "edit", "regen", "new", "✏️ Muharrirda tahrirlash"):
         assert need in btns
+    assert btns[0] == "✏️ Muharrirda tahrirlash"                       # v78: birinchi tugma
 
 
 def test_regen_uses_same_topic(bot, monkeypatch):

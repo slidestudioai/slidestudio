@@ -333,7 +333,7 @@ def _balance_view(u: Dict[str, Any], led: Optional[Dict[str, Any]]) -> Dict[str,
     fast = {"left": free_units // fp, "limit": daily // fp}
     deep = {"left": free_units // dp if daily else 0, "limit": (daily // dp) if daily else 0}
     if not daily and TG_EMAIL_RE.match(str(u.get("email") or "")):
-        return {"mode": "free", "fast": fast, "deep": deep, "text": "Bepul limit yo'q (Google ulanmagan)"}
+        return {"mode": "free", "fast": fast, "deep": deep, "text": "Bepul limit yo'q (TG_FREE_DAILY_PAGES=0)"}
     return {"mode": "free", "fast": fast, "deep": deep,
             "text": f"Bepul: Tez {fast['left']}/{fast['limit']} | Chuqur {deep['left']}/{deep['limit']}"}
 

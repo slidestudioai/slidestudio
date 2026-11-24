@@ -80,30 +80,21 @@ def test_guess_from_telegram_language():
 
 
 # ------------------------------------------------------------------ /start oqimi
-def test_first_start_asks_language_then_saves_and_greets(sb, monkeypatch):
+def test_first_start_uses_telegram_language_and_greets_at_once(sb, monkeypatch):
+    """v78: birinchi /start da til SO'RALMAYDI — Telegram tilidan olinadi, saqlanadi va darhol 3 tugmali salom chiqadi."""
     http = _bot(monkeypatch)
-    asyncio.run(tb.handle_update(_msg("/start")))
-    first = http.calls[-1]
-    assert first[0] == "sendMessage" and first[1]["text"] == i18n.PICK_TEXT
-    assert [b[0]["callback_data"] for b in first[1]["reply_markup"]["inline_keyboard"]] == ["lang:uz", "lang:ru", "lang:en"]
-
-    http.calls.clear()
-    asyncio.run(tb.handle_update(_cb("lang:ru")))
-    assert sb.tables["tg_prefs"][0]["tg_id"] == 5551 and sb.tables["tg_prefs"][0]["lang"] == "ru"
-    sent = [p for m, p in http.calls if m == "sendMessage"]
-    greet = sent[-1]
-    assert "откройте редактор" in greet["text"]                          # salomlashuv ruscha
-    labels = [b["text"] for row in greet["reply_markup"]["inline_keyboard"] for b in row]
-    assert "✨ Открыть редактор" in labels and "💳 Баланс" in labels
-    menu_btn = [p for m, p in http.calls if m == "setChatMenuButton"]
-    assert not menu_btn or "lang=ru" in menu_btn[0]["menu_button"]["web_app"]["url"]
-
-    # keyingi /start — til qayta so'ralmaydi
-    http.calls.clear()
-    tb._lang_cache.clear()                                               # bazadan o'qiladi
-    asyncio.run(tb.handle_update(_msg("/start")))
+    asyncio.run(tb.handle_update(_msg("/start", lang_code="ru")))
     assert i18n.PICK_TEXT not in _texts(http)
-    assert any("откройте редактор" in t for t in _texts(http))
+    assert sb.tables["tg_prefs"][0]["tg_id"] == 5551 and sb.tables["tg_prefs"][0]["lang"] == "ru"
+    greet = [p for m, p in http.calls if m == "sendMessage" and "inline_keyboard" in (p.get("reply_markup") or {})][-1]
+    assert "Напишите тему" in greet["text"] and "Google" not in greet["text"]
+    labels = [b["text"] for row in greet["reply_markup"]["inline_keyboard"] for b in row]
+    assert labels == ["🆕 Новые слайды", "🚀 Редактор", "💳 Баланс"]
+
+    # /lang — til baribir o'zgartiriladi
+    http.calls.clear()
+    asyncio.run(tb.handle_update(_cb("lang:en")))
+    assert any("Write a topic" in t for t in _texts(http))
 
 
 def test_unknown_language_user_gets_telegram_language(sb, monkeypatch):

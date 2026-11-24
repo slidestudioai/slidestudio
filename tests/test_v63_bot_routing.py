@@ -8,10 +8,6 @@ from backend import telegram_bot as tb
 def _run(monkeypatch, st_extra, text):
     calls = []
 
-    async def ok(*a, **k):
-        return True
-
-    monkeypatch.setattr(tb, "_google_ok", ok)
     monkeypatch.setattr(tb, "_run_edit", lambda cid, u, t: ("edit", t))
     monkeypatch.setattr(tb, "_run_new", lambda cid, u, t: ("new", t))
     monkeypatch.setattr(tb, "_run_chat", lambda cid, u, t: ("chat", t))

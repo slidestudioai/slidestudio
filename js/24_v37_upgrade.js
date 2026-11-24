@@ -95,6 +95,8 @@
 
   async function maybeOfferGoogle() {
     if (alreadySeen()) return;
+    // v78: Telegram Mini App — foydalanuvchi Telegram akkaunti (initData) bilan avtomatik kiradi; Google taklif qilinmaydi
+    try { if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) { markSeen(); return; } } catch (e) {}
     if (/[?&](code|error|error_description)=|access_token=/.test(location.search + location.hash)) return;   // OAuth qaytishi
     let session = null;
     try { const r = await supabaseClient.auth.getSession(); session = r && r.data ? r.data.session : null; } catch (e) {}

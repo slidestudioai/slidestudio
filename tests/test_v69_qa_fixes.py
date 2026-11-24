@@ -211,9 +211,8 @@ def test_bot_user_locks_never_drop_a_held_lock(monkeypatch):
     tg._ulocks.clear()
 
 
-def test_invite_code_waits_in_db_until_google_is_linked(sb, monkeypatch):
-    """/start ref_CODE from a Telegram-only user: the code is saved in the DB (survives a restart) and is counted
-    after linking — also when Google is linked from the WEBSITE."""
+def test_invite_code_counts_at_once_for_telegram_account(sb, monkeypatch):
+    """v78: a Telegram account is a full account — /start ref_CODE is counted at once (no Google link to wait for)."""
     claimed = []
 
     async def fake_send(*a, **k):
@@ -228,11 +227,8 @@ def test_invite_code_waits_in_db_until_google_is_linked(sb, monkeypatch):
     monkeypatch.setattr(tg, "_ensure_uid", ensure_uid)
     monkeypatch.setattr(tg, "_claim_ref", fake_claim)
     asyncio.run(tg._handle_ref_start(777, {"id": 777}, "ABCD2345"))
-    assert sb.tables["tg_pending_refs"][0]["code"] == "ABCD2345"
-    tg._chats.pop(777, None)                     # restart / RAM state gone
-    asyncio.run(tg._claim_pending_ref(777, {"id": 777}))
     assert claimed == ["ABCD2345"]
-    assert not sb.tables.get("tg_pending_refs")  # used once
+    assert not sb.tables.get("tg_pending_refs")  # nothing has to wait
 
 
 def test_link_token_single_use_across_workers(sb, client, monkeypatch):
