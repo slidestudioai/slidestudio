@@ -239,12 +239,12 @@ async function delAd(id){if(!confirm('Reklama o\'chirilsinmi?'))return;try{await
 
 /* ---------------- SOZLAMALAR ---------------- */
 async function settings(m){
-  const r=await api('settings');const s=r.settings;
+  const r=await api('settings');const s=r.settings;window.__setDefaults=r.defaults||{};
   const n=(k,l,h)=>`<label>${l}</label><input type="number" min="0" id="s_${k}" value="${s[k]}">${h?`<small style="color:var(--mut)">${h}</small>`:''}`;
   const nf=(k,l,h)=>`<label>${l}</label><input type="number" min="0.05" step="0.05" id="s_${k}" value="${s[k]}">${h?`<small style="color:var(--mut)">${h}</small>`:''}`;
   const sw=(k,l)=>`<div class="sw"><span>${l}</span><input type="checkbox" id="s_${k}" ${s[k]?'checked':''}></div>`;
   m.innerHTML=`${r.persisted?'':'<div class="card" style="border-color:var(--warn);margin-bottom:10px">⚠️ Sozlamalar faqat xotirada (restartda yo\'qoladi). SUPABASE_SCHEMA.sql ni ishga tushiring.</div>'}
-  <h2>Tarif (darhol hamma joyda ishlaydi)</h2><div class="card">${n('slides_per_dollar','$1 = nechta varaq (birlik)','To\'lovda: qo\'shiladigan balans = to\'lov ($, netto) × shu son')}${nf('fast_ai_cost','Tez AI: 1 varaq necha birlik')}${nf('deep_ai_cost','Chuqur AI: 1 varaq necha birlik')}${n('free_daily_fast_limit','Bepul kunlik Tez AI limiti (varaq)')}${n('free_daily_deep_limit','Bepul kunlik Chuqur AI limiti (varaq)')}
+  <h2>Tarif (sayt, bot va to'lov oynasida ~1 daqiqada yangilanadi)</h2><div class="card"><div class="row" style="margin-bottom:6px"><button class="btn sec sm" onclick="tariffDefaults()">↺ Standart tarif ($1 = 100 Tez / 50 Chuqur)</button></div>${n('slides_per_dollar','$1 = nechta varaq (birlik)','To\'lovda: qo\'shiladigan balans = to\'lov ($, netto) × shu son')}${nf('fast_ai_cost','Tez AI: 1 varaq necha birlik')}${nf('deep_ai_cost','Chuqur AI: 1 varaq necha birlik')}${n('free_daily_fast_limit','Bepul kunlik Tez AI limiti (varaq)')}${n('free_daily_deep_limit','Bepul kunlik Chuqur AI limiti (varaq)')}
   <div id="s_tex" style="margin-top:10px;color:var(--mut);font-size:13px"></div><small style="color:var(--mut)">Pullik balans &gt; 0 bo'lsa kunlik bepul limit ishlamaydi; pullik balans 0 ga tushishi bilan bepul limit qaytadi.</small></div>
   <h2>Limitlar</h2><div class="card">${n('daily_message_limit','Bir foydalanuvchi kunlik AI xabarlari (0 = cheksiz)')}</div>
   <h2>Reklama</h2><div class="card">${sw('ads_enabled','Reklama umuman yoqilgan')}${sw('ads_site','Saytda (chap panel)')}${sw('ads_bot','Telegram botda')}${n('ad_bot_interval_min','Botda reklama oralig\'i (daqiqa)','Bir foydalanuvchiga ketma-ket reklama yuborilmasligi uchun')}</div>
@@ -253,6 +253,8 @@ async function settings(m){
   TARIFF.forEach(k=>$('#s_'+k).addEventListener('input',tariffExample));tariffExample();
 }
 const TARIFF=['slides_per_dollar','fast_ai_cost','deep_ai_cost','free_daily_fast_limit','free_daily_deep_limit'];
+/* v81.4: kod standarti (env / appsettings.DEFAULTS) maydonlarga qo'yiladi — «Saqlash» bosilgach qo'llanadi */
+function tariffDefaults(){const d=window.__setDefaults||{};TARIFF.forEach(k=>{if(d[k]!=null&&$('#s_'+k))$('#s_'+k).value=d[k];});tariffExample();toast('Standart qiymatlar qo\'yildi — «Saqlash» ni bosing');}
 function tariffExample(){
   const v=k=>+$('#s_'+k).value||0,spd=v('slides_per_dollar'),f=v('fast_ai_cost'),d=v('deep_ai_cost');
   $('#s_tex').innerHTML=f>0&&d>0?`Misol: <b>$1</b> to'lov → <b>${num(spd)}</b> birlik = <b>${num(Math.floor(spd/f))}</b> Tez varaq yoki <b>${num(Math.floor(spd/d))}</b> Chuqur varaq. Bepul: Tez <b>${v('free_daily_fast_limit')}</b> / Chuqur <b>${v('free_daily_deep_limit')}</b> kuniga.`:'<span class="pill-bad">Narx 0 dan katta bo\'lishi kerak</span>';

@@ -3918,7 +3918,13 @@ async def _do_buy(cid: int, user: dict, product: str = "pack") -> None:
         _warn("buy", f"checkout xatosi: {type(e).__name__}: {str(e)[:140]}")
         res = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
     if res.get("url"):
-        info = f"💎 <b>{res.get('pages')} varaq</b>" + (f" — <b>${res.get('price')}</b>" if res.get("price") else "")
+        try:                                            # v81.4: birlik -> Tez / Chuqur varaq (admin paneldagi tarif)
+            units = int(res.get("pages") or 0) * int(_deps.get("UNIT") or 20)
+            fast_p, deep_p = units // _page_units("fast"), units // _page_units("deep")
+            pages_txt = f"{fast_p} Tez varaq (= {deep_p} Chuqur)"
+        except Exception:
+            pages_txt = f"{res.get('pages')} varaq"
+        info = f"💎 <b>{pages_txt}</b>" + (f" — <b>${res.get('price')}</b>" if res.get("price") else "")
         await _send(cid, f"🧾 {info}\nTo'lovdan so'ng varaqlar darhol qo'shiladi.\n<i>Chek uchun email to'lov oynasida so'raladi.</i>",
                     {"inline_keyboard": [[{"text": "💳 To'lovga o'tish", "url": res["url"]}], [_btn("⬅️ Orqaga", "bal")]]})
         return

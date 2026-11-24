@@ -1290,6 +1290,7 @@ try:
         ai_sem=GEMINI_SEMAPHORE,                   # v59: bot va sayt bitta AI kalitini UMUMIY navbat bilan ishlatadi
         checkout=lambda *a, **k: _checkout_for_bot(*a, **k),   # v45: botdan to'lov havolasi (kech bog'lanadi — NameError bo'lmasin)
         touch=lambda *a, **k: touch_user(*a, **k),   # v79: oxirgi faollik + Telegram ism / @username (admin panel)
+        UNIT=UNIT,                                  # v81.4: botda to'lov xabari — birlik -> Tez / Chuqur varaq
         auth_user=lambda tok: auth_user_cached(tok),   # v81.3: Telegram ulash endpointlari ham sayt bilan bir xil token tekshiruvi
         ai=lambda: {
             "api_key": (config.get("api_key") or "").strip(),
@@ -1725,8 +1726,27 @@ def user_usage(request: Request, token: str = "", fresh: int = 0):
         print(f"[USAGE] {e}")
         return {"error": "usage_unavailable"}
 
+def _tariff_fresh() -> None:
+    """v81.4: admin paneldagi tarif (app_settings) SHU worker'da ham yangi bo'lsin. Avval to'lov endpointlari uni qayta
+    o'qimasdi — worker tarifni boshqa so'rov tufayli yangilamagan bo'lsa, oynada / to'lovda eski narx ishlatilardi."""
+    try:
+        appsettings.load()                       # 60 s kesh (TTL) — bazaga har so'rovda bormaydi
+    except Exception as e:
+        print(f"[TARIFF] yangilanmadi: {str(e)[:100]}")
+
+
+def _pages_for(units: int) -> Dict[str, int]:
+    """birlik -> {'fast': Tez varaq, 'deep': Chuqur varaq} (admin paneldagi narxlar bo'yicha)."""
+    return {"fast": int(units) * UNIT // MODES["fast"]["page"], "deep": int(units) * UNIT // MODES["deep"]["page"]}
+
+
 @app.get("/api/billing/plans")
 def billing_plans():
+    _tariff_fresh()
+    return JSONResponse(_billing_plans_body(), headers={"Cache-Control": "no-store"})
+
+
+def _billing_plans_body() -> Dict[str, Any]:
     return {
         "plans": plans_public(),
         "checkout_price_usd": round(topup_gross_cents(PACK_NET_CENTS) / 100, 2),
@@ -1736,8 +1756,12 @@ def billing_plans():
         "deep_free_daily": rt("free_daily_deep_limit"),
         "note": f"Dodo Payments komissiyasi ({DODO_FEE_PERMILLE / 10:g}% + ${DODO_FEE_FIXED_CENTS / 100:.2f}) to'lovga qo'shiladi; 1 USD netto = {pack_pages()} kredit",
         "fee": topup_fee_public(),
-        "topup_packages": {k: _topup_quote_public(_topup_quote(k, v["net_cents"], _pkg_credits(v))) for k, v in TOPUP_PACKAGES.items()},
+        "topup_packages": {k: {**_topup_quote_public(_topup_quote(k, v["net_cents"], _pkg_credits(v))),
+                               "pages": _pages_for(_pkg_credits(v))} for k, v in TOPUP_PACKAGES.items()},
         "credits_per_usd": pack_pages(),
+        # v81.4: to'lov oynasi uchun — «$1 = N Tez varaq = M Chuqur varaq» (admin paneldagi tarifdan)
+        "fast_ai_cost": rt("fast_ai_cost"), "deep_ai_cost": rt("deep_ai_cost"),
+        "pages_per_usd": _pages_for(pack_pages()),
     }
 
 def _clean_env(name: str, bearer: bool = False) -> str:
@@ -1823,6 +1847,7 @@ async def create_checkout(payload: Dict[str, Any] = None):
     """Dodo Payments checkout session. Body: {token, amount | net_amount | package, return_url?}.
     amount — dollarda (kamida $1). Javob: {checkout_url, session_id, pages, price_usd, quote}."""
     payload = payload if isinstance(payload, dict) else {}
+    await asyncio.to_thread(_tariff_fresh)                 # v81.4: narx admin paneldagi joriy tarifdan
     user_id, user_email, err_resp = await _payment_user_from_token(payload)
     if err_resp is not None:
         return err_resp
@@ -2072,6 +2097,7 @@ _TG_INTERNAL_EMAIL_RE = _re.compile(r"^tg\d+@t\.me$", _re.I)
 async def _checkout_for_bot(user_id: str, email: str = "", return_url: str = "", product: str = "pack",
                             telegram_id: Optional[int] = None) -> dict:
     """Telegram bot «To'ldirish» tugmasi uchun. {'url','pages','price'} yoki {'error'}."""
+    await asyncio.to_thread(_tariff_fresh)
     code, data = await _build_checkout(user_id, (email or "").strip(), return_url, product, telegram_id=telegram_id)
     if code == 200:
         return {"url": data["checkout_url"], "pages": data.get("pages"), "days": data.get("days"), "price": data.get("price_usd"), "product": product}
@@ -2308,6 +2334,7 @@ async def dodo_webhook(request: Request):
                                                 {"total_amount": data.get("total_amount"), "currency": data.get("currency")})
                 return JSONResponse({"error": "user not found"}, status_code=500)
             paid = _paid_cents_usd(data)
+            await asyncio.to_thread(_tariff_fresh)         # imzosiz to'lov — joriy tarif bo'yicha
             # Kreditlar: imzolangan metadata.credits (paket bonusi bilan); imzo yo'q/noto'g'ri yoki kam to'langan
             # bo'lsa — to'langan summadan komissiyani ayirib (1 cent netto = 1 kredit).
             pages = _topup_verified_credits(meta, user_id, paid)

@@ -263,3 +263,31 @@ def test_site_sends_fresh_token_for_telegram_calls():
     assert "window.ssFreshToken = async function" in js["03_auth_project.js"] and "refreshSession()" in js["03_auth_project.js"]
     assert "ssFreshToken(true)" in js["35_v45_tglink.js"]                      # 401 -> yangilab qayta
     assert js["36_v45_tgdeck.js"].count("ssFreshToken") >= 2                  # link-complete va latest-deck
+
+
+def test_topup_prices_follow_the_admin_tariff(client, monkeypatch):
+    """v81.4: to'lov oynasi narxlari admin tarifidan; standart $1 = 100 Tez = 50 Chuqur."""
+    from backend import appsettings, monitoring as mon
+    saved = dict(appsettings._cache)
+    try:
+        appsettings._cache.update(slides_per_dollar=100, fast_ai_cost=1, deep_ai_cost=2)
+        monkeypatch.setattr(appsettings, "_loaded_at", 1e18)             # bazaga bormasin (kesh yangi)
+        appsettings._apply_runtime()
+        d = client.get("/api/billing/plans").json()
+        assert d["credits_per_usd"] == 100 and d["pages_per_usd"] == {"fast": 100, "deep": 50}
+        assert d["topup_packages"]["popular"]["credits"] == 550 and d["topup_packages"]["popular"]["pages"] == {"fast": 550, "deep": 275}
+        appsettings.set_many({"slides_per_dollar": 150})                 # admin o'zgartirdi -> hamma joyda
+        d = client.get("/api/billing/plans").json()
+        assert d["pages_per_usd"] == {"fast": 150, "deep": 75} and d["topup_packages"]["popular"]["credits"] == 825
+        assert main.credits_for_net_cents(100) == 150                     # webhook / checkout ham shu tarif
+    finally:
+        appsettings._cache.clear(); appsettings._cache.update(saved); appsettings._apply_runtime()
+    assert appsettings.DEFAULTS["slides_per_dollar"] == mon.PAGES_PER_PACK == 100
+
+
+def test_topup_modal_rebuilds_with_server_prices():
+    src = open(os.path.join(ROOT, "js", "46_topup.js"), encoding="utf-8").read()
+    assert "if (feeLoaded) return;" not in src                            # har ochilishda yangi narx
+    assert "buildGrid();\n      renderSub();" in src and "d.fast_ai_cost" in src
+    html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
+    assert "1 USD = 100 kredit" not in html

@@ -4,13 +4,14 @@
  * Dodo komissiyasi (standart 5.5% + $0.40) ustiga qo'shiladi:
  *     gross = ceil((N + 0.40) / 0.945)   (cent aniqligida; $1 -> $1.49)
  * Komissiya qiymatlari serverdan (/api/billing/plans -> fee) olinadi, server xuddi shu formulani qayta hisoblaydi.
- * 1 USD netto = 100 kredit (+ paket bonusi). Kreditlar metadata ga imzo bilan yoziladi.
+ * $1 netto = admin paneldagi «$1 = nechta varaq» (standart 100 Tez = 50 Chuqur) + paket bonusi. Metadata ga imzo bilan yoziladi.
  * To'lovdan keyin Dodo /?payment=success ga qaytaradi; kreditni webhook (payment.succeeded) qo'shadi.
  */
 (function () {
   'use strict';
 
-  var CREDITS_PER_USD = 100;
+  var CREDITS_PER_USD = 100;      // $1 netto -> birlik (admin panel: «$1 = nechta varaq»), serverdan yangilanadi
+  var FAST_COST = 1, DEEP_COST = 2; // 1 Tez / 1 Chuqur varaq necha birlik (admin panel), serverdan yangilanadi
   var FEE_PERMILLE = 55;          // 5.5%  (serverdan yangilanadi)
   var FEE_FIXED_CENTS = 40;       // $0.40 (serverdan yangilanadi)
   var MIN_CENTS = 100;            // $1.00 netto
@@ -35,19 +36,43 @@
     // Butun sonlarda: float xatosiz va serverdagi topup_gross_cents() bilan bir xil natija.
     return Math.ceil(((netCents + FEE_FIXED_CENTS) * 1000) / (1000 - FEE_PERMILLE));
   }
-  var feeLoaded = false;
+  /* v81.4: tarif (admin panel) HAR OCHILISHDA serverdan olinadi va oyna to'liq yangilanadi: paket kartalari, sarlavha,
+   * tanlangan paket va «Siz olasiz». Avval bir marta olinar, kartalar qayta chizilmas edi — kartada «550», pastda «825»
+   * chiqardi; admin tarifni o'zgartirsa oyna sahifa yangilanmaguncha eski narxni ko'rsatardi. */
+  var WORDS = {                       // v81.4: oyna tili (uz / ru / en) — dinamik matnlar ham tarjima bo'lsin
+    uz: { fast: 'Tez varaq', deep: 'Chuqur', deepP: 'Chuqur varaq', page: 'varaq', forever: 'muddatsiz', added: 'qo\'shildi.' },
+    ru: { fast: 'быстрых листов', deep: 'глубоких', deepP: 'глубоких листов', page: 'листов', forever: 'бессрочно', added: 'добавлено.' },
+    en: { fast: 'Fast pages', deep: 'Deep', deepP: 'Deep pages', page: 'pages', forever: 'never expire', added: 'added.' }
+  };
+  function W(k) {
+    var l = 'uz';
+    try { l = (window.SSI18n && SSI18n.lang) || document.documentElement.lang || 'uz'; } catch (e) {}
+    return (WORDS[String(l).slice(0, 2)] || WORDS.uz)[k];
+  }
+  function fastPages(units) { return Math.floor((units || 0) / (FAST_COST || 1) + 1e-9); }
+  function deepPages(units) { return Math.floor((units || 0) / (DEEP_COST || 2) + 1e-9); }
+  function pagesLabel(units) { return num(fastPages(units)) + ' ' + W('fast'); }
+  function pagesFull(units) { return num(fastPages(units)) + ' ' + W('fast') + ' · ' + num(deepPages(units)) + ' ' + W('deep'); }
+  function renderSub() {
+    var sub = document.querySelector('#topUpModal .tu-sub');
+    if (sub) sub.textContent = '$1 = ' + pagesFull(CREDITS_PER_USD) + ' · ' + W('forever');
+  }
   function loadFee() {
-    if (feeLoaded) return;
-    fetch('/api/billing/plans').then(function (r) { return r.json(); }).then(function (d) {
-      var f = d && d.fee;
-      // v76: «$1 = nechta varaq» admin paneldan — paket kreditlari ham serverdagi qiymatdan olinadi
-      if (d && d.credits_per_usd > 0) CREDITS_PER_USD = d.credits_per_usd;
-      var tp = d && d.topup_packages;
+    fetch('/api/billing/plans', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d) return;
+      var f = d.fee;
+      if (d.credits_per_usd > 0) CREDITS_PER_USD = d.credits_per_usd;
+      if (d.fast_ai_cost > 0) FAST_COST = d.fast_ai_cost;
+      if (d.deep_ai_cost > 0) DEEP_COST = d.deep_ai_cost;
+      var tp = d.topup_packages;
       if (tp) PACKAGES.forEach(function (p) { if (tp[p.id] && tp[p.id].credits > 0) p.credits = tp[p.id].credits; });
-      if (f && typeof f.permille === 'number' && typeof f.fixed_cents === 'number') {
-        FEE_PERMILLE = f.permille; FEE_FIXED_CENTS = f.fixed_cents; feeLoaded = true;
-        if (els.modal && !els.modal.hidden) { if (sel && sel.package === 'custom') onCustomInput(); else render(); }
-      }
+      if (f && typeof f.permille === 'number' && typeof f.fixed_cents === 'number') { FEE_PERMILLE = f.permille; FEE_FIXED_CENTS = f.fixed_cents; }
+      if (!els.grid) return;
+      buildGrid();
+      renderSub();
+      if (sel && sel.package === 'custom') onCustomInput();
+      else if (sel) selectPackage(sel.package);
+      else render();
     }).catch(function () {});
   }
   function usd(cents) { return '$' + (cents / 100).toFixed(2); }
@@ -77,7 +102,7 @@
   function renderBalance(bump) {
     if (!els.balance) return;
     var st = balanceState();
-    els.balance.textContent = st && typeof st.total === 'number' ? num(st.total) : '—';
+    els.balance.textContent = st && typeof st.total === 'number' ? num(st.total) : '—';     // total — allaqachon Tez varaq
     if (bump) {
       var pill = els.balance.closest('.tu-balance');
       pill.classList.remove('tu-bump'); void pill.offsetWidth; pill.classList.add('tu-bump');
@@ -111,7 +136,8 @@
         '<span class="tu-pkg-check" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>' +
         '<div class="tu-pkg-name">' + p.name + '</div>' +
         '<div class="tu-pkg-price">' + usd(p.netCents) + '</div>' +
-        '<div class="tu-pkg-credits">' + num(p.credits) + ' kredit</div>' +
+        '<div class="tu-pkg-credits">' + pagesLabel(p.credits) + '</div>' +
+        '<div class="tu-pkg-deep">' + num(deepPages(p.credits)) + ' ' + W('deepP') + '</div>' +
         (p.bonus ? '<span class="tu-pkg-bonus">+' + p.bonus + '% bonus</span>' : '') +
         '</button>';
     }).join('');
@@ -137,7 +163,7 @@
     setText(els.net, usd(net));
     setText(els.fee, '+' + usd(gross - net));
     setText(els.gross, usd(gross));
-    setText(els.credits, num(sel ? sel.credits : 0));
+    setText(els.credits, sel ? pagesFull(sel.credits) : '0');
     els.payAmount.textContent = sel ? usd(gross) : '';
     els.pay.disabled = !sel || busy;
   }
@@ -148,7 +174,7 @@
     sel = { package: p.id, netCents: p.netCents, credits: p.credits };
     els.input.value = '';
     els.custom.classList.remove('tu-invalid');
-    els.customCredits.textContent = '0 kredit';
+    els.customCredits.textContent = '0 ' + W('page');
     els.hint.textContent = 'Eng kam miqdor — $1.00';
     hideError();
     render();
@@ -159,21 +185,21 @@
     hideError();
     if (r.empty) {
       els.custom.classList.remove('tu-invalid');
-      els.customCredits.textContent = '0 kredit';
+      els.customCredits.textContent = '0 ' + W('page');
       els.hint.textContent = 'Eng kam miqdor — $1.00';
       if (sel && sel.package === 'custom') sel = null;
       render();
       return;
     }
-    var shownCredits = r.cents > 0 ? Math.round(r.cents * CREDITS_PER_USD / 100) : 0;
-    els.customCredits.textContent = num(shownCredits) + ' kredit';
+    var shownCredits = r.cents > 0 ? Math.floor(r.cents * CREDITS_PER_USD / 100) : 0;     // serverdagi credits_for_net_cents bilan bir xil
+    els.customCredits.textContent = pagesLabel(shownCredits);
     if (r.error) {
       els.custom.classList.add('tu-invalid');
       els.hint.textContent = r.error;
       sel = null;
     } else {
       els.custom.classList.remove('tu-invalid');
-      els.hint.textContent = usd(r.cents) + ' = ' + num(shownCredits) + ' kredit · komissiya bilan ' + usd(grossCents(r.cents));
+      els.hint.textContent = usd(r.cents) + ' = ' + pagesFull(shownCredits) + ' · komissiya bilan ' + usd(grossCents(r.cents));
       sel = { package: 'custom', netCents: r.cents, credits: shownCredits };
     }
     render();
@@ -353,8 +379,9 @@
     try { if (w.win && !w.win.closed) w.win.close(); } catch (_) {}
     close();
     renderBalance(true);
-    var added = (w.beforeTotal != null && now && typeof now.total === 'number') ? Math.max(0, now.total - w.beforeTotal) : w.expected;
-    toast("🎉 To'lov muvaffaqiyatli! " + (added ? '+' + num(added) + ' kredit qo\'shildi.' : 'Balans yangilandi.'));
+    // total — Tez varaqda; w.expected — birlikda (paket) -> Tez varaqqa o'giriladi
+    var added = (w.beforeTotal != null && now && typeof now.total === 'number') ? Math.max(0, now.total - w.beforeTotal) : fastPages(w.expected);
+    toast("🎉 To'lov muvaffaqiyatli! " + (added ? '+' + num(added) + ' ' + W('fast') + ' ' + W('added') : 'Balans yangilandi.'));
   }
 
   // Alohida oynadagi to'lov sahifasi redirect bo'lib bizning saytga qaytsa (/?payment=success) — index.html
@@ -429,7 +456,7 @@
       if (mode === 'telegram') {
         tgw.openLink(data.checkout_url);
         close();
-        toast("To'lovni yakunlang — kreditlar o'zi qo'shiladi.");
+        toast("To'lovni yakunlang — varaqlar o'zi qo'shiladi.");
         startWatch(expected, null);
       } else if (mode === 'window') {
         win.location.href = data.checkout_url;
@@ -534,6 +561,12 @@
 
   window.openTopUpModal = open;
   window.closeTopUpModal = close;
+  // v81.4: til almashsa — ochiq oyna yangi tilda qayta chiziladi
+  document.addEventListener('ss:lang', function () {
+    if (!els.grid) return;
+    buildGrid(); renderSub();
+    if (sel && sel.package === 'custom') onCustomInput(); else if (sel) selectPackage(sel.package); else render();
+  });
   window.TopUp = { open: open, close: close, grossCents: grossCents, packages: PACKAGES };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
