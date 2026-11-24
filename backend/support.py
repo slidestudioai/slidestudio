@@ -207,7 +207,8 @@ def admin_thread(uid: str) -> Dict[str, Any]:
     except Exception:
         pass
     email = next((r.get("email") for r in rows if r.get("email")), "")
-    return {"user_id": uid, "email": email, "messages": [_public(r) for r in rows]}
+    author = next((r.get("author") for r in rows if r.get("author") and not r.get("from_admin")), "")
+    return {"user_id": uid, "email": email, "author": author, "messages": [_public(r) for r in rows]}
 
 
 def admin_reply(uid: str, text: Any) -> Dict[str, Any]:

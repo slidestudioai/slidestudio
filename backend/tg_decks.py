@@ -535,7 +535,7 @@ def _crossword_answer_keys(slides: List[dict], n: int) -> List[dict]:
     return out
 
 
-def normalize_deck(raw: Any, n: int, topic: str = "") -> Optional[dict]:
+def normalize_deck(raw: Any, n: int, topic: str = "", answer_keys: bool = True) -> Optional[dict]:
     """AI chiqargan JSON ni xavfsiz, sig'adigan ko'rinishga keltiradi. n = so'ralgan slaydlar soni."""
     if not isinstance(raw, dict):
         return None
@@ -557,7 +557,8 @@ def normalize_deck(raw: Any, n: int, topic: str = "") -> Optional[dict]:
         slides = slides[:n]
         if closing is not None and n >= 3 and slides[-1]["layout"] != "closing":
             slides[-1] = closing
-    slides = _crossword_answer_keys(slides, n)
+    if answer_keys:                          # v79: faqat YANGI generatsiyada (saqlangan slayd qayta ochilganda o'zgarmaydi)
+        slides = _crossword_answer_keys(slides, n)
     dtr = str(raw.get("transition") or "").strip().lower()
     return {"title": title, "subtitle": clean(raw.get("subtitle"), 140), "theme": theme, "slides": slides,
             "transition": dtr if dtr in TRANSITIONS else ""}

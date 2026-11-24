@@ -139,37 +139,30 @@ def _linked_row_by_uid(uid: str) -> Optional[Dict[str, Any]]:
 
 
 def check_admin_tg(tg_id: Any) -> Dict[str, Any]:
-    """Bot uchun. {'ok':bool,'reason':'not_admin'|'not_configured'|'not_linked'|'email_mismatch'|'ok','email':str}"""
+    """v79: Telegram admin = ADMIN_TG_IDS dagi Telegram ID — SHUNING O'ZI yetarli (Google ulash shart emas).
+    Telegram ID'ni Telegram o'zi tasdiqlaydi (bot update yoki imzolangan Mini App initData)."""
     if not is_tg_admin(tg_id):
         return {"ok": False, "reason": "not_admin"}
-    if not admin_emails():
-        return {"ok": False, "reason": "not_configured"}
-    row = _linked_row_by_tg(int(tg_id))
-    if not row:
-        return {"ok": False, "reason": "not_linked"}
-    email = str(row.get("email") or "").lower()
-    if email not in admin_emails():
-        return {"ok": False, "reason": "email_mismatch", "email": email}
-    return {"ok": True, "reason": "ok", "email": email, "uid": str(row.get("user_id"))}
+    row = _linked_row_by_tg(int(tg_id)) or {}
+    return {"ok": True, "reason": "ok", "email": str(row.get("email") or "").lower(),
+            "uid": str(row.get("user_id") or "") or None}
 
 
 def check_admin_user(uid: str, email: str) -> Dict[str, Any]:
-    """Sayt uchun: Google akkaunt admin emaili VA unga ulangan Telegram admin ID.
-    v73: Telegram Mini App ba'zan Telegram akkaunti (tg<ID>@t.me) bilan kiradi — o'sha Telegram ID admin bo'lsa va
-    admin Google emailiga ulangan bo'lsa (botdagi «admin» bilan bir xil shart), u ham qabul qilinadi."""
+    """Sayt / Mini App uchun (v79 — bir-biriga ulash shart emas):
+      * Telegram akkaunti (tg<ID>@t.me, bot yaratgan) — ID ADMIN_TG_IDS da bo'lsa admin;
+      * Google akkaunti — email ADMIN_EMAILS da bo'lsa admin."""
     e = (email or "").strip().lower()
     m = re.fullmatch(r"tg(\d+)@t\.me", e)
     if m:
-        chk = check_admin_tg(int(m.group(1)))
-        if chk.get("ok"):
-            return {"ok": True, "reason": "ok", "email": chk["email"], "tg_id": int(m.group(1))}
-        return {"ok": False, "reason": chk.get("reason") or "not_admin"}
+        tid = int(m.group(1))
+        if not is_tg_admin(tid) or not is_vip_account(uid, e):        # is_vip_account: akkaunt haqiqatan bot yaratgan
+            return {"ok": False, "reason": "not_admin"}
+        return {"ok": True, "reason": "ok", "email": "", "tg_id": tid}
     if not e or e not in admin_emails():
         return {"ok": False, "reason": "not_admin"}
-    row = _linked_row_by_uid(uid)
-    if not row or not is_tg_admin(row.get("tg_id")):
-        return {"ok": False, "reason": "not_linked"}
-    return {"ok": True, "reason": "ok", "email": e, "tg_id": int(row["tg_id"])}
+    row = _linked_row_by_uid(uid) or {}
+    return {"ok": True, "reason": "ok", "email": e, "tg_id": int(row.get("tg_id") or 0)}
 
 
 # ----------------------------------------------------------------------------------------------
@@ -199,7 +192,8 @@ def verify_token(tok: str) -> Optional[Dict[str, Any]]:
         p = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
         if p.get("k") != "adm" or int(p.get("x", 0)) < time.time():
             return None
-        if int(p["t"]) not in admin_tg_ids() or str(p.get("e", "")).lower() not in admin_emails():
+        # v79: Telegram admin YOKI Google admin — ikkalasi birga bo'lishi shart emas (token imzolangan)
+        if int(p.get("t") or 0) not in admin_tg_ids() and str(p.get("e", "")).lower() not in admin_emails():
             return None
         return p
     except Exception:
@@ -231,12 +225,18 @@ def audit(actor: str, action: str, target: str = "", details: Optional[dict] = N
         print(f"[ADMIN] audit yozilmadi: {str(e)[:80]}")
 
 
+USER_COLS_V79 = ("user_id,email,free_credits,paid_credits,plan,plan_until,unlimited,daily_units_override,blocked,admin_note,"
+                 "last_reset_time,last_active,total_tokens,created_at,telegram_id,tg_username,display_name")
 USER_COLS = "user_id,email,free_credits,paid_credits,plan,plan_until,unlimited,daily_units_override,blocked,admin_note,last_reset_time,last_active,total_tokens,created_at"
 USER_COLS_CORE = "user_id,email,free_credits,paid_credits,blocked,last_reset_time,last_active,total_tokens,created_at"
 
 
 def _select_users(q):
-    """Yangi ustunlar (plan...) bo'lmasa ham ishlaydi (migratsiya hali ishga tushirilmagan bo'lsa)."""
+    """Yangi ustunlar (plan, v79: tg_username...) bo'lmasa ham ishlaydi (migratsiya hali ishga tushirilmagan bo'lsa)."""
+    try:
+        return q(USER_COLS_V79).execute().data or [], True
+    except Exception:
+        pass
     try:
         return q(USER_COLS).execute().data or [], True
     except Exception:
@@ -357,8 +357,15 @@ def _brief(row: Dict[str, Any], tgmap: Dict[str, int], led: Optional[Dict[str, D
     linked = uid in tgmap
     source = "both" if linked else ("tg" if m else "google")
     last_spend = li.get("last_spend")
+    uname = str(row.get("tg_username") or "").strip().lstrip("@")
+    name = str(row.get("display_name") or "").strip()
+    if m:                          # v79: Telegram akkauntida texnik email o'rniga ism / @username ko'rinadi
+        label = " ".join(x for x in (name, f"@{uname}" if uname else "") if x) or f"Telegram {tg_id}"
+    else:
+        label = email or uid
     return {
-        "user_id": uid, "email": email, "tg_id": tg_id, "linked": linked, "tg_only": bool(m),
+        "user_id": uid, "email": "" if m else email, "label": label, "name": name, "username": uname,
+        "tg_id": tg_id, "linked": linked, "tg_only": bool(m),
         # v76: ulanish holati va vaqti, aniq balans holati, oxirgi AI sarfi
         "source": source, "linked_at": _LINK_AT.get(uid) if linked else None,
         "balance": _balance_view(u, li),
@@ -378,6 +385,16 @@ USER_FILTERS = ("all", "google", "tg", "linked", "tg_only", "vip", "unlimited", 
 
 
 def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any]]:
+    try:
+        return _find_users_impl(q, flt, limit, offset)
+    except AdminError:
+        if not (q and _NAME_SEARCH["ok"]):
+            raise
+        _NAME_SEARCH["ok"] = False             # ism ustunlari yo'q (SUPABASE_SCHEMA.sql v79 ishga tushirilmagan) — email bo'yicha
+        return _find_users_impl(q, flt, limit, offset)
+
+
+def _find_users_impl(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any]]:
     """v76: 4 ta asosiy filtr — bazadagi shart bo'yicha (yangi foydalanuvchilar ham darhol ko'rinadi):
       google  — Google akkauntlar (email tg…@t.me emas; Telegram ulanganlari ham)
       tg      — Telegram: faqat Telegram akkauntlar + Telegram ulangan Google akkauntlar
@@ -396,13 +413,17 @@ def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any
             elif q.lstrip("@").isdigit():
                 qq = qq.eq("email", f"tg{int(q.lstrip('@'))}@t.me")
             else:
-                safe = re.sub(r"[%,()*]", "", q)[:80]
-                qq = qq.ilike("email", f"%{safe}%")
+                safe = re.sub(r"[%,()*:.\\]", "", q.lstrip("@"))[:80]
+                if _NAME_SEARCH["ok"] and safe:           # v79: ism va @username bo'yicha ham
+                    qq = qq.or_(f"email.ilike.%{safe}%,display_name.ilike.%{safe}%,tg_username.ilike.%{safe}%")
+                else:
+                    qq = qq.ilike("email", f"%{safe}%")
         return qq
 
     def ordered(qq):
-        # nullsfirst: hali hech narsa qilmagan yangi foydalanuvchilar ham tepada ko'rinadi
-        return qq.order("last_active", desc=True, nullsfirst=True).order("created_at", desc=True)
+        # v79: eng so'nggi faol foydalanuvchi TEPADA. Avval nullsfirst edi — hech narsa qilmaganlar doim tepada turib,
+        # hozirgina ishlagan odam pastga tushib ketardi. Yangi qatorda last_active = ro'yxatdan o'tgan vaqt.
+        return qq.order("last_active", desc=True, nullsfirst=False).order("created_at", desc=True)
 
     def build(extra, a: int, b: int):
         def _b(cols):
@@ -411,22 +432,23 @@ def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any
 
     linked = _linked_uids() if flt in ("linked", "tg") else []
     page = (offset, offset + limit - 1)
-    if flt == "tg":
-        # ikki so'rov (Telegram akkauntlar + ulanganlar), birlashtirib bir xil tartibda saralanadi
-        a, _ = _select_users(build(lambda x: x.like("email", "tg%@t.me"), 0, offset + limit - 1))
-        b, _ = _select_users(build(lambda x: x.in_("user_id", linked), 0, offset + limit - 1)) if linked else ([], True)
+    if flt in ("tg", "linked"):
+        # v79: ulanganlar ro'yxati katta bo'lsa ham ishlaydi — ID'lar 100 tadan bo'lib so'raladi (avval bitta ulkan
+        # «in.(...)» so'rovi edi: ko'p foydalanuvchida URL juda uzun bo'lib, filtr «Bazadan o'qib bo'lmadi» berardi)
+        b = _rows_for_ids(linked, search)
+        a = []
+        if flt == "tg":
+            a, _ = _select_users(build(lambda x: x.like("email", "tg%@t.me"), 0, offset + limit - 1))
         seen, merged = set(), []
-        # ordered() bilan bir xil tartib: last_active yo'q (yangi) qatorlar tepada, keyin eng so'nggi faollar
-        for r in sorted(a + b, key=lambda r: (r.get("last_active") is None, str(r.get("last_active") or ""),
-                                                str(r.get("created_at") or "")), reverse=True):
+        for r in sorted(a + b, key=_activity_key, reverse=True):
             if r["user_id"] not in seen:
                 seen.add(r["user_id"])
                 merged.append(r)
         rows = merged[offset:offset + limit]
     else:
         extra = {
-            "google": lambda x: x.not_.like("email", "tg%@t.me"),
-            "linked": lambda x: x.in_("user_id", linked or ["-"]),
+            # v79: faqat Google — texnik «user_…@slidestudio.local» (emailsiz eski) qatorlar ham bu yerga kirmaydi
+            "google": lambda x: x.not_.like("email", "tg%@t.me").not_.like("email", "%@slidestudio.local"),
             "tg_only": lambda x: x.like("email", "tg%@t.me"),
             "vip": lambda x: x.eq("plan", "vip"),
             "unlimited": lambda x: x.eq("unlimited", True),
@@ -442,6 +464,28 @@ def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any
             tg_by_uid = _tg_map([r["user_id"] for r in rows])
     led = _ledger_info([r["user_id"] for r in rows])
     return [_brief(r, tg_by_uid, led) for r in rows]
+
+
+_NAME_SEARCH = {"ok": True}       # v79: display_name / tg_username ustunlari yo'q bo'lsa — faqat email bo'yicha qidiruv
+
+
+def _activity_key(r: Dict[str, Any]) -> Tuple[str, str]:
+    """Eng so'nggi faollik (yo'q bo'lsa — ro'yxatdan o'tgan vaqt): bazadagi tartib bilan bir xil."""
+    return (str(r.get("last_active") or r.get("created_at") or ""), str(r.get("created_at") or ""))
+
+
+def _rows_for_ids(ids: List[str], search=None, chunk: int = 100) -> List[Dict[str, Any]]:
+    sb = _sb()
+    out: List[Dict[str, Any]] = []
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+
+        def q(cols, part=part):
+            qq = sb.table("user_usage").select(cols).in_("user_id", part)
+            return search(qq) if search else qq
+        rows, _ = _select_users(q)
+        out.extend(rows)
+    return out
 
 
 def _get_user_row(uid: str) -> Dict[str, Any]:
@@ -818,7 +862,7 @@ def stats() -> Dict[str, Any]:
         "users_7d": _count("user_usage", lambda q: q.gte("last_active", d7)),
         "new_7d": _count("user_usage", lambda q: q.gte("created_at", d7)),
         "tg_users": _count("user_usage", lambda q: q.like("email", "tg%@t.me")),
-        "google_users": _count("user_usage", lambda q: q.not_.like("email", "tg%@t.me")),
+        "google_users": _count("user_usage", lambda q: q.not_.like("email", "tg%@t.me").not_.like("email", "%@slidestudio.local")),
         "linked": _count("tg_links"),
         "vip": _count("user_usage", lambda q: q.eq("plan", "vip")),
         "unlimited": _count("user_usage", lambda q: q.eq("unlimited", True)),
@@ -1021,7 +1065,7 @@ async def admin_api(op: str, request: Request):
     p = verify_token(request.headers.get("x-admin-token", ""))
     if not p:
         return _nf()
-    actor = f"tg{p['t']}"
+    actor = f"tg{p['t']}" if int(p.get("t") or 0) else f"g:{p.get('e', '')}"
     body = await _body(request)
     try:
         if not _sb() and op not in ("system",):

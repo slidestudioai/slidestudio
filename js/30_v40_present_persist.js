@@ -271,13 +271,18 @@
   var savedKeys = {};                 // shu sessiyada haqiqatan saqlangan qoralamalar (faqat shularni o'chirish mumkin)
 
   var lastSavedSig = '', saving = false;
+  // v79: 2 AKKAUNT XAVFSIZLIGI. Ekrandagi slaydlar qaysi akkauntga tegishli — shu yerda eslanadi. Boshqa akkauntga
+  // o'tilganda (sahifa qayta yuklanguncha bo'lgan 80 ms ichida «pagehide» avto-saqlashni chaqirardi) A akkauntning
+  // slaydlari B akkaunt qoralamasiga yozilib qolardi. Endi: egasi boshqa bo'lsa — HECH NARSA yozilmaydi.
+  // Istisno: mehmon -> akkaunt (mehmon slaydlari kirgandan keyin akkauntga o'tadi — 45_v63_guest_carry.js).
+  var ownerKey = '';
   function aiBusy() { return !!(window.isAiApplyingCommands || window.isAiStreaming || safe(function () { return isAiApplyingCommands || isAiStreaming; }, false)); }
   function canvasBusy() { return safe(function () { return !!(canvas && (canvas._currentTransform || (canvas.getActiveObject && canvas.getActiveObject() && canvas.getActiveObject().isEditing))); }, false) || safe(function () { return !!_switchBusy; }, false); }
   setTimeout(function () { window.__ssRestoreChecked = true; }, 12000);
   var armedAt = Date.now() + 8000;   // ishga tushgandan keyin 8 soniya saqlanmaydi (tiklash tugashi uchun)
   async function persistNow(force) {
     if (saving || typeof indexedDB === 'undefined') return;
-    if (window.__ssUserLogout) return;                         // logging out: nothing may be written any more
+    if (window.__ssUserLogout || window.__ssAcctSwitch) return; // logging out / switching account: nothing is written
     if (!window.__ssRestoreChecked || (!force && Date.now() < armedAt)) return;
     if (!slides || !slides.length) return;
     if (safe(function () { return Date.now() < _canvasLoadingUntil; }, false)) return;   // half-loaded canvas: never save it
@@ -286,6 +291,8 @@
     try {
       if (!canvasBusy()) safe(function () { saveCurrentSlideState(); });
       var key = draftKey();
+      if (ownerKey && ownerKey !== key && ownerKey !== draftKey('')) return;   // v79: begona akkauntga yozilmaydi
+      ownerKey = key;
       var list = slides, sig = key + '|' + slideSig() + '|' + (typeof projectTitle === 'string' ? projectTitle : '') + '|' + activeIndex;
       if (sig === lastSavedSig) return;
       if (isPristineDeck()) {
@@ -312,6 +319,11 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') persistNow(true); });
   window.addEventListener('pagehide', function () { persistNow(true); });
   window.ssPersistNow = function () { return persistNow(true); };
+  /** v79: shu akkauntning qoralamasi qachon saqlangan (ms, yo'q bo'lsa 0) — 36_v45_tgdeck.js «eng oxirgisi» uchun */
+  window.ssDraftSavedAt = async function () {
+    try { var rec = await pTimeoutP(idbGet(draftKey()), 3000); return (rec && rec.owner === draftKey() && +rec.savedAt) || 0; }
+    catch (e) { return 0; }
+  };
   /** Logout (confirmed): this account's draft + the guest draft are deleted. The old single 'current' key too. */
   window.ssClearSavedProject = function (uid) {
     lastSavedSig = '';
@@ -327,9 +339,11 @@
     // a fresh guest deck carried through the Google login wins (45_v63_guest_carry.js restores it)
     try { if (window.__ssAuthStorage && window.__ssAuthStorage.getItem('ss-auth-v39-guest')) return null; } catch (e) {}
     try {
+      ownerKey = draftKey();
       var rec = await pTimeoutP(idbGet(draftKey()), 3000);
       if (!rec || rec.owner !== draftKey() || !Array.isArray(rec.slides) || !rec.slides.length) return null;
       lastSavedSig = '';
+      window.__ssDraftSavedAt = +rec.savedAt || 0;               // v79: Mini App — botdagi taqdimot yangiroqmi?
       return rec;
     } catch (e) { return null; }
   };

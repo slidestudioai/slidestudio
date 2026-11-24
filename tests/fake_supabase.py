@@ -92,6 +92,17 @@ class _Query:
         self.filters.append(lambda r: r.get(col) is want if want is None else str(r.get(col)) == str(want))
         return self
 
+    def or_(self, expr):                # postgrest: "a.ilike.%x%,b.eq.y" (faqat ilike / eq)
+        parts = []
+        for chunk in str(expr).split(","):
+            col, op, val = chunk.split(".", 2)
+            if op == "ilike":
+                rx = re.compile("^" + re.escape(val).replace("%", ".*") + "$", re.I)
+                parts.append(lambda r, c=col, rx=rx: bool(rx.match(str(r.get(c) or ""))))
+            else:
+                parts.append(lambda r, c=col, v=val: str(r.get(c)) == v)
+        return self._add(lambda r: any(f(r) for f in parts))
+
     def in_(self, col, vals):
         vs = {str(v) for v in vals}
         return self._add(lambda r: str(r.get(col)) in vs)

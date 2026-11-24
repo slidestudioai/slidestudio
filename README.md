@@ -60,6 +60,12 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 > - Bot generatori saytdagi 32 ta dizayn mavzusini (`js/51_design_themes.js` — yagona manba, `backend/services/design_system.py`),
 >   mavzuga mos rang tanlashni, krossvord (`backend/services/crossword.py` — `js/56_crossword.js` ning aynan nusxasi), ikki ustunli
 >   taqqoslash va katta rasm maketlarini ishlatadi. Tayyor PPTX darhol yuboriladi (`TG_AUTO_SEND`), ostida «✏️ Muharrirda tahrirlash».
+> v79: `SUPABASE_SCHEMA.sql` ni qayta ishga tushiring (18-bo'lim: `tg_username`, `display_name`, `last_active` to'ldiriladi).
+> - Admin: Google va Telegram'ni bir-biriga ulash shart emas — `ADMIN_TG_IDS` dagi Telegram ID **yoki** `ADMIN_EMAILS` dagi Google email.
+> - Admin panel: Telegram foydalanuvchi ismi va @username bilan; eng so'nggi faol odam tepada; har qanday harakat (bot / Mini App /
+>   sayt) «oxirgi faollik»; panel 30 soniyada o'zi yangilanadi; «Telegram» / «Ulanganlar» filtrlari ko'p foydalanuvchida ham ishlaydi.
+> - «🚀 Muharrir»: botdagi taqdimot muharrirdagi qoralamadan yangiroq bo'lsa — o'sha ochiladi. Bir qurilmada 2 akkaunt:
+>   bir akkaunt slaydlari boshqasining qoralamasiga yozilmaydi.
 >
 > **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida
 > `[GUNICORN] RAM limit ... -> N worker(s)` qatori). Qo'lda: `WEB_CONCURRENCY`.
