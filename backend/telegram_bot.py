@@ -291,7 +291,7 @@ def kb_home() -> dict:
     """v75: salomlashuv — bitta asosiy tugma (Mini App) + pastda kichik yordamchi qator."""
     first = ({"text": BTN_EDITOR, "web_app": {"url": _app_url()}} if _https()
              else {"text": BTN_EDITOR, "url": _app_url()})
-    return {"inline_keyboard": [[first], [_btn("💳 Balans", "bal"), _btn("ℹ️ Yordam", "about")]]}
+    return {"inline_keyboard": [[first], [_btn("🆕 Yangi slayd", "new"), _btn("💳 Balans", "bal"), _btn("ℹ️ Yordam", "about")]]}
 
 
 def _menu_button() -> dict:
@@ -323,12 +323,50 @@ def _editor_url(st: dict) -> str:
 
 
 def kb_done(arg: Any = "") -> dict:
-    """v51: tayyor slayd kartasi — 3 ta yuklab olish tugmasi + bitta «Tahrirlash» (qolganlari tahrirlash oynasida)."""
+    """v76: tayyor slayd kartasi — yuklab olish, Muharrirda ochish, dizayn, tahrirlash, qayta yaratish, yangi slayd."""
+    st = arg if isinstance(arg, dict) else {"topic": arg}
+    url = _editor_url(st)
+    open_btn = {"text": "🚀 Muharrirda ochish", "web_app": {"url": url}} if _https() else {"text": "🚀 Muharrirda ochish", "url": url}
     return {"inline_keyboard": [
         [_btn("📊 PPTX", "dl:pptx"), _btn("📕 PDF", "dl:pdf"), _btn("🌐 HTML", "dl:html")],
-        [_btn("✏️ Tahrirlash", "edit")],
-        [_btn("🆕 Yangi slayd", "new"), _btn("📂 Slaydlarim", "my")],
+        [open_btn],
+        [_btn("🎨 Dizaynni almashtirish", "theme"), _btn("✏️ Tahrirlash", "edit")],
+        [_btn("🔁 Qayta yaratish", "regen"), _btn("🆕 Yangi slayd", "new")],
+        [_btn("📂 Slaydlarim", "my")],
     ]}
+
+
+# v76: «🆕 Yangi slayd» bosilganda dizayn tanlanadi (ixtiyoriy). Uslub — AI matn/tuzilishiga ko'rsatma; rang — tg_decks.THEMES.
+STYLES = {
+    "modern": ("✨ Zamonaviy", "Design style: MODERN — bold short headlines, punchy wording, varied layouts (stats, two-column, charts), few words per bullet."),
+    "business": ("💼 Biznes", "Design style: BUSINESS — formal professional tone, concrete numbers, a chart or stats slide where it fits, clear conclusion/next steps."),
+    "minimal": ("◻️ Minimalist", "Design style: MINIMALIST — very few words, max 3 short bullets per slide, lots of white space, simple layouts."),
+}
+
+
+def kb_design(st: dict) -> dict:
+    sty, th = st.get("style") or "", st.get("theme_pref") or ""
+    mark = lambda on, label: ("✅ " if on else "") + label
+    rows = [[_btn(mark(sty == k, v[0]), f"sty:{k}") for k, v in STYLES.items()]]
+    names = list(decks.THEMES.keys()) if decks else []
+    row: list = []
+    for k in names:
+        row.append(_btn(mark(th == k, decks.THEMES[k]["label"]), f"pth:{k}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    row.append(_btn(mark(not th, "🤖 Avto rang"), "pth:auto"))
+    rows.append(row)
+    return {"inline_keyboard": rows}
+
+
+def kb_linked() -> dict:
+    """v76: Google ulangandan keyin — bitta bosishda yangi slayd boshlanadi."""
+    rows = [[_btn("🆕 Yangi slayd", "new")]]
+    if _https():
+        rows.append([{"text": "🚀 Muharrirda ochish", "web_app": {"url": _app_url()}}])
+    rows.append([_btn("💳 Balans", "bal")])
+    return {"inline_keyboard": rows}
 
 
 def kb_edit(arg: Any = "") -> dict:
@@ -468,6 +506,36 @@ def _state(chat_id: int) -> dict:
             break
         _chats.popitem(last=False)
     return st
+
+
+NEW_TTL = 30 * 60          # v76: «🆕 Yangi slayd» bosilgandan keyin shuncha vaqt mavzu yozilmasa — sessiya eskiradi
+BUSY_STALE = 10 * 60       # v76: «busy» shundan uzoq tursa — qotib qolgan deb hisoblanadi (AI timeout'lari ~8 daqiqa)
+
+
+def _set_busy(st: dict) -> None:
+    st["busy"] = True
+    st["busy_ts"] = time.time()
+
+
+def _is_busy(st: dict) -> bool:
+    """Ish bajarilyaptimi? Qotib qolgan (BUSY_STALE dan eski) holat o'zi tozalanadi — bot abadiy «kuting» demaydi."""
+    if not st.get("busy"):
+        return False
+    if time.time() - float(st.get("busy_ts") or 0) > BUSY_STALE:
+        st["busy"] = False
+        return False
+    return True
+
+
+def _new_session(st: dict) -> None:
+    """v76: «🆕 Yangi slayd» — oldingi qoralama/holat tozalanadi. Bazadagi saqlangan slaydlar O'CHIRILMAYDI."""
+    st.update(deck=None, deck_id=None, imgs={}, awaiting=None, topic=None, pending=None,
+              ui="new", ui_ts=time.time(), sending=False)
+    _is_busy(st)                                   # qotib qolgan «busy» bo'lsa — shu yerda tozalanadi
+
+
+def _new_expired(st: dict) -> bool:
+    return st.get("ui") == "new" and time.time() - float(st.get("ui_ts") or 0) > NEW_TTL
 
 
 # ----------------------------------------------------------------------------------------------
@@ -787,7 +855,7 @@ async def _charge(uid: str, email: str, pages: int, tokens: int, mode: str, deta
 # Supabase: faqat MA'LUMOT (qisqa slayd JSON, ulanish). Fayllar (PPTX/PDF/HTML) HECH QACHON saqlanmaydi.
 # Jadvallar: SUPABASE_SCHEMA.sql. Jadval yo'q bo'lsa bot baribir ishlaydi (faqat RAM, restartda tarix yo'qoladi).
 # ----------------------------------------------------------------------------------------------
-MAX_SAVED = 1          # faqat OXIRGI slayd saqlanadi (yangisi eskisini almashtiradi)
+MAX_SAVED = 5          # v76: oxirgi 5 ta slayd saqlanadi — yangi slayd eskisini bexosdan o'chirmaydi
 LINK_TTL = 1800          # 30 min: a new user may need to create a Google account, a sleeping server needs time to wake
 
 
@@ -2988,7 +3056,7 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
     if _overloaded():
         await _send(chat_id, BUSY_TEXT)
         return
-    st["busy"] = True
+    _set_busy(st)
     msg_id: Optional[int] = None
     try:
         mode = st.get("mode", "fast")
@@ -3018,6 +3086,8 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
             prompt = f"User request:\n{topic}\n\nNumber of slides N = {n}"
             if mode == "deep" and not _NO_IMG_RE.search(topic):
                 prompt += "\nIMPORTANT: set \"images\": true and fill the English \"image\" query for the title slide and for about 40% of the bullets slides."
+            if st.get("style") in STYLES:                             # v76: «🆕 Yangi slayd» da tanlangan uslub
+                prompt += "\n" + STYLES[st["style"]][1]
             while tries < 2 and deck is None:
                 tries += 1
                 data, tk = await _ai_json(GEN_SYSTEM, prompt if tries == 1 else prompt + "\n\nReturn ONLY the JSON object, strictly following the schema.", mode)
@@ -3026,6 +3096,8 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
             if deck is None:
                 await _edit(chat_id, msg_id, "⚠️ AI to'g'ri javob bermadi. Hech narsa yechilmadi — mavzuni qayta yuboring.")
                 return
+            if st.get("theme_pref") in decks.THEMES:                  # v76: tanlangan rang AI tanlovidan ustun
+                deck["theme"] = st["theme_pref"]
             imgs_on = (data or {}).get("images", True) is not False or not _NO_IMG_RE.search(topic)   # AI «rasm kerak emas» desa-yu, foydalanuvchi so'ramagan bo'lsa — baribir rasm
             if imgs_on:
                 tokens += await _ensure_image_queries(deck, topic)           # Chuqur AI ko'pincha rasm so'rovini yozmaydi — shuni to'ldiramiz
@@ -3075,7 +3147,7 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
     if _overloaded():
         await _send(chat_id, BUSY_TEXT)
         return
-    st["busy"] = True
+    _set_busy(st)
     msg_id: Optional[int] = None
     try:
         mode = st.get("mode", "fast")
@@ -3529,7 +3601,7 @@ def _incoming_file(msg: dict) -> Optional[Tuple[str, str, int]]:
 
 async def _run_file(chat_id: int, user: dict, file_id: str, fname: str, size: int) -> None:
     st = _state(chat_id)
-    st["busy"] = True
+    _set_busy(st)
     try:
         if not EDITABLE_RE.search(fname):
             await _send(chat_id, "📎 Bu turdagi fayl muharrirda ochilmaydi.\nQo'llanadi: <b>rasm, GIF, video, PPTX, PDF, HTML</b>.", kb_reply())
@@ -3565,7 +3637,7 @@ async def _run_file(chat_id: int, user: dict, file_id: str, fname: str, size: in
 
 async def _run_import(chat_id: int, user: dict, file_id: str, fname: str, pre: Optional[bytes] = None) -> None:
     st = _state(chat_id)
-    st["busy"] = True
+    _set_busy(st)
     msg_id: Optional[int] = None
     try:
         sent = await _send(chat_id, "📎 <b>PPTX o'qilmoqda…</b>")
@@ -3689,7 +3761,7 @@ async def _do_link(cid: int, user: dict, code: str) -> None:
         if not res.get("ok"):
             await asyncio.to_thread(_link_code_restore_sync, got)
     if res.get("ok"):
-        await _send(cid, _linked_text(res), kb_main())
+        await _send(cid, _linked_text(res), kb_linked())
         await _claim_pending_ref(cid, user)               # do'st havolasi bilan kelgan bo'lsa — endi bonus hisoblanadi
     elif res.get("error") == "db":
         await _send(cid, "⚙️ Ulashni hozir bajarib bo'lmadi. 1 daqiqadan keyin saytdagi o'sha tugmani qayta bosing — kod hali ishlaydi.")
@@ -3830,13 +3902,36 @@ async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> Non
     await _edit(cid, mid, text, kb)
 
 
+NEW_TEXT = ("🆕 <b>Yangi slayd</b>\n1️⃣ Dizaynni tanlang (ixtiyoriy) 👇\n2️⃣ Mavzuni yozing — AI slayd tayyorlaydi.\n\n"
+            "<i>Masalan: «Sun'iy intellekt, 8 ta slayd»</i>")
+ASK_NEW_TEXT = ("🆕 Slayd yaratish uchun avval <b>«Yangi slayd»</b> ni bosing.\n"
+                "<i>Shunda eski slayd bilan aralashib ketmaydi.</i>")
+EXPIRED_TEXT = "⌛ Oldingi «Yangi slayd» sessiyasi eskirdi."
+
+
+def kb_ask_new(has_text: bool, has_deck: bool = False) -> dict:
+    rows = [[_btn("🆕 Shu matn bilan yangi slayd", "newgo")]] if has_text else []
+    if has_text and has_deck:
+        rows.append([_btn("✏️ Oxirgi slaydga qo'llash", "editgo")])
+    rows.append([_btn("🆕 Yangi slayd", "new")])
+    return {"inline_keyboard": rows}
+
+
+async def _ask_new(cid: int, st: dict, text: str, expired: bool = False) -> None:
+    """v76: «Yangi slayd» bosilmagan (yoki sessiya eskirgan) — slayd YASALMAYDI. Matn eslab qolinadi:
+    «🆕 Shu matn bilan yangi slayd» — bitta bosishda yangi toza sessiya va generatsiya."""
+    st["ui"] = None
+    st["pending"] = {"text": text, "ts": time.time()} if text else None
+    await _send(cid, (EXPIRED_TEXT + "\n" if expired else "") + ASK_NEW_TEXT, kb_ask_new(bool(text), bool(st.get("deck"))))
+
+
 async def _menu_action(cid: int, user: dict, action: str) -> None:
     st = _state(cid)
     if action == "new":
-        st.update(deck=None, deck_id=None, imgs={}, awaiting=None, topic=None, ui="new")
-        await _send(cid, "🎨 <b>Yangi slayd</b>\nMavzuni yozing — AI slayd tayyorlaydi.\n"
-                         "Yoki oddiy savol bering — slayd yasamasdan javob beraman.\n\n"
-                         "<i>Masalan: «Sun'iy intellekt, 8 ta slayd»</i>")
+        if not await _google_ok(cid, user):              # v76: Google ulanmagan — faqat «Google ulash» tugmasi
+            return
+        _new_session(st)
+        await _send(cid, NEW_TEXT, kb_design(st))
     elif action == "my":
         st["ui"] = None
         await _show_my(cid)
@@ -3914,7 +4009,7 @@ async def _handle_callback(cb: dict) -> None:
             f = None
         if not f or f["cid"] != cid or f["exp"] < time.time():
             await _send(cid, "⌛ Fayl muddati tugagan — qayta yuboring.")
-        elif st.get("busy"):
+        elif _is_busy(st):
             await _send(cid, "⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.")
         else:
             _spawn(_run_import(cid, user, "", f["name"], f["data"]))
@@ -3943,7 +4038,7 @@ async def _handle_callback(cb: dict) -> None:
         if st.get("topic"):
             await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup=kb_count(st["mode"]))
     elif data.startswith("cnt:"):                         # eski xabarlardagi tugmalar uchun
-        if st.get("busy"):
+        if _is_busy(st):
             await _send(cid, "⏳ Oldingi so'rov bajarilmoqda, biroz kuting.")
             return
         topic = st.get("topic")
@@ -3996,6 +4091,56 @@ async def _handle_callback(cb: dict) -> None:
             await _send(cid, _card_text(st["deck"], "🎨", f"Rang: <b>{esc(decks.THEMES[name]['label'])}</b> (bepul)"), kb_done(st))
     elif data == "new":
         await _menu_action(cid, user, "new")
+    elif data.startswith("sty:") or data.startswith("pth:"):
+        val = data[4:]
+        if data.startswith("sty:"):
+            st["style"] = None if st.get("style") == val else (val if val in STYLES else None)
+        else:
+            st["theme_pref"] = val if (decks and val in decks.THEMES) else None
+        st["ui_ts"] = time.time()
+        await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup=kb_design(st))
+    elif data == "newgo":                                   # v76: eslab qolingan matn bilan 1 bosishda yangi slayd
+        pend = st.get("pending") or {}
+        text = pend.get("text") if time.time() - float(pend.get("ts") or 0) < NEW_TTL else ""
+        if not await _google_ok(cid, user):
+            return
+        if _is_busy(st):
+            await _send(cid, "⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.")
+            return
+        await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
+        _new_session(st)
+        if not text:
+            await _send(cid, NEW_TEXT, kb_design(st))
+            return
+        _spawn(_run_new(cid, user, text))
+    elif data == "editgo":                                  # v76: eslab qolingan matn — oxirgi slaydni tahrirlash
+        pend = st.get("pending") or {}
+        text = pend.get("text") if time.time() - float(pend.get("ts") or 0) < NEW_TTL else ""
+        if not await _google_ok(cid, user):
+            return
+        if _is_busy(st):
+            await _send(cid, "⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.")
+            return
+        if not text or not (st.get("deck") or await _restore_deck(cid)):
+            await _send(cid, "Slayd topilmadi. «🆕 Yangi slayd» ni bosing.", kb_start())
+            return
+        await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
+        st.update(ui="edit", pending=None)
+        _spawn(_run_edit(cid, user, text))
+    elif data == "regen":                                   # v76: shu mavzuda qaytadan (varaq yana yechiladi)
+        if not await _google_ok(cid, user):
+            return
+        if _is_busy(st):
+            await _send(cid, "⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.")
+            return
+        if not st.get("deck"):
+            await _restore_deck(cid)
+        topic, deck = st.get("topic"), st.get("deck")
+        if not topic or not deck:
+            await _send(cid, "Mavzu topilmadi. «🆕 Yangi slayd» ni bosing.", kb_start())
+            return
+        n = max(MIN_SLIDES, min(MAX_SLIDES, len(deck.get("slides") or []) or DEFAULT_SLIDES))
+        _spawn(_run_generate(cid, user, topic, n))
 
 
 NEW_SYSTEM = """You are Slide Studio AI inside a Telegram bot. The user is in "new slide" mode. Return ONLY one JSON object (json), no markdown fences.
@@ -4017,7 +4162,7 @@ async def _run_new(chat_id: int, user: dict, text: str) -> None:
     if _overloaded():
         await _send(chat_id, BUSY_TEXT)
         return
-    st["busy"] = True
+    _set_busy(st)
     go_topic, go_n = "", 0
     try:
         uid, email = await _ensure_uid(user)
@@ -4068,7 +4213,7 @@ CHAT_SYSTEM = ("You are Slide Studio AI, a friendly and concise assistant inside
 async def _run_chat(chat_id: int, user: dict, text: str) -> None:
     """Oddiy savol-javob: slaydga tegmaydi (faqat chat narxi yechiladi)."""
     st = _state(chat_id)
-    st["busy"] = True
+    _set_busy(st)
     msg_id: Optional[int] = None
     try:
         mode = st.get("mode", "fast")
@@ -4116,22 +4261,22 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
     if st.get("sup_await"):                               # v70: «💬 Adminga yozish» dan keyingi xabar — adminga
         await _support_take(chat_id, user, text)
         return
-    if st.get("busy"):
-        await _send(chat_id, "⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.")
+    if _is_busy(st):
+        await _send(chat_id, "⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.\n<i>Qotib qolgan bo'lsa — «🆕 Yangi slayd» ni bosing.</i>",
+                    {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")]]})
         return
     ui = st.get("ui")
-    if ui not in ("new", "edit"):
-        if GREETING_RE.match(text):
-            await _send_welcome(chat_id, user)
-            return
-        if not await _google_ok(chat_id, user):
-            return
-        # v64: tugma bosilmasa ham topshiriq bajariladi — AI o'zi hal qiladi: slayd so'ralgan bo'lsa YANGI slayd yaratadi,
-        # oddiy savol bo'lsa javob beradi. Bosh menyuda AI eski slaydni KO'RMAYDI: eski/hozirgi slaydni o'zgartirish
-        # faqat «✏️ Tahrirlash» bosilgandan keyin (shunda AI slaydni ko'rib turadi).
-        _spawn(_run_new(chat_id, user, " ".join(text.split())[:1500]))
+    if ui not in ("new", "edit") and GREETING_RE.match(text):
+        await _send_welcome(chat_id, user)
         return
-    if not await _google_ok(chat_id, user):                # Google ulanmagan bo'lsa slayd yaratilmaydi / tahrirlanmaydi
+    if not await _google_ok(chat_id, user):                # 1-qoida: Google ulanmagan — slayd yo'q, faqat «Google ulash»
+        return
+    clean_text = " ".join(text.split())[:1500]
+    expired = _new_expired(st)
+    if ui not in ("new", "edit") or expired:
+        # v76: «🆕 Yangi slayd» bosilmagan (yoki sessiya eskirgan) — slayd tasodifan yasalmaydi va eski slaydga
+        # yopishmaydi. Matn eslab qolinadi: «🆕 Shu matn bilan yangi slayd» — bitta bosish bilan boshlanadi.
+        await _ask_new(chat_id, st, clean_text, expired)
         return
     if ui == "edit":
         if st.get("deck") or await _restore_deck(chat_id):
@@ -4140,7 +4285,7 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
             st["ui"] = None
             await _send(chat_id, "Slayd topilmadi. «🎨 Yangi slayd» ni bosing.", kb_start())
         return
-    _spawn(_run_new(chat_id, user, " ".join(text.split())[:1500]))
+    _spawn(_run_new(chat_id, user, clean_text))
 
 
 def _balance_footer(usage: Optional[dict], mode: str, email: str, user: dict) -> str:
@@ -4254,7 +4399,7 @@ async def handle_update(data: dict) -> None:
 
     incoming = _incoming_file(msg)
     if incoming:
-        if _state(chat_id).get("busy"):
+        if _is_busy(_state(chat_id)):
             await _send(chat_id, "⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.")
         else:
             _spawn(_run_file(chat_id, user, *incoming))
@@ -4736,7 +4881,7 @@ async def telegram_link_complete(request: Request):
         if mark:
             await asyncio.to_thread(_unmark_link_used_sync, key)
         return JSONResponse({"error": res.get("error") or "link_failed"}, status_code=503)
-    await _send(ids[0], _linked_text(res), kb_main())
+    await _send(ids[0], _linked_text(res), kb_linked())
     try:                                      # v69: the invite bonus also counts when Google is linked from the WEBSITE
         await _claim_pending_ref(ids[0], {"id": ids[0]})
     except Exception as e:
