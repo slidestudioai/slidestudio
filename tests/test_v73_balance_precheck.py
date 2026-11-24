@@ -74,17 +74,30 @@ def test_search_rows_finish_independently(monkeypatch):
 from backend import admin_core  # noqa: E402
 
 
-def test_admin_entry_accepts_telegram_account_of_linked_admin(sb, monkeypatch):
+def test_admin_entry_without_linking(sb, monkeypatch):
+    """v79: admin bo'lish uchun Google va Telegram'ni bir-biriga ULASH SHART EMAS:
+    Telegram akkaunti — ID ADMIN_TG_IDS da bo'lsa; Google akkaunti — email ADMIN_EMAILS da bo'lsa."""
     monkeypatch.setenv("ADMIN_EMAILS", "boss@x.uz")
     monkeypatch.setenv("ADMIN_TG_IDS", "777")
-    sb.tables["tg_links"] = [{"tg_id": 777, "user_id": "u-google", "email": "boss@x.uz"}]
-    r = admin_core.check_admin_user("u-tg", "tg777@t.me")
-    assert r["ok"] is True and r["tg_id"] == 777 and r["email"] == "boss@x.uz"
-    assert admin_core.check_admin_user("u-tg", "tg888@t.me")["ok"] is False        # admin emas
+    admin_core._vip_cache.clear()
+    sb.add_user("t1", "u-tg", "tg777@t.me")
+    sb.users["t1"].app_metadata = {"telegram_id": 777}                 # bot yaratgan haqiqiy Telegram akkaunti
     sb.tables["tg_links"] = []
-    assert admin_core.check_admin_user("u-tg", "tg777@t.me")["ok"] is False        # admin emailiga ulanmagan
-    sb.tables["tg_links"] = [{"tg_id": 777, "user_id": "u-google", "email": "boss@x.uz"}]
-    assert admin_core.check_admin_user("u-google", "boss@x.uz")["ok"] is True       # eski yo'l ham ishlaydi
+    r = admin_core.check_admin_user("u-tg", "tg777@t.me")
+    assert r["ok"] is True and r["tg_id"] == 777
+    assert admin_core.check_admin_user("u-tg", "tg888@t.me")["ok"] is False        # admin emas
+    sb.add_user("t2", "u-fake", "tg777@t.me")                                       # begona akkaunt shu emailni egallasa
+    admin_core._vip_cache.clear()
+    assert admin_core.check_admin_user("u-fake", "tg777@t.me")["ok"] is False
+    g = admin_core.check_admin_user("u-google", "boss@x.uz")                          # Google admin — ulashsiz
+    assert g["ok"] is True and g["tg_id"] == 0
+    assert admin_core.check_admin_user("u-x", "other@x.uz")["ok"] is False
+    # panel tokeni ikkala holatda ham ishlaydi, admin ro'yxatdan chiqarilsa — darhol yaroqsiz
+    assert admin_core.verify_token(admin_core.make_token(777, ""))
+    assert admin_core.verify_token(admin_core.make_token(0, "boss@x.uz"))
+    monkeypatch.setenv("ADMIN_TG_IDS", "")
+    assert not admin_core.verify_token(admin_core.make_token(777, ""))
+    assert admin_core.check_admin_tg(777)["ok"] is False
 
 
 def test_search_rows_default_one_by_one(monkeypatch):

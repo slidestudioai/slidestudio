@@ -718,7 +718,71 @@ async def _refresh_uid_bg(user: dict) -> None:
         _uid_refreshing.discard(tid)
 
 
+_touch_at: Dict[int, float] = {}
+_touch_tasks: set = set()
+
+
+def _profile_extra(user: dict) -> dict:
+    """Admin panel uchun: Telegram ismi va @username (faqat bor bo'lsa)."""
+    name = " ".join(x for x in ((user or {}).get("first_name"), (user or {}).get("last_name")) if x).strip()[:80]
+    out = {}
+    if name:
+        out["display_name"] = name
+    if (user or {}).get("username"):
+        out["tg_username"] = str(user["username"])[:64]
+    return out
+
+
+def _touch_soon(user: dict, uid: str) -> None:
+    """v79: botdagi HAR QANDAY harakat «oxirgi faollik» bo'lib yoziladi (5 daqiqada bir marta, fonda; javobni kutmaydi)."""
+    fn = _deps.get("touch")
+    try:
+        tid = int(user["id"])
+    except Exception:
+        return
+    now = time.time()
+    if not fn or now - _touch_at.get(tid, 0.0) < 300:
+        return
+    _touch_at[tid] = now
+    if len(_touch_at) > 20000:
+        _touch_at.clear()
+    try:
+        t = asyncio.get_running_loop().create_task(asyncio.to_thread(fn, uid, _profile_extra(user)))
+        _touch_tasks.add(t)
+        t.add_done_callback(_touch_tasks.discard)
+    except Exception:
+        pass
+
+
+def _activity(user: dict) -> None:
+    """v79: har bir xabar / tugma bosish — admin panelda «oxirgi faollik» (5 daqiqada bir marta yoziladi)."""
+    if not _deps.get("touch"):
+        return
+    try:
+        tid = int(user["id"])
+    except Exception:
+        return
+    if time.time() - _touch_at.get(tid, 0.0) < 300:
+        return
+    hit = _uids.get(tid)
+    if hit:
+        _touch_soon(user, hit[0])
+    else:
+        try:
+            t = asyncio.get_running_loop().create_task(_warm_account(user))      # akkaunt ochiladi -> _touch_soon
+            _touch_tasks.add(t)
+            t.add_done_callback(_touch_tasks.discard)
+        except Exception:
+            pass
+
+
 async def _ensure_uid(user: dict) -> Tuple[str, str]:
+    res = await _ensure_uid_inner(user)
+    _touch_soon(user, res[0])
+    return res
+
+
+async def _ensure_uid_inner(user: dict) -> Tuple[str, str]:
     """v52: stale-while-revalidate. Har 45 soniyada har bir xabar 2-3 ta Supabase so'rovini (tg_links, auth, user_usage)
     kutib qolardi. Endi kesh eskirgan bo'lsa ham javob darhol beriladi, tekshiruv fonda — Google uzilsa keyingi xabardan ishlaydi."""
     tid = int(user["id"])
@@ -955,6 +1019,16 @@ def _deck_update_sync(deck_id: int, tid: int, deck: dict) -> bool:
         return False
 
 
+def _deck_bump_sync(deck_id: int, tid: int) -> None:
+    sb = _sb()
+    if not sb:
+        return
+    try:
+        sb.table("tg_decks").update({"updated_at": _now_iso()}).eq("id", int(deck_id)).eq("tg_id", int(tid)).execute()
+    except Exception as e:
+        _db_warn(e)
+
+
 def _deck_list_sync(tid: int) -> List[dict]:
     sb = _sb()
     if not sb:
@@ -999,7 +1073,7 @@ async def _restore_deck(chat_id: int, deck_id: Optional[int] = None) -> bool:
     row = await asyncio.to_thread(_deck_get_sync, chat_id, deck_id)
     if not row or not decks:
         return False
-    deck = decks.normalize_deck(row.get("deck"), MAX_SLIDES + 10, row.get("title") or "")
+    deck = decks.normalize_deck(row.get("deck"), MAX_SLIDES + 10, row.get("title") or "", answer_keys=False)
     if not deck:
         return False
     st.update(deck=deck, deck_id=row.get("id"), topic=row.get("topic") or "", lang=row.get("lang") or "uz", imgs={}, awaiting=None)
@@ -1423,7 +1497,7 @@ def _dupes_warning(row: dict) -> str:
 
 
 def _user_line(b: dict) -> str:
-    who = b.get("email") or ""
+    who = b.get("label") or b.get("email") or ""          # v79: Telegram akkauntida — ism / @username
     if b.get("tg_id"):
         who += f" · TG {b['tg_id']}"
     bal = "♾ cheksiz" if b.get("unlimited") else f"{_fmt_pages(float(b.get('free_pages') or 0) + float(b.get('paid_pages') or 0))} varaq"
@@ -2830,7 +2904,7 @@ def _apply_ops(deck: dict, ops: Any) -> Tuple[Optional[dict], int]:
     if not applied:
         return None, 0
     raw = {"title": title, "subtitle": subtitle, "theme": theme, "transition": deck_tr, "slides": [it[1] for it in items]}
-    new_deck = decks.normalize_deck(raw, len(items) + 2, str(title or ""))
+    new_deck = decks.normalize_deck(raw, len(items) + 2, str(title or ""), answer_keys=False)
     return new_deck, changed
 
 
@@ -3229,7 +3303,7 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         if isinstance(data.get("ops"), list):
             new, changed = _apply_ops(deck, data["ops"])            # faqat kerakli slaydlar o'zgaradi
         else:
-            new = decks.normalize_deck(data["deck"], len(deck["slides"]) + 8, deck.get("title", ""))
+            new = decks.normalize_deck(data["deck"], len(deck["slides"]) + 8, deck.get("title", ""), answer_keys=False)
             changed = _changed_slides(deck, new) if new else 0
         if not new:
             await _edit(chat_id, msg_id, "⚠️ O'zgartirishni qo'llab bo'lmadi. Hech narsa yechilmadi — boshqacha yozib ko'ring.", kb_done(st))
@@ -3596,7 +3670,7 @@ def _pptx_to_deck(data: bytes, fname: str = "") -> Tuple[Optional[dict], int]:
                 s["bullets"] = paras[:6]
         slides.append(s)
     base = os.path.splitext(fname or "")[0]
-    deck = decks.normalize_deck({"title": raw[0]["title"] or base, "subtitle": "", "theme": "ocean", "slides": slides}, MAX_SLIDES + 2, base)
+    deck = decks.normalize_deck({"title": raw[0]["title"] or base, "subtitle": "", "theme": "ocean", "slides": slides}, MAX_SLIDES + 2, base, answer_keys=False)
     return deck, skipped
 
 
@@ -3991,6 +4065,7 @@ async def _handle_callback(cb: dict) -> None:
         return
     st = _state(cid)
     await _use_lang(user)
+    _activity(user)
     if data.startswith("lang:"):
         await _choose_lang(cid, mid, user, data[5:])
         return
@@ -4054,6 +4129,7 @@ async def _handle_callback(cb: dict) -> None:
             return
         if await _restore_deck(cid, did):
             st["ui"] = None
+            await asyncio.to_thread(_deck_bump_sync, did, cid)     # v79: ochilgani — «eng oxirgisi» (Muharrir ham shuni ochadi)
             await _send(cid, _card_text(st["deck"], "📂"), kb_done(st))
         else:
             await _send(cid, "Bu slayd topilmadi (o'chirilgan bo'lishi mumkin).")
@@ -4394,6 +4470,7 @@ async def handle_update(data: dict) -> None:
     if _limited(chat_id):
         return
     await _use_lang(user)
+    _activity(user)
 
     if _is_admin(user):
         _ast = _state(chat_id)
@@ -4681,6 +4758,18 @@ def verify_init_data(init_data: str, max_age: int = 86400) -> Optional[dict]:
 
 def _login_sync(user: dict) -> dict:
     """Mini App kirishi. Telegram sayt akkauntiga ulangan bo'lsa — SHU akkaunt sessiyasi (balans bir xil)."""
+    res = _login_sync_inner(user)
+    fn = _deps.get("touch")
+    if fn and not res.get("error"):
+        try:
+            uid = (_uids.get(int(user["id"])) or (None,))[0] or _ensure_uid_sync(user)[0]
+            fn(uid, _profile_extra(user), force=True)        # v79: Mini App ochildi = faollik (+ ism / @username)
+        except Exception as e:
+            _warn("touch-login", f"{type(e).__name__}: {str(e)[:100]}")
+    return res
+
+
+def _login_sync_inner(user: dict) -> dict:
     tid = int(user["id"])
     linked = _linked_sync(tid)
     if linked:
@@ -4995,7 +5084,7 @@ async def telegram_deck_file(t: str = "", fmt: str = "pptx"):
         return JSONResponse({"error": "expired"}, status_code=410)
     deck_id, tid = ids
     row = await asyncio.to_thread(_deck_get_sync, tid, deck_id)
-    deck = decks.normalize_deck(row.get("deck"), MAX_SLIDES + 10, row.get("title") or "") if row else None
+    deck = decks.normalize_deck(row.get("deck"), MAX_SLIDES + 10, row.get("title") or "", answer_keys=False) if row else None
     if not deck:
         return JSONResponse({"error": "not_found"}, status_code=404)
     lang = row.get("lang") or "uz"
@@ -5008,6 +5097,50 @@ async def telegram_deck_file(t: str = "", fmt: str = "pptx"):
         name, stream, mime, size = await asyncio.to_thread(decks.export_stream, deck, _img_index(deck, imgs), fmt, lang)
     imgs = None
     return _stream_response(name, stream, mime, size)
+
+
+def _deck_latest_sync(tid: int) -> Optional[dict]:
+    """v79: shu Telegram akkauntining ENG OXIRGI bot taqdimoti (id, sarlavha, yangilangan vaqt). Faqat o'ziniki (tg_id)."""
+    sb = _sb()
+    if not sb:
+        return None
+    try:
+        rows = (sb.table("tg_decks").select("id,title,updated_at").eq("tg_id", int(tid))
+                .order("updated_at", desc=True).limit(1).execute().data or [])
+        return rows[0] if rows else None
+    except Exception as e:
+        _db_warn(e)
+        return None
+
+
+def _iso_ms(v: Any) -> int:
+    try:
+        return int(datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp() * 1000)
+    except Exception:
+        return 0
+
+
+@router.post("/api/telegram/latest-deck")
+async def telegram_latest_deck(request: Request):
+    """v79: Mini App («🚀 Muharrir») ochilganda: botdagi oxirgi taqdimot muharrirdagi qoralamadan YANGIROQ bo'lsa — o'sha
+    ochiladi (bot va muharrir — bitta akkaunt, eng oxirgi ish). Faqat imzolangan initData egasining o'z taqdimoti."""
+    if not ENABLED:
+        return JSONResponse({"deck": None})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    user = verify_init_data(str((body or {}).get("init_data") or ""))
+    if not user:
+        return JSONResponse({"error": "invalid_init_data"}, status_code=401)
+    tid = int(user["id"])
+    row = await asyncio.to_thread(_deck_latest_sync, tid)
+    if not row or not row.get("id"):
+        return JSONResponse({"deck": None}, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"deck": {"id": int(row["id"]), "title": str(row.get("title") or "")[:120],
+                                  "updated_ms": _iso_ms(row.get("updated_at")),
+                                  "token": _make_token("D", int(row["id"]), tid, 3600)}},
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.post("/api/telegram/auth")

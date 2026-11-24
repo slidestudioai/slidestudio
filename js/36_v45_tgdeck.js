@@ -130,6 +130,42 @@
     toast('Ulab bo‘lmadi. Sahifani yangilang — havola hali ishlaydi.', 'error');      // token kept: a reload retries
   }
 
+  /* v79: «🚀 Muharrir» (havolasiz) ochilganda — botdagi OXIRGI taqdimot muharrirdagi qoralamadan yangiroq bo'lsa, o'sha
+   * ochiladi: bot va muharrir bitta akkaunt, doim eng oxirgi ish ko'rinadi. Qoralamada ish bo'lsa — avval so'raladi
+   * (eski ish bexosdan almashmasin). Rad etilgan taqdimot qayta so'ralmaydi. */
+  async function runLatest() {
+    if (!inTg || deckTok) return;
+    var ready = await waitFor(function () {
+      return window.importPptxClient && window.JSZip && typeof slides !== 'undefined' && slides && slides.length && window.__ssRestoreChecked;
+    }, 45000);
+    if (!ready) return;
+    var j = null;
+    try {
+      var r = await fetch('/api/telegram/latest-deck', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ init_data: tgw.initData }) });
+      if (r.ok) j = await r.json();
+    } catch (e) { return; }
+    var d = j && j.deck;
+    if (!d || !d.token || !d.updated_ms) return;
+    var mark = d.id + ':' + d.updated_ms;
+    if (lsGet('tglatest') === mark) return;                         // shu taqdimot allaqachon ochilgan / rad etilgan
+    var draftAt = 0;
+    try { draftAt = window.ssDraftSavedAt ? await window.ssDraftSavedAt() : 0; } catch (e) {}
+    if (draftAt && draftAt >= d.updated_ms) return;                 // muharrirdagi ish yangiroq — o'sha qoladi
+    var pristine = false;
+    try { pristine = !!(window.ssIsPristineDeck && window.ssIsPristineDeck()); } catch (e) {}
+    lsSet('tglatest', mark);
+    if (draftAt && !pristine && window.Swal) {
+      try {
+        var q = await Swal.fire({ title: 'Botdagi oxirgi taqdimot', text: '«' + (d.title || 'Taqdimot') + '» botda yangiroq. Uni ochaymi? (muharrirdagi oldingi ish almashtiriladi)',
+          icon: 'question', showCancelButton: true, confirmButtonText: 'Ochish', cancelButtonText: 'Yo\u2018q', heightAuto: false });
+        if (!q.isConfirmed) return;
+      } catch (e) { return; }
+    }
+    deckTok = d.token;
+    await runDeck();
+  }
+
   runDeck();
   runLink();
+  runLatest();
 })();

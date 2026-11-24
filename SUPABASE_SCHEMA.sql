@@ -815,3 +815,17 @@ select u.user_id,
   from public.user_usage u;
 revoke all on public.users from anon, authenticated;
 grant select on public.users to service_role;
+
+
+-- ============================================================================
+-- 18) v79: Admin panel — Telegram foydalanuvchining ismi / @username va to'g'ri «oxirgi faollik».
+--   * user_usage.tg_username, display_name — bot va Mini App har kirishda yangilaydi (ID o'rniga ism ko'rinadi).
+--   * last_active: yangi qatorda darhol to'ldiriladi (ro'yxatdan o'tgan vaqt), eski bo'sh qatorlar ham to'ldiriladi —
+--     admin ro'yxatida eng so'nggi faol odam TEPADA turadi. Endi bot / sayt har qanday harakatda yangilaydi
+--     (avval faqat varaq sarflanganda yozilardi). Qayta ishga tushirish xavfsiz.
+-- ============================================================================
+alter table public.user_usage add column if not exists tg_username  text;
+alter table public.user_usage add column if not exists display_name text;
+update public.user_usage set last_active = coalesce(created_at, now()) where last_active is null;
+alter table public.user_usage alter column last_active set default now();
+create index if not exists user_usage_last_active_idx on public.user_usage (last_active desc nulls last);

@@ -860,6 +860,7 @@ def _get_or_create_user_usage_raw(user_id: str, email: str, _retry: int = 2) -> 
             "last_reset_time": now_iso,
             "slide_credits": free_daily_units(),
             "blocked": False,
+            "last_active": now_iso,          # v79: yangi foydalanuvchi admin ro'yxatida darhol tepada
         }
         try:
             supabase.table("user_usage").insert(new_u).execute()
@@ -880,6 +881,37 @@ def _get_or_create_user_usage_raw(user_id: str, email: str, _retry: int = 2) -> 
     except Exception as e:
         print(f"[USAGE] {e}")
         return default
+
+_TOUCH_AT: "OrderedDict[str, float]" = OrderedDict()
+TOUCH_EVERY = 300.0                  # bir foydalanuvchi uchun ko'pi bilan 5 daqiqada bir yozuv
+
+
+def touch_user(user_id: str, extra: Optional[dict] = None, force: bool = False) -> bool:
+    """v79: user_usage.last_active = hozir (+ ixtiyoriy tg_username / display_name). Avval last_active faqat varaq
+    sarflanganda yozilardi — /start, balans, saytga kirish admin panelda «faol» ko'rinmasdi. Balansga tegmaydi
+    (CAS versiyasi o'zgarmaydi). Throttle: 5 daqiqa (ism o'zgarsa — darhol). Ustun yo'q bo'lsa — faqat last_active."""
+    if not supabase or not user_id or str(user_id).startswith(("dev-", "anon-", "guest-")):
+        return False
+    now = time.time()
+    sig = str(user_id) + "|" + json.dumps(extra or {}, sort_keys=True, ensure_ascii=False)
+    last = _TOUCH_AT.get(sig)
+    if not force and last and now - last < TOUCH_EVERY:
+        return False
+    _TOUCH_AT[sig] = now
+    _TOUCH_AT.move_to_end(sig)
+    while len(_TOUCH_AT) > 20000:
+        _TOUCH_AT.popitem(last=False)
+    patch = {"last_active": datetime.now(timezone.utc).isoformat(), **{k: v for k, v in (extra or {}).items() if v is not None}}
+    try:
+        supabase.table("user_usage").update(patch).eq("user_id", str(user_id)).execute()
+    except Exception:
+        try:
+            supabase.table("user_usage").update({"last_active": patch["last_active"]}).eq("user_id", str(user_id)).execute()
+        except Exception as e:
+            print(f"[TOUCH] {str(e)[:120]}")
+            return False
+    return True
+
 
 def get_or_create_user_usage(user_id: str, email: str) -> dict:
     """v47: + VIP bayrog'i (admin Google email / admin Telegram akkaunti) — cheksiz va reklamasiz."""
@@ -1257,6 +1289,7 @@ try:
         MODES=MODES,
         ai_sem=GEMINI_SEMAPHORE,                   # v59: bot va sayt bitta AI kalitini UMUMIY navbat bilan ishlatadi
         checkout=lambda *a, **k: _checkout_for_bot(*a, **k),   # v45: botdan to'lov havolasi (kech bog'lanadi — NameError bo'lmasin)
+        touch=lambda *a, **k: touch_user(*a, **k),   # v79: oxirgi faollik + Telegram ism / @username (admin panel)
         ai=lambda: {
             "api_key": (config.get("api_key") or "").strip(),
             "base_url": config.get("deepseek_base_url") or "https://api.deepseek.com",
@@ -1665,6 +1698,7 @@ def user_usage(request: Request, token: str = "", fresh: int = 0):
         if not who:
             return {"error": "invalid_token"}
         uid, email = who
+        touch_user(uid)                       # v79: saytga kirish ham «oxirgi faollik»
         cached = usage_cache_get(uid, fresh=bool(fresh))
         if cached is not None:
             _metrics.inc("usage_cache_total", {"result": "hit"}, help="/api/user/usage cache")

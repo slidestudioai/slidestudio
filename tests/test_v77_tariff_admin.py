@@ -123,16 +123,19 @@ def _users(sb):
         {"user_id": "g1", "email": "g1@gmail.com", "paid_credits": 0, "free_credits": 200, "last_active": _now(1), "created_at": _now(100)},
         {"user_id": "both", "email": "b@gmail.com", "paid_credits": 40 * U, "free_credits": 0, "last_active": _now(2), "created_at": _now(90)},
         {"user_id": "t1", "email": "tg111@t.me", "paid_credits": 0, "free_credits": 0, "last_active": _now(3), "created_at": _now(80)},
-        {"user_id": "new", "email": "new@gmail.com", "paid_credits": 0, "free_credits": 200, "last_active": None, "created_at": _now(0)},
+        # v79: yangi qatorda last_active = ro'yxatdan o'tgan vaqt (SUPABASE_SCHEMA v79 / main.py insert)
+        {"user_id": "new", "email": "new@gmail.com", "paid_credits": 0, "free_credits": 200, "last_active": _now(0), "created_at": _now(0)},
+        {"user_id": "old", "email": "user_abc@slidestudio.local", "paid_credits": 0, "free_credits": 200, "last_active": None,
+         "created_at": _now(500)},
     ]
     sb.tables["tg_links"] = [{"tg_id": 222, "user_id": "both", "email": "b@gmail.com", "created_at": _now(0.25)}]
 
 
 @pytest.mark.parametrize("flt,want", [
-    ("google", ["new", "g1", "both"]),       # yangi (hali faol emas) ham darhol, tepada
+    ("google", ["new", "g1", "both"]),       # eng so'nggi faol tepada; texnik «@slidestudio.local» Google emas
     ("tg", ["both", "t1"]),
     ("linked", ["both"]),
-    ("all", ["new", "g1", "both", "t1"]),
+    ("all", ["new", "g1", "both", "t1", "old"]),       # v79: faollik yo'q eski qator — ENG PASTDA (avval tepada edi)
 ])
 def test_four_filters(sb, flt, want):
     _users(sb)
@@ -151,7 +154,7 @@ def test_row_shows_connection_and_time(sb):
 def test_stats_match_filters(sb):
     _users(sb)
     s = admin_core.stats()
-    assert (s["users_total"], s["google_users"], s["tg_users"], s["linked"]) == (4, 3, 1, 1)
+    assert (s["users_total"], s["google_users"], s["tg_users"], s["linked"]) == (5, 3, 1, 1)    # «Google» = filtr bilan bir xil
     assert s["google_only"] == 2 and s["tg_total"] == 2
     assert s["paid_left_total"] == 40 and s["paid_users"] == 1
     assert s["tariff"]["slides_per_dollar"] == 100

@@ -99,6 +99,16 @@ function spendText(u){return u.last_spend!=null?`Sarflandi: <b>${u.last_spend}</
 function nav(){$('#nav').innerHTML=TABS.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="go('${t[0]}')"><i>${t[1]}${t[0]==='support'&&supUnread?`<span class="nbadge">${supUnread>99?'99+':supUnread}</span>`:''}</i>${t[2]}</button>`).join('');}
 async function refreshUnread(){try{const r=await api('support_unread');supUnread=+r.unread||0;nav();}catch(e){}}
 function go(t){tab=t;localStorage.setItem('adm_tab',t);nav();load();}
+/* v79: panel o'zi yangilanadi (30 s) — ochiq oyna, yozilayotgan qidiruv yoki yashirin tab bo'lsa kutadi */
+let _arBusy=false;
+setInterval(async()=>{
+  if(document.visibilityState!=='visible'||$('#sheet')||_arBusy)return;
+  const a=document.activeElement;if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.tagName==='SELECT'))return;
+  if(tab!=='home'&&tab!=='users'&&tab!=='support')return;
+  if(tab==='users'&&window.scrollY>200)return;            // pastga tushib ko'rayotgan bo'lsa ro'yxat sakramasin
+  _arBusy=true;try{await load();}catch(e){}finally{_arBusy=false;}
+},30000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!$('#sheet'))load();});
 async function load(force){nav();const m=$('#main');try{await ({home,users,support,ads,settings,more}[tab]||home)(m);}catch(e){if(e.message!=='expired')m.innerHTML='<div class="empty">Yuklanmadi: '+esc(e.message)+'</div>';}}
 
 /* ---------------- BOSH ---------------- */
@@ -123,7 +133,7 @@ const UF_MORE=[['vip','VIP'],['unlimited','Cheksiz'],['blocked','Bloklangan']];
 function setUf(f){uf=f;localStorage.setItem('adm_uf',f);users($('#main'));}
 async function users(m){
   const chip=(c,n)=>`<span class="chip ${uf===c[0]?'on':''}" onclick="setUf('${c[0]}')">${c[1]}${n!=null?' · '+num(n):''}</span>`;
-  m.innerHTML=`<input id="uq" placeholder="Email, Telegram ID yoki user_id…" value="${esc(uq)}"><div class="chips" id="uchips">${UF_MAIN.map(c=>chip(c,ucnt[c[2]])).join('')}${UF_MORE.map(c=>chip(c)).join('')}</div><div class="card" id="ulist" style="padding:0"><div class="empty">…</div></div><div class="row" style="margin-top:10px" id="umore"></div>`;
+  m.innerHTML=`<input id="uq" placeholder="Ism, @username, email, Telegram ID yoki user_id…" value="${esc(uq)}"><div class="chips" id="uchips">${UF_MAIN.map(c=>chip(c,ucnt[c[2]])).join('')}${UF_MORE.map(c=>chip(c)).join('')}</div><div class="card" id="ulist" style="padding:0"><div class="empty">…</div></div><div class="row" style="margin-top:10px" id="umore"></div>`;
   let tm;$('#uq').addEventListener('input',e=>{uq=e.target.value;clearTimeout(tm);tm=setTimeout(()=>fill(true),350);});
   api('stats').then(s=>{ucnt=s;const box=$('#uchips');if(box)box.innerHTML=UF_MAIN.map(c=>chip(c,s[c[2]])).join('')+UF_MORE.map(c=>chip(c)).join('');}).catch(()=>{});
   let off=0,all=[];
@@ -138,18 +148,22 @@ async function users(m){
 }
 function userRow(u){
   const when=u.source==='google'?'kirgan: '+ago(u.created_at):(u.linked_at?'ulangan: '+ago(u.linked_at):'kirgan: '+ago(u.created_at));
-  return `<div class="item ur" onclick="openUser('${esc(u.user_id)}')"><div class="t"><b>${esc(u.email||u.user_id)}</b>
-  <small>${srcBadge(u)} ${planBadge(u)} ${u.tg_id?'✈️ '+u.tg_id+' · ':''}${when} · faol: ${ago(u.last_active)}</small>
+  return `<div class="item ur" onclick="openUser('${esc(u.user_id)}')"><div class="t"><b>${esc(uLabel(u))}</b>
+  <small>${srcBadge(u)} ${planBadge(u)} ${u.tg_id?'✈️ '+u.tg_id+' · ':''}<b>faol: ${ago(u.last_active||u.created_at)}</b> · ${when}</small>
   <small>${balText(u)} · ${spendText(u)}</small></div>${u.blocked?'<span class="badge bad">blok</span>':''}</div>`;
 }
+/* v79: Telegram akkauntida texnik email emas — ism va @username (backend «label» beradi) */
+function uLabel(u){return u.label||u.email||u.user_id;}
+/* v79: «Yordam» xabarlarida ham Telegram foydalanuvchi texnik email emas, ismi bilan */
+function who(x){return /^tg\d+@t\.me$/i.test(x.email||'')?(x.author||x.email):(x.email||x.author||x.user_id);}
 function planBadge(u){if(u.vip_admin||u.plan==='vip')return '<span class="badge vip">VIP</span>';if(u.unlimited)return '<span class="badge vip">∞</span>';if((u.balance||{}).mode==='paid')return '<span class="badge ok">Pullik</span>';return '<span class="badge">Bepul</span>';}
 async function openUser(id){
   const r=await api('user',{user_id:id});const u=r.user;
-  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(u.email||'Foydalanuvchi')}</h3>
+  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(uLabel(u)||'Foydalanuvchi')}</h3>
   <div style="margin:4px 0 10px">${srcBadge(u)} ${planBadge(u)} ${u.blocked?'<span class="badge bad">bloklangan</span>':''} ${u.linked?'<span class="badge ok">Google+TG ulangan</span>':''}</div>
   <div class="card"><div class="kv"><span>Holat va balans</span><span>${balText(u)}</span></div><div class="kv"><span>Oxirgi AI sarfi</span><span>${u.last_spend!=null?'<b>'+u.last_spend+'</b> · '+ago(u.last_spend_at):'—'}</span></div>${u.last_topup_at?`<div class="kv"><span>Oxirgi to'ldirish</span><span>${ago(u.last_topup_at)}</span></div>`:''}
   <div class="kv"><span>Ulanish</span><span>${(SRC[u.source]||SRC.google)[1]}${u.linked_at?' · '+ago(u.linked_at):''}</span></div><div class="kv"><span>Ro'yxatdan o'tgan</span><span>${fdate(u.created_at)} (${ago(u.created_at)})</span></div>
-  <div class="kv"><span>ID</span><span style="font-size:11px">${esc(u.user_id)}</span></div><div class="kv"><span>Telegram</span><span>${u.tg_id||'—'}</span></div><div class="kv"><span>Bepul / Pullik (birlik)</span><span>${u.unlimited?'∞':u.free_pages+' / '+u.paid_pages}</span></div><div class="kv"><span>Kunlik bepul</span><span>${u.daily_pages}${u.daily_override_pages!=null?' (shaxsiy)':''}</span></div><div class="kv"><span>Oxirgi faollik</span><span>${fdate(u.last_active)} (${ago(u.last_active)})</span></div></div>
+  <div class="kv"><span>ID</span><span style="font-size:11px">${esc(u.user_id)}</span></div><div class="kv"><span>Telegram</span><span>${u.tg_id||'—'}${u.username?' · <a href="https://t.me/'+esc(u.username)+'" target="_blank" rel="noopener">@'+esc(u.username)+'</a>':''}${u.name?' · '+esc(u.name):''}</span></div>${u.email?`<div class="kv"><span>Email</span><span>${esc(u.email)}</span></div>`:''}<div class="kv"><span>Bepul / Pullik (birlik)</span><span>${u.unlimited?'∞':u.free_pages+' / '+u.paid_pages}</span></div><div class="kv"><span>Kunlik bepul</span><span>${u.daily_pages}${u.daily_override_pages!=null?' (shaxsiy)':''}</span></div><div class="kv"><span>Oxirgi faollik</span><span>${fdate(u.last_active)} (${ago(u.last_active)})</span></div></div>
   ${u.vip_admin?'<div class="card" style="margin-top:10px">👑 Bu admin akkaunt — doim VIP (cheksiz, reklamasiz). Env ro\'yxatidan boshqariladi.</div>':''}
   <h2>Reja</h2><div class="row"><button class="btn sec sm" onclick="act('${esc(id)}','set_plan',{plan:'free'})">Bepul</button><button class="btn sm vip" onclick="act('${esc(id)}','set_plan',{plan:'vip'})">VIP ∞</button></div>
   <h2>Varaqlar</h2><div class="row"><input id="cadd" type="number" step="1" placeholder="+100 yoki -20"><button class="btn ok fit" onclick="act('${esc(id)}','add_credits',{pages:+$('#cadd').value})">Qo'shish</button></div>
@@ -256,13 +270,13 @@ async function support(m){
   const r=await api('support_list',{limit:100});const t=r.threads||[];
   supUnread=+r.unread_total||0;nav();
   const box=$('#splist');
-  box.innerHTML=t.length?t.map(x=>`<div class="item sp-th${x.unread?' unread':''}" data-uid="${esc(x.user_id)}"><div class="t"><b>${esc(x.email||x.author||x.user_id)}</b><small>${x.last_from_admin?'↩︎ Siz: ':''}${esc(x.last_body)}</small><small>${fdate(x.last_at)}</small></div>${x.unread?`<span class="badge bad">${x.unread}</span>`:''}</div>`).join(''):'<div class="empty">Hali xabar yo\'q</div>';
+  box.innerHTML=t.length?t.map(x=>`<div class="item sp-th${x.unread?' unread':''}" data-uid="${esc(x.user_id)}"><div class="t"><b>${esc(who(x))}</b><small>${x.last_from_admin?'↩︎ Siz: ':''}${esc(x.last_body)}</small><small>${fdate(x.last_at)}</small></div>${x.unread?`<span class="badge bad">${x.unread}</span>`:''}</div>`).join(''):'<div class="empty">Hali xabar yo\'q</div>';
   box.onclick=e=>{const it=e.target.closest('[data-uid]');if(it)openThread(it.getAttribute('data-uid'));};
 }
 async function openThread(uid){
   const r=await api('support_thread',{user_id:uid});
   const msgs=(r.messages||[]).map(x=>`<div class="sp-m${x.from_admin?' adm':''}">${esc(x.body)}<small>${x.from_admin?'Admin · ':x.source==='tg'?'✈️ Telegram · ':'🌐 Sayt · '}${fdate(x.created_at)}</small></div>`).join('')||'<div class="empty">Bo\'sh</div>';
-  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(r.email||'Foydalanuvchi')}</h3><small style="color:var(--mut)"><a href="#" id="sp_user">Foydalanuvchi kartasi →</a></small>
+  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(who(r)||'Foydalanuvchi')}</h3><small style="color:var(--mut)"><a href="#" id="sp_user">Foydalanuvchi kartasi →</a></small>
   <div class="sp-msgs" id="sp_msgs">${msgs}</div>
   <label>Javob (foydalanuvchi saytda ⚙️ Sozlamalar → 💬 Yordam da ko'radi; Telegram ulangan bo'lsa javob botga ham boradi)</label>
   <textarea id="sp_t" maxlength="2000" placeholder="Javob yozing…"></textarea>

@@ -291,6 +291,7 @@
 
             if (userSwitched && !window.__ssUserLogout && _event !== "TOKEN_REFRESHED" && _event !== "INITIAL_SESSION") {
               try {
+                window.__ssAcctSwitch = true;    // v79: qayta yuklanguncha avto-saqlash yo'q (A slaydlari B ga yozilmasin)
 
                 if (!window._ssAuthReloadScheduled) {
                   window._ssAuthReloadScheduled = true;
