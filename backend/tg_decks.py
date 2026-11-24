@@ -1982,6 +1982,8 @@ def export_cached(deck: dict, images: Optional[Dict[int, bytes]], fmt: str, lang
             with _CLOCK:
                 _CACHE[key] = e
                 _LATEST[dh] = key
+        if fmt not in e.out and e.scenes is None:            # v80: kesh boshqa jarayondan kelgan — sahna hali yo'q
+            e.scenes = build_scenes(deck, images, lang)
         if fmt not in e.out:
             if fmt == "pptx":
                 data = render_pptx(e.scenes, title)
@@ -2000,6 +2002,26 @@ def export_cached(deck: dict, images: Optional[Dict[int, bytes]], fmt: str, lang
             _LATEST[dh] = key
             _evict_locked()
         return safe_filename(title, fmt), e.out[fmt], MIME[fmt]
+
+
+def cache_store(deck: dict, images: Optional[Dict[int, bytes]], lang: str, fmt: str, data: bytes,
+                pptx: Optional[bytes] = None) -> None:
+    """v80: boshqa JARAYONDA yasalgan faylni shu jarayon keshiga qo'yadi (backend/services/export_pool.py).
+    Sahna (scenes) bu yerda yo'q — boshqa format kerak bo'lsa export_cached uni o'zi quradi."""
+    dh, key = _cache_key(deck, images, lang)
+    title = deck.get("title") or "Taqdimot"
+    with _CLOCK:
+        e = _CACHE.get(key)
+        if e is None:
+            e = _CACHE[key] = _Entry(None, title)
+        for f, b in ((fmt, data), ("pptx", pptx)):
+            if b and f not in e.out:
+                e.out[f] = b
+                e.size += len(b)
+        e.ts = _time.time()
+        _CACHE.move_to_end(key)
+        _LATEST[dh] = key
+        _evict_locked()
 
 
 def export_stream(deck: dict, images: Optional[Dict[int, bytes]], fmt: str, lang: str = "uz") -> Tuple[str, io.BytesIO, str, int]:

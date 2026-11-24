@@ -166,10 +166,58 @@ def _cur_lang(chat_id: Any = None) -> str:
     return _ctx_lang.get() or (_lang_cache.get(chat_id) if isinstance(chat_id, int) else "") or "uz"
 
 
+class _RateLimiter:
+    """v80: Telegram Bot API umumiy limiti (~30 xabar/soniya butun bot uchun). Ko'p odam bir vaqtda kelganda so'rovlar
+    tekis taqsimlanadi (avval hammasi birdan ketib, 429 olardi va tayyor fayl / karta yo'qolishi mumkin edi).
+    Token-bucket: soniyasiga RATE ta, BURST ta zaxira. Muhim emas so'rovlar (sendChatAction) navbat bo'lsa tashlanadi."""
+    def __init__(self, rate: float, burst: int):
+        self.rate, self.burst = float(rate), float(burst)
+        self.tokens, self.t = float(burst), time.monotonic()
+        self.paused_until = 0.0
+        self.lock = asyncio.Lock()
+
+    def _refill(self) -> None:
+        now = time.monotonic()
+        self.tokens = min(self.burst, self.tokens + (now - self.t) * self.rate)
+        self.t = now
+
+    def try_take(self) -> bool:
+        self._refill()
+        if self.tokens >= 1 and time.monotonic() >= self.paused_until:
+            self.tokens -= 1
+            return True
+        return False
+
+    async def take(self) -> None:
+        loop = asyncio.get_running_loop()
+        if getattr(self, "_loop", None) is not loop:   # lock — shu event loop'niki (testlar / qayta ishga tushish)
+            self._loop, self.lock = loop, asyncio.Lock()
+        async with self.lock:                       # navbat adolatli (FIFO)
+            while True:
+                self._refill()
+                wait = max(0.0, self.paused_until - time.monotonic())
+                if wait <= 0 and self.tokens >= 1:
+                    self.tokens -= 1
+                    return
+                await asyncio.sleep(max(wait, (1 - self.tokens) / self.rate))
+
+    def pause(self, sec: float) -> None:            # Telegram 429 dedi — hamma so'rovlar shuncha kutadi
+        self.paused_until = max(self.paused_until, time.monotonic() + float(sec))
+
+
+_tg_rate = _RateLimiter(float(_env("TG_API_RPS", "25") or 25), int(_env("TG_API_BURST", "30") or 30))
+_OPTIONAL_METHODS = {"sendChatAction"}            # tirbandlikda tashlab yuborilsa ham bo'ladi
+
+
 async def tg(method: str, **payload: Any) -> Optional[Any]:
     """Telegram Bot API chaqiruvi. Xato bo'lsa None (exception ko'tarmaydi)."""
     if not ENABLED:
         return None
+    if method in _OPTIONAL_METHODS:
+        if not _tg_rate.try_take():
+            return None
+    else:
+        await _tg_rate.take()
     if method in _TR_METHODS:
         lang = _cur_lang(payload.get("chat_id"))
         if lang != "uz":
@@ -178,25 +226,27 @@ async def tg(method: str, **payload: Any) -> Optional[Any]:
                     payload[k] = i18n.translate(payload[k], lang)
             if isinstance(payload.get("reply_markup"), dict):
                 payload["reply_markup"] = i18n.translate_markup(payload["reply_markup"], lang)
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             r = await _http().post(f"{API}/{method}", json=payload)
             data = r.json()
             if data.get("ok"):
                 return data.get("result", True)
-            if r.status_code == 429 and attempt == 0:
+            if r.status_code == 429 and attempt < 2 and method not in _OPTIONAL_METHODS:
+                # v80: Telegram aytgan vaqtni TO'LIQ kutamiz (avval ko'pi bilan 5 s — keyin xabar yo'qolardi)
                 wait = int((data.get("parameters") or {}).get("retry_after", 1))
-                await asyncio.sleep(min(max(wait, 1), 5))
+                _tg_rate.pause(min(max(wait, 1), 60))
+                await _tg_rate.take()
                 continue
             desc = str(data.get("description", ""))
             if not any(x in desc.lower() for x in ("blocked", "chat not found", "deactivated", "message is not modified", "query is too old")):
                 _warn(f"api:{method}", f"{method}: {desc}")
             return None
         except Exception as e:
-            if attempt == 1:
+            if attempt >= 1:                         # tarmoq xatosi — avvalgidek 2 urinish
                 _warn(f"net:{method}", f"{method} tarmoq xatosi: {type(e).__name__}")
-            else:
-                await asyncio.sleep(0.6)
+                return None
+            await asyncio.sleep(0.6)
     return None
 
 
@@ -206,7 +256,8 @@ async def tg_send_document(chat_id: int, filename: str, data: Any, mime: str, ca
     if not ENABLED:
         return False
     stream = data if hasattr(data, "read") else io.BytesIO(data)
-    for attempt in range(2):
+    for attempt in range(3):
+        await _tg_rate.take()
         try:
             try:
                 stream.seek(0)
@@ -224,7 +275,7 @@ async def tg_send_document(chat_id: int, filename: str, data: Any, mime: str, ca
             _warn("doc", f"sendDocument: {str(j.get('description'))[:150]}")
             if r.status_code != 429:
                 return False
-            await asyncio.sleep(min(int((j.get("parameters") or {}).get("retry_after", 2)), 6))
+            _tg_rate.pause(min(max(int((j.get("parameters") or {}).get("retry_after", 2)), 1), 60))
         except Exception as e:
             _warn("doc-net", f"sendDocument tarmoq xatosi: {type(e).__name__}")
             await asyncio.sleep(1)
@@ -3075,7 +3126,12 @@ def _int_env_tg(name: str, default: int, lo: int, hi: int) -> int:
     except Exception:
         return default
 _GEN_PARALLEL = _int_env_tg("TG_AI_PARALLEL", 24, 2, 200)
-_EXPORT_PARALLEL = _int_env_tg("TG_EXPORT_PARALLEL", 3, 1, 32)
+try:                                       # v80: server RAM / CPU'siga qarab (backend/services/export_pool.py)
+    from backend.services import export_pool as _xp
+    _EXPORT_PARALLEL = int(_xp.current_plan(quiet=True)["parallel"])
+except Exception as _e:                    # pragma: no cover
+    _xp = None
+    _EXPORT_PARALLEL = _int_env_tg("TG_EXPORT_PARALLEL", 3, 1, 32)
 _gen_sem = asyncio.Semaphore(_GEN_PARALLEL)
 _export_sem = asyncio.Semaphore(_EXPORT_PARALLEL)
 _gen_waiting = 0
@@ -3084,9 +3140,18 @@ _bg: set = set()
 
 
 class _AiSlot:
-    """`async with _AiSlot():` — bir vaqtda 3 ta AI so'rovi, qolgani navbatda (soni hisoblanadi)."""
+    """`async with _AiSlot(on_wait):` — bir vaqtda TG_AI_PARALLEL ta AI so'rovi, qolgani navbatda.
+    v80: navbatda turgan foydalanuvchiga o'rni ko'rsatiladi (on_wait(o'rin)) — saytdagi kabi; jim kutmaydi."""
+    def __init__(self, on_wait=None):
+        self.on_wait = on_wait
+
     async def __aenter__(self):
         global _gen_waiting
+        if self.on_wait is not None and _gen_sem.locked():
+            try:
+                await self.on_wait(_gen_waiting + 1)
+            except Exception:
+                pass
         _gen_waiting += 1
         try:
             await _gen_sem.acquire()
@@ -3096,6 +3161,14 @@ class _AiSlot:
 
     async def __aexit__(self, *a):
         _gen_sem.release()
+
+
+async def _export_file(deck: dict, idx: Dict[int, bytes], fmt: str, lang: str) -> Tuple[str, "io.BytesIO", str, int]:
+    """v80: fayl — kuchli serverda alohida jarayonlarda (barcha yadrolar), kuchsizda oqimda. Natija keshlanadi."""
+    if _xp is not None:
+        name, data, mime = await _xp.export(deck, idx, fmt, lang)
+        return name, io.BytesIO(data), mime, len(data)
+    return await asyncio.to_thread(decks.export_stream, deck, idx, fmt, lang)
 
 
 def _overloaded() -> bool:
@@ -3187,7 +3260,10 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
         extra = f"\n\n{n} ta slayd · {'🧠 Chuqur' if mode == 'deep' else '⚡ Tez'} AI" + ("\n<i>Chuqur rejim 1–2 daqiqa olishi mumkin.</i>" if mode == "deep" else "") + note
         await _edit(chat_id, msg_id, _steps(1, extra))
 
-        async with _AiSlot():
+        async def _queued(pos: int) -> None:
+            await _edit(chat_id, msg_id, _steps(1, extra + f"\n\n⏳ So'rovlar ko'p — navbatdasiz: <b>{pos}</b>-o'rin. Hech narsa yechilmadi, kuting…"))
+
+        async with _AiSlot(_queued):
             deck, tokens, tries = None, 0, 0
             data: Optional[dict] = None
             prompt = f"User request:\n{topic}\n\nNumber of slides N = {n}"
@@ -3412,7 +3488,7 @@ async def _send_files(chat_id: int, fmt: str, followup: bool = True) -> bool:
             files = []
             for f in fmts:
                 async with _export_sem:                                             # CPU/RAM og'ir ish — alohida cheklov (v69)
-                    name, stream, mime, size = await asyncio.to_thread(decks.export_stream, deck, idx, f, lang)
+                    name, stream, mime, size = await _export_file(deck, idx, f, lang)
                 files.append((name, stream, mime))
         else:
             files = [(n, io.BytesIO(d), mt) for n, d, mt in cached]
@@ -3474,7 +3550,7 @@ async def _prewarm_files(chat_id: int) -> None:
         _sweep_imgs(time.time(), force=True)
         idx = _img_index(deck, imgs_q)
         async with _export_sem:
-            await asyncio.to_thread(decks.export_cached, deck, idx, "pptx", lang)
+            await _export_file(deck, idx, "pptx", lang)
     except Exception as e:
         _warn("prewarm", f"oldindan tayyorlash: {type(e).__name__}: {str(e)[:100]}")
 
@@ -4675,6 +4751,8 @@ async def _start_as_leader() -> None:
     if _lead["started"]:
         return
     _lead["started"] = True
+    if _xp is not None and TG_ONE_WORKER:           # v80: eksport jarayonlari FAQAT bot ishlaydigan bitta worker'da
+        _xp.enable()
     if TG_ONE_WORKER:
         try:
             await _serve_followers()
@@ -5094,7 +5172,7 @@ async def telegram_deck_file(t: str = "", fmt: str = "pptx"):
         return _stream_response(name, io.BytesIO(data), mime, len(data))
     async with _export_sem:
         imgs = await _fetch_images(deck, (_state(tid).get("imgs") or {}), True)
-        name, stream, mime, size = await asyncio.to_thread(decks.export_stream, deck, _img_index(deck, imgs), fmt, lang)
+        name, stream, mime, size = await _export_file(deck, _img_index(deck, imgs), fmt, lang)
     imgs = None
     return _stream_response(name, stream, mime, size)
 

@@ -1456,6 +1456,11 @@ async def _lifespan_v43(_app):
                 await tgbot.shutdown()
             except Exception:
                 pass
+        try:                              # v80: eksport jarayonlari ham yopiladi (deploy / restart)
+            from backend.services import export_pool as _xp
+            _xp.shutdown()
+        except Exception:
+            pass
 
 app.router.lifespan_context = _lifespan_v43
 
