@@ -475,6 +475,7 @@
           window.__ssAuthStorage.setItem('ss-auth-v39-pay', JSON.stringify({      // plain localStorage is locked (index.html v39) at: Date.now(), expected: expected,
             beforePaid: st0 ? (st0.paid_credits | 0) : 0, beforeTotal: st0 && typeof st0.total === 'number' ? st0.total : null }));
         } catch (_) {}
+        window.__ssLeaving = true;                         // v82.3: no «Saytdan chiqasizmi?» on the way to the payment page
         window.location.href = data.checkout_url;        // keyin /?payment=success
       }
     } catch (err) {

@@ -203,6 +203,7 @@ PHRASES: List[Tuple[str, str, str]] = BUTTONS + [
     ("⚠️ Akkauntni ochib bo'lmadi. Birozdan keyin urinib ko'ring.", "⚠️ Не удалось открыть аккаунт. Попробуйте чуть позже.", "⚠️ Could not open your account. Please try again shortly."),
     ("⚠️ Xatolik yuz berdi. Hech narsa yechilmadi — birozdan keyin qayta urinib ko'ring.", "⚠️ Произошла ошибка. Ничего не списано — попробуйте чуть позже.", "⚠️ Something went wrong. Nothing was charged — please try again shortly."),
     ("⏳ Hozir so'rovlar juda ko'p. 1–2 daqiqadan keyin qayta urinib ko'ring — hech narsa yechilmadi.", "⏳ Сейчас слишком много запросов. Попробуйте через 1–2 минуты — ничего не списано.", "⏳ Too many requests right now. Try again in 1–2 minutes — nothing was charged."),
+    ("⏳ Juda tez bosildi — 2–3 soniyadan keyin qayta bosing.", "⏳ Слишком быстро — нажмите ещё раз через 2–3 секунды.", "⏳ Too fast — tap again in 2–3 seconds."),
     ("⏳ Oldingi so'rov hali bajarilmoqda — biroz kuting.", "⏳ Предыдущий запрос ещё выполняется — подождите немного.", "⏳ The previous request is still running — please wait."),
     ("⏳ Oldingi so'rov bajarilmoqda, biroz kuting.", "⏳ Предыдущий запрос выполняется, подождите немного.", "⏳ The previous request is running, please wait."),
     # ---- tayyor karta / fayllar ----
