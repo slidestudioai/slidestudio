@@ -483,6 +483,7 @@ def kb_balance(info: Optional[dict] = None) -> dict:
 _seen: "OrderedDict[int, float]" = OrderedDict()
 _rl: "OrderedDict[int, list]" = OrderedDict()
 RL_MAX, RL_WINDOW = 8, 10.0
+TAP_TOO_FAST = "⏳ Juda tez bosildi — 2–3 soniyadan keyin qayta bosing."
 
 
 def _is_dup(update_id: Any) -> bool:
@@ -4162,8 +4163,13 @@ async def _handle_callback(cb: dict) -> None:
     mid = (cb.get("message") or {}).get("message_id")
     user = cb.get("from") or {}
     data = str(cb.get("data") or "")
+    limited = isinstance(cid, int) and _limited(cid, 14)
+    if limited:      # v82.4: too many taps — say so (before: the button silently «did nothing»)
+        await tg("answerCallbackQuery", callback_query_id=cb.get("id"),
+                 text=i18n.translate(TAP_TOO_FAST, _cur_lang(cid)))
+        return
     await tg("answerCallbackQuery", callback_query_id=cb.get("id"))
-    if not isinstance(cid, int) or not isinstance(user.get("id"), int) or _limited(cid, 14):
+    if not isinstance(cid, int) or not isinstance(user.get("id"), int):
         return
     st = _state(cid)
     await _use_lang(user)
