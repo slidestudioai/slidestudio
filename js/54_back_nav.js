@@ -56,11 +56,40 @@
       close: function () { try { toggleAISidebar(false); } catch (e) { call('toggleAISidebar'); } } },
   ];
 
+  // v82: a window closed by «Orqaga» may still be visible for a moment (fade-out animation). During that time it
+  // counts as closed — unless its class changes again (the user opened it once more).
+  var closingL = {};       // name -> { el, cls, until }
+  function suppressed(L, el) {
+    var c = closingL[L.name];
+    if (!c) return false;
+    if (Date.now() > c.until || c.el !== el || el.className !== c.cls) { delete closingL[L.name]; return false; }
+    return true;
+  }
+
   function isOpen(L) {
     var el = L.el();
     if (!el) return false;
+    if (suppressed(L, el)) return false;
     if (L.open) return !!L.open(el) && (L.name === 'slides' || L.name === 'aiPanel' || shown(el));
     return shown(el);
+  }
+
+  // v82: the last-resort `display:none` must not stick. Before, a window that is opened with a class (💳 To'ldirish)
+  // stayed hidden for good after «Orqaga»: its button «did nothing». The style is removed as soon as the window's
+  // class changes again (= it is being opened).
+  function hide(el) {
+    if (!el || !el.style) return;
+    el.style.display = 'none';
+    el.__ssBackHid = el.className;
+  }
+  function unhideReopened() {
+    LAYERS.forEach(function (L) {
+      var el;
+      try { el = L.el(); } catch (e) { return; }
+      if (!el || el.__ssBackHid === undefined) return;
+      if (el.style.display !== 'none') { delete el.__ssBackHid; return; }      // its own code showed it again
+      if (el.className !== el.__ssBackHid) { el.style.removeProperty('display'); delete el.__ssBackHid; }
+    });
   }
 
   var stack = [];          // names of open layers, in the order they were opened (last = top)
@@ -69,6 +98,7 @@
   var closing = false;
 
   function sync() {
+    unhideReopened();
     var open = LAYERS.filter(isOpen).map(function (L) { return L.name; });
     stack = stack.filter(function (n) { return open.indexOf(n) >= 0; });
     open.forEach(function (n) { if (stack.indexOf(n) < 0) stack.push(n); });
@@ -101,14 +131,27 @@
     var L = LAYERS.filter(function (x) { return x.name === top; })[0];
     if (!L) return;
     closing = true;
+    var el = null;
     try {
-      var el = L.el();
+      el = L.el();
       if (L.close) L.close(el);
-      if (isOpen(L)) { esc(); }
-      if (isOpen(L) && el && el.style) el.style.display = 'none';      // last resort for display-based windows
     } catch (e) {}
     closing = false;
     stack.pop();
+    if (el && isOpen(L)) {
+      // still visible: maybe a fade-out. Wait for it; force-hide only if it really did not close.
+      closingL[L.name] = { el: el, cls: el.className, until: Date.now() + 1500 };
+      setTimeout(function () {
+        var c = closingL[L.name];
+        var same = !!c && c.el === L.el() && c.el.className === c.cls;     // not opened again meanwhile
+        delete closingL[L.name];
+        try {
+          if (same && isOpen(L)) esc();
+          if (same && isOpen(L)) hide(el);                                 // last resort
+        } catch (e) {}
+        schedule();
+      }, 650);
+    }
     schedule();
   });
 

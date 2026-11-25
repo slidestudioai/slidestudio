@@ -1365,6 +1365,64 @@ def purge_old_rows_once() -> Optional[dict]:
         return None
 
 
+_HOUSEKEEP = {"last": 0.0, "off": False, "alerted": 0.0}
+
+
+def housekeep_db_once() -> Optional[dict]:
+    """v82: Supabase limit himoyasi (SQL public.housekeep, 19-bo'lim). Har soatda keraksiz yozuvlarni o'chiradi;
+    baza hajmi DB_SOFT_LIMIT_MB (standart 400; bepul reja 500 MB) dan oshsa — favqulodda (qattiqroq) tozalash.
+    To'lovlar va balans hech qachon o'chirilmaydi. Natija: {..., 'emergency', 'db_size_mb', 'size_before_mb'} yoki None."""
+    if not supabase or _HOUSEKEEP["off"]:
+        return None
+    _HOUSEKEEP["last"] = time.time()
+    soft = max(50, _env_int("DB_SOFT_LIMIT_MB", 400))
+    try:
+        size = None
+        try:
+            r = supabase.rpc("db_size_mb", {}).execute()
+            size = float(r.data[0] if isinstance(r.data, list) and r.data else r.data)
+        except Exception as e:
+            if not _is_missing_rpc(e):
+                print(f"[HOUSEKEEP] db_size_mb: {str(e)[:120]}")
+        emergency = size is not None and size >= soft
+        r = supabase.rpc("housekeep", {"p_emergency": emergency,
+                                       "p_deck_days": max(7, _env_int("RETENTION_TG_DECKS_DAYS", 180)),
+                                       "p_batch": 5000}).execute()
+        data = r.data[0] if isinstance(r.data, list) and r.data else r.data
+        data = dict(data) if isinstance(data, dict) else {}
+        data["size_before_mb"] = size
+        removed = sum(int(v or 0) for k, v in data.items() if isinstance(v, int) and not isinstance(v, bool))
+        if removed or emergency:
+            print(f"[HOUSEKEEP] {data}")
+        if emergency:
+            data["soft_limit_mb"] = soft
+        return data
+    except Exception as e:
+        if _is_missing_rpc(e) or "housekeep" in str(e).lower():
+            print("[HOUSEKEEP] ⚠️ SQL funksiya public.housekeep yo'q (SUPABASE_SCHEMA.sql 19-bo'lim) — tozalash o'chiq.")
+            _HOUSEKEEP["off"] = True
+        else:
+            print(f"[HOUSEKEEP] {str(e)[:160]}")
+        return None
+
+
+async def _housekeep_db_and_alert() -> None:
+    data = await asyncio.to_thread(housekeep_db_once)
+    if not data or not data.get("emergency") or tgbot is None:
+        return
+    if time.time() - _HOUSEKEEP["alerted"] < 6 * 3600:          # adminlarga 6 soatda ko'pi bilan bir marta
+        return
+    _HOUSEKEEP["alerted"] = time.time()
+    text = (f"⚠️ Supabase baza hajmi: {data.get('size_before_mb')} MB (chegara {data.get('soft_limit_mb')} MB).\n"
+            f"Favqulodda tozalash bajarildi, hozir: {data.get('db_size_mb')} MB.\n"
+            f"To'lovlar va balanslar o'chirilmadi. Hajm kamaymasa — Supabase rejasini oshiring.")
+    for tid in list(admin_core.admin_tg_ids()):
+        try:
+            await tgbot.admin_send(int(tid), text)
+        except Exception:
+            pass
+
+
 async def _housekeeping_loop():
     """Har 10 daqiqada eskirgan xotirani tozalaydi (RAM o'sib ketmasligi uchun)."""
     import gc
@@ -1390,6 +1448,8 @@ async def _housekeeping_loop():
                 _UWIN.pop(k, None)
             if now - _PURGE["last"] > 86400 + (os.getpid() % 3600):     # Audit M3: once a day, workers spread out
                 await asyncio.to_thread(purge_old_rows_once)
+            if now - _HOUSEKEEP["last"] > 3600 + (os.getpid() % 600):   # v82: hourly Supabase limit guard
+                await _housekeep_db_and_alert()
             gc.collect()
         except Exception as e:
             print(f"[HOUSEKEEPING] {str(e)[:120]}")

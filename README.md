@@ -76,6 +76,11 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 > MAJBURIY emas. Ulangach: bitta balans, bitta oxirgi taqdimot (saytda ham), Mini App Google akkaunt bilan ochiladi.
 > Namoyish: har tahrir ko'rinadi (to'liq xesh) va GIF / rasmlar muharrir xotirasidan olinadi — qayta yuklanmaydi.
 >
+> v82: **Supabase limiti himoyasi.** `SUPABASE_SCHEMA.sql` ni qayta ishga tushiring (19-bo'lim: `housekeep`, `db_size_mb`).
+> Server har soatda keraksiz yozuvlarni o'zi o'chiradi (eski AI javoblari, muddati o'tgan kodlar, 180 kun ochilmagan bot
+> taqdimotlari). Baza `DB_SOFT_LIMIT_MB` (standart 400 MB) dan oshsa — favqulodda tozalash va adminlarga Telegram xabar.
+> To'lovlar (`payment_events`), balanslar (`user_usage`) va to'lov jurnali HECH QACHON o'chirilmaydi.
+>
 > **Worker soni** serverning RAM/CPU'siga qarab o'zi tanlanadi (`backend/gunicorn_conf.py`; deploy logida
 > `[GUNICORN] RAM limit ... -> N worker(s)` qatori). Qo'lda: `WEB_CONCURRENCY`.
 
