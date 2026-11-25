@@ -229,6 +229,7 @@
     renderBalance(false);
     refreshBalance();
     loadFee();
+    clearTimeout(hideTimer);                       // v82.2: a close() just before must not hide the reopened window
     els.modal.hidden = false;
     vvStart();
     requestAnimationFrame(function () { els.modal.classList.add('tu-open'); });
@@ -306,12 +307,14 @@
     onCustomInput();
   }
 
+  var hideTimer = null;
   function close() {
     if (!els.modal || els.modal.hidden) return;
     vvStop();
     els.modal.classList.remove('tu-open');
     document.removeEventListener('keydown', onKey, true);
-    setTimeout(function () { els.modal.hidden = true; }, 220);
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function () { if (!els.modal.classList.contains('tu-open')) els.modal.hidden = true; }, 220);
     try { if (lastFocus && lastFocus.focus) lastFocus.focus(); } catch (_) {}
   }
 

@@ -74,3 +74,22 @@ test('fast: close with X, open another at once, Back closes the new one and stay
   expect(await page.evaluate(() => SSBackNav.state().depth)).toBe(0);
 });
 
+
+test('💳 top-up: Back (or X), then «To\'ldirish» again at once — the window opens and stays open', async ({ page }) => {
+  await openEditor(page);
+  for (const how of ['back', 'x', 'back']) {
+    await page.evaluate("(supabaseToken = 'devtok', openTopUpModal())");
+    await waitVisible(page, 'topUpModal', true);
+    await page.waitForTimeout(300);
+    if (how === 'back') await page.goBack(); else await page.click('#topUpModal [data-tu-close]');
+    await page.waitForTimeout(80);                                    // still fading out
+    await page.evaluate('openTopUpModal()');
+    await page.waitForTimeout(1200);                                  // longer than every hide timer
+    expect(await visible(page, 'topUpModal')).toBe(true);
+    await expect(page.locator('#tuPayBtn')).toBeVisible();
+    await page.click('#topUpModal [data-tu-close]');
+    await waitVisible(page, 'topUpModal', false);
+    await page.waitForTimeout(400);
+  }
+  expect(await page.evaluate(() => SSBackNav.state().depth)).toBe(0);
+});
