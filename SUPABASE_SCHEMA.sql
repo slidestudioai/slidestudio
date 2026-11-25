@@ -851,3 +851,98 @@ alter table public.user_usage add column if not exists display_name text;
 update public.user_usage set last_active = coalesce(created_at, now()) where last_active is null;
 alter table public.user_usage alter column last_active set default now();
 create index if not exists user_usage_last_active_idx on public.user_usage (last_active desc nulls last);
+
+
+-- ============================================================================
+-- 19) v82: AVTOMATIK TOZALASH — Supabase bepul rejasi (500 MB) to'lib qolmasligi uchun.
+--   Server har soatda public.housekeep(false) ni chaqiradi; baza hajmi DB_SOFT_LIMIT_MB (standart 400 MB)
+--   dan oshsa — public.housekeep(true) (favqulodda, qattiqroq tozalash) va adminlarga Telegram xabar.
+--   HECH QACHON o'chirilmaydi: payment_events (to'lovlar), user_usage (balans), support_messages (oxirgi 1 yil),
+--   usage_ledger dagi to'lov / admin / ulash yozuvlari.
+--   Oddiy rejim:      ai_turn_results > 2 soat, muddati o'tgan tg_link_codes, tg_pending_refs > 30 kun,
+--                     tg_decks: p_deck_days kun ochilmagan taqdimotlar, support_messages > 365 kun.
+--   Favqulodda rejim: + ai_turn_results > 10 daqiqa, tg_decks > 30 kun va har odamda faqat ENG OXIRGI 1 ta,
+--                     usage_ledger (AI sarfi) > 30 kun, admin_audit > 90 kun, ad_sent > 3 kun, support > 180 kun.
+--   O'chirilgan joy PostgreSQL tomonidan qayta ishlatiladi (baza boshqa o'smaydi). Qayta ishga tushirish xavfsiz.
+-- ============================================================================
+create or replace function public.db_size_mb() returns numeric
+language sql
+security definer
+set search_path = public
+as $$ select round(pg_database_size(current_database()) / 1048576.0, 1) $$;
+
+revoke all on function public.db_size_mb() from public, anon, authenticated;
+grant execute on function public.db_size_mb() to service_role;
+
+create or replace function public.housekeep(p_emergency boolean default false, p_deck_days int default 180,
+                                            p_batch int default 5000)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  n int;
+  c_turns int := 0; c_codes int := 0; c_refs int := 0; c_decks int := 0; c_ledger int := 0;
+  c_audit int := 0; c_adsent int := 0; c_support int := 0;
+  v_deck_days int := greatest(7, coalesce(p_deck_days, 180));
+begin
+  if p_batch < 1 then raise exception 'bad arguments'; end if;
+  if p_emergency then v_deck_days := least(v_deck_days, 30); end if;
+
+  -- AI javoblari faqat uzilgan ulanishni tiklash uchun kerak (bir necha daqiqa)
+  loop
+    delete from public.ai_turn_results where request_id in (
+      select request_id from public.ai_turn_results
+       where created_at < now() - (case when p_emergency then interval '10 minutes' else interval '2 hours' end)
+       limit p_batch);
+    get diagnostics n = row_count; c_turns := c_turns + n; exit when n < p_batch;
+  end loop;
+
+  delete from public.tg_link_codes where expires_at < now() - interval '1 day';
+  get diagnostics c_codes = row_count;
+  delete from public.tg_pending_refs where created_at < now() - interval '30 days';
+  get diagnostics c_refs = row_count;
+
+  -- uzoq vaqt ochilmagan bot taqdimotlari (JSON — eng katta jadval)
+  loop
+    delete from public.tg_decks where id in (
+      select id from public.tg_decks where updated_at < now() - make_interval(days => v_deck_days) limit p_batch);
+    get diagnostics n = row_count; c_decks := c_decks + n; exit when n < p_batch;
+  end loop;
+
+  if p_emergency then
+    delete from public.tg_decks d using (
+      select id, row_number() over (partition by tg_id order by updated_at desc, id desc) as rn from public.tg_decks
+    ) x where d.id = x.id and x.rn > 1;
+    get diagnostics n = row_count; c_decks := c_decks + n;
+    loop
+      delete from public.usage_ledger where id in (
+        select id from public.usage_ledger
+         where created_at < now() - interval '30 days'
+           and kind not in ('purchase', 'refund', 'admin_credit', 'account_merge_in', 'tg_link_in')
+         limit p_batch);
+      get diagnostics n = row_count; c_ledger := c_ledger + n; exit when n < p_batch;
+    end loop;
+    delete from public.admin_audit where created_at < now() - interval '90 days';
+    get diagnostics c_audit = row_count;
+    delete from public.ad_sent where sent_at < now() - interval '3 days';
+    get diagnostics c_adsent = row_count;
+  end if;
+
+  delete from public.support_messages
+   where created_at < now() - (case when p_emergency then interval '180 days' else interval '365 days' end);
+  get diagnostics c_support = row_count;
+
+  return jsonb_build_object('emergency', p_emergency, 'ai_turn_results', c_turns, 'tg_link_codes', c_codes,
+                            'tg_pending_refs', c_refs, 'tg_decks', c_decks, 'usage_ledger', c_ledger,
+                            'admin_audit', c_audit, 'ad_sent', c_adsent, 'support_messages', c_support,
+                            'db_size_mb', public.db_size_mb());
+end;
+$$;
+
+revoke all on function public.housekeep(boolean, int, int) from public, anon, authenticated;
+grant execute on function public.housekeep(boolean, int, int) to service_role;
+create index if not exists tg_decks_updated_idx on public.tg_decks (updated_at);
+create index if not exists tg_pending_refs_created_idx on public.tg_pending_refs (created_at);
+create index if not exists tg_link_codes_expires_idx on public.tg_link_codes (expires_at);
