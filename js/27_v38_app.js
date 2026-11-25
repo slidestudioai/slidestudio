@@ -24,7 +24,10 @@
       return (p.objects && p.objects.length > 0) || (p.gifs && p.gifs.length > 0) || !!p.backgroundGif || !!p.backgroundVideo;
     }, false);
   }
+  window.addEventListener('pageshow', function () { window.__ssLeaving = false; });   // v82.3: came back with browser Back
   window.addEventListener('beforeunload', function (e) {
+    if (window.__ssLeaving) return;                                  // v82.3: Google login / payment page
+    if (window.ssDraftDirty && !window.ssDraftDirty()) return;       // v82.3: already auto-saved
     if (deckHasContent() && safe(function () { return hasUnsavedChanges; }, true)) { e.preventDefault(); e.returnValue = ''; return ''; }
   });
   // sozlamalarda ko'rsatish uchun

@@ -505,6 +505,7 @@
           }
         } catch (e) {}
         window.name = '';
+        window.__ssLeaving = true;                 // v82.3: no «Saytdan chiqasizmi?» on the way to Google
         window.location.href = data.url;
       } catch (e) {
         isSavingOrAuthenticating = false;

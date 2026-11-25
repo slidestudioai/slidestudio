@@ -1745,7 +1745,8 @@ function resetChatOnLoad() {
     window.loadSlideCanvas = loadSlideCanvas;
     window.syncUiAfterAiChange = syncUiAfterAiChange;
     window.addEventListener('beforeunload', (e) => {
-      if (!hasUnsavedChanges || isSavingOrAuthenticating) return;
+      if (!hasUnsavedChanges || isSavingOrAuthenticating || window.__ssLeaving) return;
+      if (window.ssDraftDirty && !window.ssDraftDirty()) return;       // v82.3: already auto-saved
       e.preventDefault();
       e.returnValue = '';
     });

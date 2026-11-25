@@ -358,6 +358,19 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') persistNow(true); });
   window.addEventListener('pagehide', function () { persistNow(true); });
   window.ssPersistNow = function () { return persistNow(true); };
+  /** v82.3: true = there are edits the auto-saved draft does not have yet («Saytdan chiqasizmi?» only then) */
+  window.ssDraftDirty = function () {
+    try {
+      if (!canvasBusy()) safe(function () { saveCurrentSlideState(); });
+      var key = draftKey();
+      if (ownerKey && ownerKey !== key && ownerKey !== draftKey('')) return false;     // not this account's draft
+      if (isPristineDeck()) return false;
+      var sig = key + '|' + slideSig() + '|' + (typeof projectTitle === 'string' ? projectTitle : '') + '|' + activeIndex;
+      if (sig === lastSavedSig) return false;
+      persistNow(true);                         // try to save now (the user may press «Cancel» and stay)
+      return true;
+    } catch (e) { return true; }
+  };
   /** v79: shu akkauntning qoralamasi qachon saqlangan (ms, yo'q bo'lsa 0) — 36_v45_tgdeck.js «eng oxirgisi» uchun */
   window.ssDraftSavedAt = async function () {
     try { var rec = await pTimeoutP(idbGet(draftKey()), 3000); return (rec && rec.owner === draftKey() && +rec.savedAt) || 0; }
