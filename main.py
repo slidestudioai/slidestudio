@@ -2188,6 +2188,26 @@ def _apply_payment_sync(key: str, user_id: str, pages: int, sign: int, event_nam
         data = data[0] if data else {}
     return data if isinstance(data, dict) else {}
 
+_REFUND_RPC = {"off": False}
+
+
+def _apply_refund_sync(key: str, orig_key: str, user_id: str, pages: int, event_name: str) -> Optional[dict]:
+    """v82.5: SQL public.apply_refund (20-bo'lim). None = function not installed yet -> the old path is used."""
+    if not supabase or _REFUND_RPC["off"]:
+        return None
+    try:
+        r = supabase.rpc("apply_refund", {"p_key": key, "p_orig_key": orig_key, "p_user_id": str(user_id),
+                                          "p_pages": int(pages), "p_unit": int(UNIT), "p_event": event_name}).execute()
+    except Exception as e:
+        if _is_missing_rpc(e) or "apply_refund" in str(e).lower():
+            print("[DODO WEBHOOK] ⚠️ public.apply_refund yo'q (SUPABASE_SCHEMA.sql 20-bo'lim) — eski refund yo'li.")
+            _REFUND_RPC["off"] = True
+            return None
+        raise
+    data = r.data[0] if isinstance(r.data, list) and r.data else r.data
+    return data if isinstance(data, dict) else {}
+
+
 def _find_user_by_telegram_id(tid: Any) -> str:
     """v78: Telegram akkaunti (user_usage.telegram_id, eski qatorlarda — tg<ID>@t.me) bo'yicha user_id."""
     try:
@@ -2431,6 +2451,24 @@ async def dodo_webhook(request: Request):
         # Audit M3: without refund_id the key used to be the amount, so two partial refunds of the same amount
         # collided (the 2nd was lost). webhook-id is unique per event and stable across Dodo's retries.
         key = f"refund-{pay_key}-{refund_id or request.headers.get('webhook-id') or amount}"
+        # v82.5: atomic in SQL (the original payment row is locked; "already refunded" is re-counted inside)
+        async with _user_lock(user_id):
+            res = await asyncio.to_thread(_apply_refund_sync, key, pay_key, user_id, pages, etype)
+        if res is not None:
+            if res.get("duplicate") or int(res.get("pages") or 0) <= 0:
+                return {"ok": True, "duplicate": True}
+            pages = int(res["pages"])
+            usage_cache_drop(user_id)
+            u = await asyncio.to_thread(get_or_create_user_usage, user_id, "")
+            await asyncio.to_thread(ledger_log, user_id, "refund", -pages * UNIT, u, 0, {"order": payment_id})
+            try:
+                if tgbot is not None:
+                    asyncio.create_task(tgbot.notify_purchase(str(user_id), pages, True))
+            except Exception:
+                pass
+            _metrics.inc("webhook_events_total", {"result": "refunded"})
+            print(f"[DODO WEBHOOK] {etype}: -{pages} -> {user_id} (payment={payment_id}, atomic)")
+            return {"ok": True, "user_id": user_id, "paid_credits": u.get("paid_credits"), "pages": pages}
         u = await _credit_user(user_id, "", key, pages, -1, etype, payment_id)
         if u is None:
             return {"ok": True, "duplicate": True}

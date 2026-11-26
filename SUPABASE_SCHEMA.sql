@@ -946,3 +946,60 @@ grant execute on function public.housekeep(boolean, int, int) to service_role;
 create index if not exists tg_decks_updated_idx on public.tg_decks (updated_at);
 create index if not exists tg_pending_refs_created_idx on public.tg_pending_refs (created_at);
 create index if not exists tg_link_codes_expires_idx on public.tg_link_codes (expires_at);
+
+
+-- ============================================================================
+-- 20) v82.5: ATOMIK refund. Bir to'lovga bir vaqtda ikkita qisman refund kelsa (ikki server jarayoni),
+--     ikkalasi ham "qancha qaytarilgan" ni eski holatda o'qib, ortiqcha kredit yechishi mumkin edi.
+--     Endi asl to'lov qatori qulflanadi (FOR UPDATE), qolgan miqdor shu tranzaksiyada hisoblanadi.
+--     Qayta ishga tushirish xavfsiz.
+-- ============================================================================
+create or replace function public.apply_refund(
+  p_key text, p_orig_key text, p_user_id text, p_pages int, p_unit int, p_event text default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_orig int; v_done int; v_pages int; v_ins int; v_paid int; v_free int;
+begin
+  if p_pages < 0 or p_unit <= 0 then
+    raise exception 'bad arguments';
+  end if;
+  select pages into v_orig from public.payment_events
+   where order_id = p_orig_key and user_id = p_user_id for update;          -- bir to'lovning refundlari navbat bilan
+  if not found then
+    return jsonb_build_object('duplicate', true, 'pages', 0, 'unknown_payment', true);
+  end if;
+  if exists (select 1 from public.payment_events where order_id = p_key) then
+    return jsonb_build_object('duplicate', true, 'pages', 0);
+  end if;
+  select coalesce(sum(pages), 0) into v_done from public.payment_events
+   where starts_with(order_id, 'refund-' || p_orig_key || '-');
+  v_pages := least(p_pages, greatest(0, coalesce(v_orig, 0) - v_done));
+  if v_pages <= 0 then
+    return jsonb_build_object('duplicate', true, 'pages', 0);
+  end if;
+  insert into public.payment_events (order_id, user_id, pages, units, event_name)
+  values (p_key, p_user_id, v_pages, v_pages * p_unit, p_event)
+  on conflict (order_id) do nothing;
+  get diagnostics v_ins = row_count;
+  if v_ins = 0 then
+    return jsonb_build_object('duplicate', true, 'pages', 0);
+  end if;
+  update public.user_usage
+     set paid_credits  = greatest(0, paid_credits - v_pages * p_unit),
+         slide_credits = free_credits + greatest(0, paid_credits - v_pages * p_unit),
+         last_active   = now()
+   where user_id = p_user_id
+   returning paid_credits, free_credits into v_paid, v_free;
+  if not found then
+    raise exception 'user_not_found';
+  end if;
+  return jsonb_build_object('duplicate', false, 'pages', v_pages, 'paid_credits', v_paid, 'free_credits', v_free);
+end;
+$$;
+
+revoke all on function public.apply_refund(text, text, text, int, int, text) from public, anon, authenticated;
+grant execute on function public.apply_refund(text, text, text, int, int, text) to service_role;

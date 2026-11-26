@@ -223,6 +223,8 @@ class FakeSupabase:
             raise FakeAPIError(f"Could not find the function public.{name} (PGRST202)")
         if name == "apply_payment":
             return _Rpc(lambda: self._apply_payment(**params))
+        if name == "apply_refund":
+            return _Rpc(lambda: self._apply_refund(**params))
         if name == "transfer_paid_credits":
             return _Rpc(lambda: self._transfer(**params))
         if name == "charge_units":
@@ -244,6 +246,27 @@ class FakeSupabase:
             u["paid_credits"] = max(0, int(u.get("paid_credits") or 0) + p_sign * p_units)
             u["slide_credits"] = int(u.get("free_credits") or 0) + u["paid_credits"]
             return {"duplicate": False, "paid_credits": u["paid_credits"], "free_credits": u["free_credits"]}
+
+    def _apply_refund(self, p_key, p_orig_key, p_user_id, p_pages, p_unit, p_event=None):
+        """Copy of public.apply_refund (SUPABASE_SCHEMA.sql, section 20)."""
+        with self.lock:
+            ev = self.tables.setdefault("payment_events", [])
+            orig = [r for r in ev if r["order_id"] == p_orig_key and r["user_id"] == p_user_id]
+            if not orig:
+                return {"duplicate": True, "pages": 0, "unknown_payment": True}
+            if any(r["order_id"] == p_key for r in ev):
+                return {"duplicate": True, "pages": 0}
+            done = sum(int(r.get("pages") or 0) for r in ev if r["order_id"].startswith(f"refund-{p_orig_key}-"))
+            pages = min(int(p_pages), max(0, int(orig[0].get("pages") or 0) - done))
+            if pages <= 0:
+                return {"duplicate": True, "pages": 0}
+            u = self.usage(p_user_id)
+            if not u:
+                raise FakeAPIError("user_not_found")
+            ev.append({"order_id": p_key, "user_id": p_user_id, "pages": pages, "units": pages * p_unit, "event_name": p_event})
+            u["paid_credits"] = max(0, int(u.get("paid_credits") or 0) - pages * p_unit)
+            u["slide_credits"] = int(u.get("free_credits") or 0) + u["paid_credits"]
+            return {"duplicate": False, "pages": pages, "paid_credits": u["paid_credits"], "free_credits": u["free_credits"]}
 
     def _charge_units(self, p_user_id, p_units, p_reason, p_daily_units, p_max_debt, p_tokens=0, p_searches=0,
                       p_details=None, p_charge_id=None):
