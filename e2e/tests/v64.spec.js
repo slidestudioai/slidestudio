@@ -15,8 +15,11 @@ test('mehmon slaydlari redirect (sahifa qayta yuklanishi)dan keyin tiklanadi, va
   await expect.poll(() => page.evaluate(() => slides.length), { timeout: 15000 }).toBe(2);
   expect(await page.evaluate(() => JSON.parse(slides[0].json).objects.some((o) => o.text === 'Mehmon slaydi'))).toBe(true);
   expect(await page.evaluate(() => window.__ssAuthStorage.getItem('ss-auth-v39-guest'))).toBeNull();
-  await openEditor(page, '/');                                            // keyingi ochilishda qayta tiklanmaydi
-  expect(await page.evaluate(() => slides.length)).toBe(1);
+  // keyingi ochilishda vaqtincha nusxa QAYTA qo'llanmaydi. v82.3: the deck itself is kept as the auto-saved draft
+  // (it used to depend on timing: reloaded before the 3.5 s auto-save -> 1 slide, after it -> 2)
+  await openEditor(page, '/');
+  expect(await page.evaluate(() => window.__ssAuthStorage.getItem('ss-auth-v39-guest'))).toBeNull();
+  expect(await page.evaluate(() => slides.length)).toBe(2);             // not 4: the stash is not applied twice
 });
 
 test('chiqishda vaqtincha nusxa va kanvas tozalanadi', async ({ page }) => {

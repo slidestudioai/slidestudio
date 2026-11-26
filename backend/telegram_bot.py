@@ -3181,10 +3181,28 @@ def _overloaded() -> bool:
 BUSY_TEXT = "⏳ Hozir so'rovlar juda ko'p. 1–2 daqiqadan keyin qayta urinib ko'ring — hech narsa yechilmadi."
 
 
+def _task_done(t: "asyncio.Task") -> None:
+    """v82.9: an error inside a background job is logged at once (before: only «Task exception was never retrieved»,
+    late and without Sentry), so a user who got no answer can be traced in the logs."""
+    _bg.discard(t)
+    if t.cancelled():
+        return
+    e = t.exception()
+    if e is None:
+        return
+    name = getattr(t.get_coro(), "__qualname__", "task")
+    _warn(f"task:{name}:{type(e).__name__}", f"fon vazifasi xatosi ({name}): {type(e).__name__}: {str(e)[:200]}")
+    try:
+        from backend.services import obs as _obs
+        _obs.capture(e)
+    except Exception:
+        pass
+
+
 def _spawn(coro) -> None:
     t = asyncio.create_task(coro)
     _bg.add(t)
-    t.add_done_callback(_bg.discard)
+    t.add_done_callback(_task_done)
 
 
 async def _send(chat_id: int, text: str, kb: Optional[dict] = None) -> Optional[dict]:
