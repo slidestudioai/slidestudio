@@ -76,6 +76,7 @@ Boshqa serverlarda (Railway, VPS): `pip install -r requirements.txt` → `.env` 
 > MAJBURIY emas. Ulangach: bitta balans, bitta oxirgi taqdimot (saytda ham), Mini App Google akkaunt bilan ochiladi.
 > Namoyish: har tahrir ko'rinadi (to'liq xesh) va GIF / rasmlar muharrir xotirasidan olinadi — qayta yuklanmaydi.
 >
+> v82.5: **Refund atomik** — `SUPABASE_SCHEMA.sql` 20-bo'lim (`apply_refund`): bir vaqtda kelgan refundlar sotib olinganidan ortiq kredit yechmaydi.
 > v82: **Supabase limiti himoyasi.** `SUPABASE_SCHEMA.sql` ni qayta ishga tushiring (19-bo'lim: `housekeep`, `db_size_mb`).
 > Server har soatda keraksiz yozuvlarni o'zi o'chiradi (eski AI javoblari, muddati o'tgan kodlar, 180 kun ochilmagan bot
 > taqdimotlari). Baza `DB_SOFT_LIMIT_MB` (standart 400 MB) dan oshsa — favqulodda tozalash va adminlarga Telegram xabar.
