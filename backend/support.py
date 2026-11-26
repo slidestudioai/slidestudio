@@ -62,6 +62,27 @@ def _rate_ok(uid: str, now: float) -> Optional[str]:
     return None
 
 
+def _db_rate_ok(uid: str, now: float) -> Optional[str]:
+    """v82.7: the same limits counted in the DB. The RAM counter above is per gunicorn worker, so with N workers a
+    user could send N x MAX_PER_HOUR messages. A DB error never blocks sending (the RAM check still applies)."""
+    try:
+        since = datetime.fromtimestamp(now - 3600, timezone.utc).isoformat()
+        rows = (_sb().table(TABLE).select("created_at").eq("user_id", uid).eq("from_admin", False)
+                .gte("created_at", since).order("created_at", desc=True).limit(MAX_PER_HOUR).execute().data or [])
+    except Exception as e:
+        print(f"[SUPPORT RATE] {str(e)[:120]}")
+        return None
+    if len(rows) >= MAX_PER_HOUR:
+        return "Juda ko'p xabar yuborildi. Bir soatdan keyin urinib ko'ring"
+    try:
+        last = datetime.fromisoformat(str(rows[0]["created_at"]).replace("Z", "+00:00")).timestamp() if rows else 0
+    except Exception:
+        last = 0
+    if last and now - last < SEND_COOLDOWN_SEC:
+        return "Iltimos, biroz kuting va qayta yuboring"
+    return None
+
+
 def _remember(uid: str, now: float) -> None:
     hist = [t for t in _sent.get(uid, []) if now - t < 3600]
     hist.append(now)
@@ -101,7 +122,7 @@ def user_send(uid: str, email: str, author: str, text: Any, source: str = "site"
     if len(body) < MSG_MIN_LEN:
         raise SupportError("Xabar juda qisqa", 400)
     now = time.time()
-    wait = _rate_ok(uid, now)
+    wait = _rate_ok(uid, now) or _db_rate_ok(uid, now)
     if wait:
         raise SupportError(wait, 429)
     email = str(email or "").strip().lower()

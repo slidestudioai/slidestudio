@@ -199,3 +199,22 @@ def test_bot_notifies_admins_with_reply_button(sb, monkeypatch):
     text, kb = sent[0][1], sent[0][2]
     assert "&lt;b&gt;salom&lt;/b&gt;" in text and "Telegram bot" in text
     assert kb["inline_keyboard"][0][0]["callback_data"] == "a:spr:u-1"
+
+
+def test_rate_limit_also_counts_messages_from_other_workers(sb, monkeypatch):
+    """v82.7: the RAM counter is per worker — the DB copy stops the limit from multiplying with workers."""
+    support._deps["get_supabase"] = lambda: sb
+    support.user_send("u-9", "n@x.uz", "N", "Birinchi xabar")
+    support._sent.clear()                                      # the next request lands on another worker
+    with pytest.raises(support.SupportError) as e:
+        support.user_send("u-9", "n@x.uz", "N", "Ikkinchi xabar darhol")
+    assert e.value.code == 429
+    # hourly cap from the DB alone
+    now = support.time.time()
+    sb.tables["support_messages"] = [
+        {"user_id": "u-8", "from_admin": False, "body": "x",
+         "created_at": support.datetime.fromtimestamp(now - 60 - i * 60, support.timezone.utc).isoformat()}
+        for i in range(support.MAX_PER_HOUR)]
+    with pytest.raises(support.SupportError) as e2:
+        support.user_send("u-8", "m@x.uz", "M", "Yana bitta")
+    assert e2.value.code == 429 and "soat" in e2.value.msg
