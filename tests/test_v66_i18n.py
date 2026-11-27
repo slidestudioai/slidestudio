@@ -89,7 +89,7 @@ def test_first_start_uses_telegram_language_and_greets_at_once(sb, monkeypatch):
     greet = [p for m, p in http.calls if m == "sendMessage" and "inline_keyboard" in (p.get("reply_markup") or {})][-1]
     assert "Напишите тему" in greet["text"] and "Google" not in greet["text"]
     labels = [b["text"] for row in greet["reply_markup"]["inline_keyboard"] for b in row]
-    assert labels == ["🆕 Новые слайды", "🚀 Редактор", "💳 Баланс"]
+    assert labels == ["🆕 Новые слайды", "🚀 Редактор", "💳 Баланс", "⚙️ Настройки"]
 
     # /lang — til baribir o'zgartiriladi
     http.calls.clear()

@@ -1119,8 +1119,10 @@
               break;
             }
             case 'delete_slide': {
-              const idx = (cmd.slide || 1) - 1;
-              if (idx < 0 || idx >= slides.length || slides.length <= 1) break;
+              // v83: same as the server price (monitoring.py): only a MISSING number means slide 1; 0 / -1 are ignored
+              const _n = (v, d) => (v == null || v === '' ? d : Number(v));
+              const idx = _n(cmd.slide, 1) - 1;
+              if (!(idx >= 0) || idx >= slides.length || slides.length <= 1) break;
               slides.splice(idx, 1);
               if (activeIndex >= slides.length) activeIndex = slides.length - 1;
               try { renderSidebar(); } catch (e) {}
@@ -1130,9 +1132,10 @@
             case 'reorder_slide':
             case 'move_slide': {
 
-              const from = ((cmd.from != null ? cmd.from : cmd.slide) || 1) - 1;
-              const to = ((cmd.to != null ? cmd.to : cmd.after) || 1) - 1;
-              if (from < 0 || from >= slides.length || to < 0 || to >= slides.length || from === to) break;
+              const _n = (v, d) => (v == null || v === '' ? d : Number(v));
+              const from = _n(cmd.from != null ? cmd.from : cmd.slide, 1) - 1;
+              const to = _n(cmd.to != null ? cmd.to : cmd.after, 1) - 1;
+              if (!(from >= 0) || !(to >= 0) || from >= slides.length || to >= slides.length || from === to) break;
               const [item] = slides.splice(from, 1);
               slides.splice(to, 0, item);
               activeIndex = to;
@@ -1142,9 +1145,10 @@
               break;
             }
             case 'swap_slides': {
-              const a = ((cmd.a != null ? cmd.a : cmd.slide1) || 1) - 1;
-              const b = ((cmd.b != null ? cmd.b : cmd.slide2) || 2) - 1;
-              if (a < 0 || a >= slides.length || b < 0 || b >= slides.length || a === b) break;
+              const _n = (v, d) => (v == null || v === '' ? d : Number(v));
+              const a = _n(cmd.a != null ? cmd.a : cmd.slide1, 1) - 1;
+              const b = _n(cmd.b != null ? cmd.b : cmd.slide2, 2) - 1;
+              if (!(a >= 0) || !(b >= 0) || a < 0 || a >= slides.length || b < 0 || b >= slides.length || a === b) break;
               const tmp = slides[a];
               slides[a] = slides[b];
               slides[b] = tmp;

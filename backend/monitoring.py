@@ -340,7 +340,8 @@ def _keys_for_action(a: Dict[str, Any], deck: _Deck) -> List[Any]:
         return [S(idx + 1)]
 
     if name == "delete_slide":
-        idx = _int(a.get("slide")) or 1
+        idx = _int(a.get("slide"))
+        idx = 1 if idx is None else idx                # a bad number (0, -1) is ignored below, not read as slide 1
         if deck.n is not None and (idx < 1 or idx > deck.n or deck.n <= 1):
             return []
         if deck.n is not None:
@@ -349,16 +350,18 @@ def _keys_for_action(a: Dict[str, Any], deck: _Deck) -> List[Any]:
         return [deck.uniq("del")]
 
     if name in ("reorder_slide", "move_slide"):
-        frm = _int(a.get("from") if a.get("from") is not None else a.get("slide")) or 1
-        to = _int(a.get("to") if a.get("to") is not None else a.get("after")) or 1
+        frm = _int(a.get("from") if a.get("from") is not None else a.get("slide"))
+        to = _int(a.get("to") if a.get("to") is not None else a.get("after"))
+        frm, to = (1 if frm is None else frm), (1 if to is None else to)     # 0 stays 0 -> not valid -> free
         if frm == to or not deck.valid(frm) or not deck.valid(to):
             return []
         deck.active = to
         return [S(to)]
 
     if name == "swap_slides":
-        x = _int(a.get("a") if a.get("a") is not None else a.get("slide1")) or 1
-        y = _int(a.get("b") if a.get("b") is not None else a.get("slide2")) or 2
+        x = _int(a.get("a") if a.get("a") is not None else a.get("slide1"))
+        y = _int(a.get("b") if a.get("b") is not None else a.get("slide2"))
+        x, y = (1 if x is None else x), (2 if y is None else y)
         if x == y or not deck.valid(x) or not deck.valid(y):
             return []
         return [S(x), S(y)]

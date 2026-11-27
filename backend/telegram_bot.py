@@ -346,7 +346,9 @@ def kb_home() -> dict:
     avtomatik kirish), 💳 Balans (holat + Dodo orqali to'ldirish)."""
     editor = ({"text": BTN_HOME_EDITOR, "web_app": {"url": _app_url()}} if _https()
               else {"text": BTN_HOME_EDITOR, "url": _app_url()})
-    return {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")], [editor], [_btn("💳 Balans", "bal")]]}
+    # Sozlamalar (til, AI rejimi, Google) — oldin faqat /settings buyrug'i bilan ochilardi, ko'rinadigan tugma yo'q edi
+    return {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")], [editor],
+                                [_btn("💳 Balans", "bal"), _btn("⚙️ Sozlamalar", "set")]]}
 
 
 def _menu_button() -> dict:
@@ -4232,6 +4234,8 @@ async def _handle_callback(cb: dict) -> None:
         await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
     elif data == "about":
         await _send(cid, ABOUT, kb_home())
+    elif data == "set":
+        await _show_settings(cid, user)
     elif data.startswith("smode:"):
         st["mode"] = "deep" if data.endswith("deep") else "fast"
         await _show_settings(cid, user, mid)
