@@ -595,6 +595,10 @@ begin
   elsif v_last is null or v_now - v_last >= interval '24 hours' then
     v_free := p_daily_units;
     v_last := v_now;
+    if v_paid < 0 then                                   -- debt is repaid from the new free pool once (not every day)
+      v_free := greatest(0, p_daily_units + v_paid);
+      v_paid := least(0, p_daily_units + v_paid);
+    end if;
   else
     v_free := least(v_free, p_daily_units);
   end if;

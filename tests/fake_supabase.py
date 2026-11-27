@@ -292,6 +292,8 @@ class FakeSupabase:
                     last = now - day
             elif last is None or now - last >= day:
                 free, last = p_daily_units, now
+                if paid < 0:                             # debt is repaid from the new free pool once
+                    free, paid = max(0, p_daily_units + paid), min(0, p_daily_units + paid)
             else:
                 free = min(free, p_daily_units)
             take, reason = 0, (p_reason or "chat")

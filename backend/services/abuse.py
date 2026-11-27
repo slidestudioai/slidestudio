@@ -95,6 +95,8 @@ def check_new_account(sb: Any, uid: str, row: Dict[str, Any], ip: str, secret: s
             _state.update(ok=False, checked=time.time())
         else:
             print(f"[ABUSE] {str(e)[:160]}")
+            with _lock:                                # DB hiccup: check this account again on its next message
+                _checked.pop(uid, None)
         return False
 
 
