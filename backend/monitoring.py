@@ -539,6 +539,11 @@ def apply_24h_reset(user: dict, free_daily: int = None) -> dict:
     elif last is None or (now - last) >= timedelta(hours=24):
         user["free_credits"] = free_daily
         user["last_reset_time"] = now.isoformat()
+        if user["paid_credits"] < 0:
+            # Audit C1 debt is repaid from the new free pool ONCE. Before, the debt stayed in paid_credits for ever
+            # and cut every next day's free pages (a free user with -100 debt got 100 instead of 200 each day).
+            net = free_daily + user["paid_credits"]
+            user["free_credits"], user["paid_credits"] = max(0, net), min(0, net)
     else:
         user["free_credits"] = min(user["free_credits"], free_daily)
     user["slide_credits"] = user["free_credits"] + user["paid_credits"]

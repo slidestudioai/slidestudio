@@ -117,3 +117,17 @@ def test_admin_ip_clusters(sb, monkeypatch):
     sb.tables["user_usage"].append(_row("solo", 5, abuse.ip_hash("1.1.1.1", SECRET)))
     c = abuse.ip_clusters(sb, 7, 3)
     assert len(c) == 1 and c[0]["accounts"] == 4 and len(c[0]["ip_hash"]) == 12
+
+
+def test_db_error_does_not_skip_the_check_for_ever():
+    from backend.services import abuse
+
+    class _Boom:
+        def table(self, *_a, **_k):
+            raise RuntimeError("connection reset")
+
+    abuse._checked.clear()
+    abuse._state.update(ok=True, checked=0.0)
+    row = {"created_at": None}
+    assert abuse.check_new_account(_Boom(), "u-net-err", row, "1.2.3.4", "s") is False
+    assert "u-net-err" not in abuse._checked                                  # will be checked again next time

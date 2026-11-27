@@ -120,3 +120,32 @@ def test_gunicorn_worker_limits_ws_frames():
     assert "backend/gunicorn_conf.py" in (root / "render.yaml").read_text()
     from backend import gunicorn_conf
     assert gunicorn_conf.worker_class == "backend.worker.SlideStudioWorker"
+
+
+def test_debt_is_repaid_once_not_every_day():
+    # Bug: the debt stayed in paid_credits for ever, so EVERY next day the free pool was smaller by the debt.
+    u, _, _ = monitoring.charge_for_ai_turn(_user(free=U), 3, 0, "fast")      # debt 2 pages
+    daily = monitoring.free_daily_units()
+    for _ in range(3):
+        u["last_reset_time"] = "2000-01-01T00:00:00+00:00"
+        u = monitoring.apply_24h_reset(u)
+        u = monitoring.deduct_credits(u, monitoring.total_credits(u))         # the user spends the whole day
+    u["last_reset_time"] = "2000-01-01T00:00:00+00:00"
+    u = monitoring.apply_24h_reset(u)
+    assert u["paid_credits"] == 0
+    assert monitoring.raw_balance(u) == daily                                # full free pool again
+
+
+def test_debt_repaid_once_in_sql_charge_path():
+    from datetime import timedelta
+    from tests.fake_supabase import FakeSupabase
+    sb = FakeSupabase()
+    old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    sb.tables["user_usage"] = [{"user_id": "u1", "free_credits": 0, "paid_credits": -2 * U, "last_reset_time": old}]
+    daily = monitoring.free_daily_units()
+    sb._charge_units("u1", U, "chat", daily, monitoring.max_debt_units(), p_charge_id="c1")
+    row = sb.usage("u1")
+    assert row["paid_credits"] == 0 and row["free_credits"] == daily - 3 * U
+    sb.tables["user_usage"][0]["last_reset_time"] = old
+    sb._charge_units("u1", U, "chat", daily, monitoring.max_debt_units(), p_charge_id="c2")
+    assert sb.usage("u1")["free_credits"] == daily - U                       # no second cut the next day

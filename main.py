@@ -819,6 +819,8 @@ def _get_or_create_user_usage_raw(user_id: str, email: str, _retry: int = 2) -> 
             patch = {}
             if u.get("free_credits") != u_before.get("free_credits") or u.get("last_reset_time") != u_before.get("last_reset_time"):
                 patch["free_credits"] = u["free_credits"]
+                if u.get("paid_credits") != u_before.get("paid_credits"):
+                    patch["paid_credits"] = u["paid_credits"]            # debt repaid by the daily reset
                 patch["prompt_count"] = u.get("prompt_count", 0)
                 if "search_count" in res.data[0]:
                     patch["search_count"] = 0
@@ -840,12 +842,16 @@ def _get_or_create_user_usage_raw(user_id: str, email: str, _retry: int = 2) -> 
                     q = supabase.table("user_usage").update(patch).eq("user_id", user_id)
                     if "free_credits" in patch and db_free is not None:
                         q = q.eq("free_credits", db_free)        # v53: parallel yozuvni bosib ketmasin
+                    if "paid_credits" in patch and db_paid is not None:
+                        q = q.eq("paid_credits", db_paid)        # a purchase at the same time must not be lost
                     w = q.execute()
                     if "free_credits" in patch and db_free is not None and not w.data:
                         if _retry > 0:                            # boshqa jarayon shu payt yozdi — qayta o'qiymiz
                             return _get_or_create_user_usage_raw(user_id, email, _retry - 1)
                     elif "free_credits" in patch:
                         db_free = patch["free_credits"]
+                        if "paid_credits" in patch:
+                            db_paid = patch["paid_credits"]
                 except Exception as e:
                     print(f"[USAGE RESET WRITE] {e}")
             return _cas_version(u, db_free if db_free is not None else u["free_credits"],
