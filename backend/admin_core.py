@@ -384,6 +384,65 @@ def _brief(row: Dict[str, Any], tgmap: Dict[str, int], led: Optional[Dict[str, D
 USER_FILTERS = ("all", "google", "tg", "linked", "tg_only", "vip", "unlimited", "blocked")
 
 
+# ---- v83: «Yordam» (support): who wrote — name, @username, Telegram ID, email (before: only the technical id) ----
+def user_profiles(user_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """user_id -> short profile for the admin. Never raises (the support list still works without it)."""
+    ids = [str(u) for u in dict.fromkeys(user_ids or []) if u]
+    if not ids or not _sb():
+        return {}
+    try:
+        rows = _rows_for_ids(ids)
+        tgmap = _tg_map(ids)
+    except Exception as e:
+        print(f"[ADMIN] profil o'qilmadi: {str(e)[:100]}")
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        try:
+            b = _brief(r, tgmap)
+        except Exception:
+            continue
+        out[b["user_id"]] = {k: b.get(k) for k in ("label", "name", "username", "tg_id", "email", "source",
+                                                    "blocked", "created_at", "last_active")}
+        out[b["user_id"]]["plan"] = "vip" if b.get("unlimited") else ((b.get("balance") or {}).get("mode") or "free")
+    return out
+
+
+def profile_line(p: Optional[Dict[str, Any]], fallback: str = "") -> str:
+    """One readable line: «Ali Valiyev · @ali · TG 12345 · ali@gmail.com»."""
+    p = p or {}
+    parts = [p.get("name") or ""]
+    if p.get("username"):
+        parts.append("@" + str(p["username"]))
+    if p.get("tg_id"):
+        parts.append(f"TG {p['tg_id']}")
+    if p.get("email"):
+        parts.append(str(p["email"]))
+    line = " · ".join(x for x in parts if x)
+    return line or fallback
+
+
+def support_list_full(limit: int = 100) -> Dict[str, Any]:
+    from backend import support
+    r = support.admin_list(limit)
+    prof = user_profiles([t.get("user_id") for t in r.get("threads") or []])
+    for t in r.get("threads") or []:
+        p = prof.get(str(t.get("user_id")))
+        t["profile"] = p
+        t["who"] = profile_line(p, "") or (t.get("author") if TG_EMAIL_RE.match(t.get("email") or "") else "") \
+            or t.get("email") or t.get("author") or t.get("user_id")
+    return r
+
+
+def support_thread_full(uid: str) -> Dict[str, Any]:
+    from backend import support
+    r = support.admin_thread(uid)
+    p = user_profiles([uid]).get(str(uid))
+    r["profile"] = p
+    r["who"] = profile_line(p, "") or r.get("author") or r.get("email") or uid
+    return r
+
+
 def _find_users(q: str, flt: str, limit: int, offset: int) -> List[Dict[str, Any]]:
     try:
         return _find_users_impl(q, flt, limit, offset)
@@ -1218,15 +1277,19 @@ def _dispatch(op: str, body: Dict[str, Any], actor: str):
                 r["email"] = em.get(str(r.get("user_id")), "")
         return {"rows": rows}
     # ---- yordam (support) yozishmalari
-    if op in ("support_list", "support_thread", "support_reply", "support_unread"):
+    if op in ("support_list", "support_thread", "support_reply", "support_unread", "support_delete"):
         from backend import support
         try:
             if op == "support_list":
-                return support.admin_list(int(body.get("limit") or 100))
+                return support_list_full(int(body.get("limit") or 100))
             if op == "support_unread":
                 return {"unread": support.admin_unread_count()}
             if op == "support_thread":
-                return support.admin_thread(str(body.get("user_id") or ""))
+                return support_thread_full(str(body.get("user_id") or ""))
+            if op == "support_delete":
+                r = support.admin_delete(str(body.get("user_id") or ""))
+                audit(actor, "support.delete", str(body.get("user_id") or ""), {"deleted": r.get("deleted")})
+                return r
             r = support.admin_reply(str(body.get("user_id") or ""), body.get("text"))
             audit(actor, "support.reply", str(body.get("user_id") or ""))
             return r

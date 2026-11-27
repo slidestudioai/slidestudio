@@ -218,3 +218,98 @@ def test_rate_limit_also_counts_messages_from_other_workers(sb, monkeypatch):
     with pytest.raises(support.SupportError) as e2:
         support.user_send("u-8", "m@x.uz", "M", "Yana bitta")
     assert e2.value.code == 429 and "soat" in e2.value.msg
+
+
+# ---------------------------------------------------------------- v83: media, message numbers, profile, delete
+def _tg_user_row(sb):
+    sb.tables.setdefault("user_usage", []).append({
+        "user_id": "u-tg", "email": "tg555@t.me", "free_credits": 200, "paid_credits": 0, "telegram_id": 555,
+        "tg_username": "ali_uz", "display_name": "Ali Valiyev", "created_at": "2026-11-01T00:00:00+00:00"})
+
+
+def test_bot_support_photo_goes_to_admin_with_number_and_profile(sb, monkeypatch):
+    sent = _bot(monkeypatch, sb)
+    _tg_user_row(sb)
+    monkeypatch.setenv("ADMIN_TG_IDS", "777")
+    monkeypatch.setattr(tb, "_deps", dict(tb._deps, admin=admin_core))
+    monkeypatch.setattr(tb, "_limited", lambda *a, **k: False)
+    cid = 555
+    tb._chats.pop(cid, None)
+    user = {"id": cid, "first_name": "Ali"}
+    asyncio.run(tb._support_open(cid, user))
+    assert "rasm" in sent[-1][1] and "ovozli" in sent[-1][1]          # the user is told media is fine
+    photo = {"update_id": 9001, "message": {"message_id": 42, "chat": {"id": cid, "type": "private"}, "from": user,
+             "photo": [{"file_id": "small", "file_size": 10}, {"file_id": "big", "file_size": 99}],
+             "caption": "Shu xato chiqyapti"}}
+
+    async def run():
+        await tb.handle_update(photo)
+        await asyncio.sleep(0.05)                                    # admin notice runs in the background
+    asyncio.run(run())
+    row = sb.tables["support_messages"][-1]
+    assert row["body"] == "📷 Rasm\nShu xato chiqyapti" and row["source"] == "tg" and row["id"] >= 1
+    to_user = [t for c, t, *_ in sent if c == cid and isinstance(t, str) and "Murojaatingiz" in t]
+    assert to_user and f"№{row['id']}" in to_user[-1]
+    admin_text = [t for c, t, *_ in sent if c == 777 and isinstance(t, str) and "Yangi yordam" in t][-1]
+    assert "Ali Valiyev" in admin_text and "@ali_uz" in admin_text and "TG 555" in admin_text and f"№{row['id']}" in admin_text
+    assert any(c == 777 and m == "copyMessage" for c, m, *_ in sent)                     # the photo itself
+    assert "sup_await" not in tb._state(cid) and not any(m == "copyMessage" and c == cid for c, m, *_ in sent)
+
+
+def test_bot_support_voice_is_accepted(sb, monkeypatch):
+    sent = _bot(monkeypatch, sb)
+    monkeypatch.setattr(tb, "_limited", lambda *a, **k: False)
+    cid = 557
+    tb._chats.pop(cid, None)
+    tb._state(cid)["sup_await"] = True
+    voice = {"update_id": 9002, "message": {"message_id": 5, "chat": {"id": cid, "type": "private"},
+             "from": {"id": cid, "first_name": "Vali"}, "voice": {"file_id": "v1", "duration": 3}}}
+    asyncio.run(tb.handle_update(voice))
+    assert sb.tables["support_messages"][-1]["body"] == "🎤 Ovozli xabar"
+
+
+def test_voice_outside_support_gets_a_clear_answer(sb, monkeypatch):
+    sent = _bot(monkeypatch, sb)
+    monkeypatch.setattr(tb, "_limited", lambda *a, **k: False)
+    cid = 558
+    tb._chats.pop(cid, None)
+    asyncio.run(tb.handle_update({"update_id": 9003, "message": {"message_id": 6, "chat": {"id": cid, "type": "private"},
+                                  "from": {"id": cid}, "voice": {"file_id": "v2"}}}))
+    assert "Ovozli xabarni" in sent[-1][1] and "support_messages" not in sb.tables
+
+
+def test_admin_support_list_shows_who_wrote_and_can_delete(sb, client, monkeypatch):
+    _users(sb)
+    _tg_user_row(sb)
+    client.post("/api/support/send", json={"token": "t1", "body": "Saytdan savol"})
+    support.user_send("u-tg", "tg555@t.me", "Ali", "Botdan savol", "tg")
+    lst = admin_core._dispatch("support_list", {}, "tg1")
+    by = {t["user_id"]: t for t in lst["threads"]}
+    assert "Ali Valiyev" in by["u-tg"]["who"] and "@ali_uz" in by["u-tg"]["who"] and "tg555@t.me" not in by["u-tg"]["who"]
+    th = admin_core._dispatch("support_thread", {"user_id": "u-tg"}, "tg1")
+    assert th["profile"]["username"] == "ali_uz" and th["profile"]["tg_id"] == 555
+    r = admin_core._dispatch("support_delete", {"user_id": "u-tg"}, "tg1")
+    assert r["deleted"] == 1
+    assert {m["user_id"] for m in sb.tables["support_messages"]} == {"u-1"}           # only that conversation
+
+
+def test_site_send_returns_message_number(sb, client):
+    _users(sb)
+    r = client.post("/api/support/send", json={"token": "t1", "body": "Raqam kerak"}).json()
+    assert r["message"]["id"] == sb.tables["support_messages"][-1]["id"]
+
+
+def test_bot_admin_sees_name_not_tech_email_and_delete_button(sb, client, monkeypatch):
+    sent = _bot(monkeypatch, sb)
+    _tg_user_row(sb)
+    support.user_send("u-tg", "tg555@t.me", "Ali", "Botdan savol", "tg")
+    monkeypatch.setenv("ADMIN_TG_IDS", "777")
+    monkeypatch.setattr(tb, "_adm", lambda u: admin_core)
+    monkeypatch.setattr(tb, "_deps", dict(tb._deps, admin=admin_core))
+    asyncio.run(tb._admin_cb(777, 10, {"id": 777}, "a:sup"))
+    assert "Ali Valiyev" in sent[-1][1] and "tg555@t.me" not in sent[-1][1]
+    asyncio.run(tb._admin_cb(777, 10, {"id": 777}, "a:spt:u-tg"))
+    datas = [b["callback_data"] for r in sent[-1][2]["inline_keyboard"] for b in r]
+    assert "a:spd:u-tg" in datas
+    asyncio.run(tb._admin_cb(777, 10, {"id": 777}, "a:spD:u-tg"))
+    assert "o'chirildi" in sent[-1][1] and not sb.tables["support_messages"]
