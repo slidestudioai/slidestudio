@@ -55,11 +55,15 @@ MAX_DEBT_PAGES = max(0, _env_num("MAX_DEBT_PAGES", 10, int))     # Tez-varaq his
 #   free_daily_pages      bepul kunlik Tez limit (admin panelda: free_daily_fast_limit)
 #   free_daily_deep_limit bepul kunlik Chuqur limit
 # Ichki hisob: 1 birlik = UNIT (20) mayda birlik, shuning uchun 0.05 aniqlikdagi narxlar ham butun sonda qoladi.
+# v83: Chuqur AI qimmat — bepul rejimda YOPIQ. Faqat cheksiz (VIP / admin) yoki pullik balansi shu chegaradan
+# (Tez-varaqda) BALAND bo'lgan foydalanuvchiga ochiladi. Admin panel → Sozlama → Tarif: deep_min_paid_pages.
+DEEP_MIN_PAID_PAGES = max(0, _env_num("DEEP_MIN_PAID_PAGES", 10, int))
 _RT: Dict[str, Any] = {"free_daily_pages": FREE_DAILY_PAGES, "pack_pages": PAGES_PER_PACK,
                        "fast_ai_cost": 1.0, "deep_ai_cost": float(DEEP_MULT),
-                       "free_daily_deep_limit": FREE_DAILY_PAGES // DEEP_MULT}
+                       "free_daily_deep_limit": FREE_DAILY_PAGES // DEEP_MULT,
+                       "deep_min_paid_pages": DEEP_MIN_PAID_PAGES}
 _RT_LIMITS = {"free_daily_pages": (0, 100000), "pack_pages": (1, 1000000), "free_daily_deep_limit": (0, 100000),
-              "fast_ai_cost": (0.05, 1000.0), "deep_ai_cost": (0.05, 1000.0)}
+              "fast_ai_cost": (0.05, 1000.0), "deep_ai_cost": (0.05, 1000.0), "deep_min_paid_pages": (0, 100000)}
 
 def rt(name: str) -> Any:
     v = _RT[name]
@@ -492,6 +496,23 @@ def daily_units_for(user: Optional[dict]) -> int:
         pass
     return free_daily_units()
 
+def deep_min_paid_units() -> int:
+    return rt("deep_min_paid_pages") * fast_page_units()
+
+
+def deep_allowed(user: Optional[dict]) -> bool:
+    """v83: Chuqur AI faqat cheksiz foydalanuvchiga yoki pullik balansi deep_min_paid_pages (Tez-varaq) dan BALAND
+    bo'lganga ochiq. Bepul varaqlar bilan Chuqur AI ishlatib bo'lmaydi (u qimmat)."""
+    user = user or {}
+    if is_unlimited(user):
+        return not bool(user.get("blocked"))
+    try:
+        paid = int(user.get("paid_credits") or 0)
+    except (TypeError, ValueError):
+        return False
+    return paid > deep_min_paid_units()
+
+
 def free_suspended(user: Optional[dict]) -> bool:
     """v76: pullik balans > 0 (hatto 1 birlik) — kunlik bepul limit UMUMAN ishlamaydi va ko'rinmaydi.
     Pullik balans 0 ga tushishi bilan bepul limit darhol qaytadi."""
@@ -699,6 +720,8 @@ def usage_payload(user: dict) -> dict:
         "unlimited": unl,
         "ad_free": is_ad_free(user),
         "free_suspended": free_suspended(user),          # pullik balans yetarli — kunlik bepul limit to'xtatilgan
+        "deep_allowed": deep_allowed(user),              # v83: Chuqur AI ochiqmi (cheksiz yoki pullik balans > chegara)
+        "deep_min_paid_pages": rt("deep_min_paid_pages"),
         "free_daily": fdu // UNIT,
         "pack_pages": pack_pages(),
         "pack_price_usd": CHECKOUT_PRICE_USD,

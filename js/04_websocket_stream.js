@@ -279,6 +279,17 @@
             finishAiStream();
             return;
           }
+          if (data.type === 'error' && data.code === 'DEEP_LOCKED') {           // v83: bepul rejimda Chuqur AI yopiq
+            try {
+              if (typeof applyServerUsage === 'function') applyServerUsage(data);
+              else if (window.Monitoring) window.Monitoring.applyServerUsage(data);
+              if (window.Monitoring && window.Monitoring.showDeepLocked) window.Monitoring.showDeepLocked();
+              else showToast(data.message || 'Chuqur AI yopiq', 'info');
+            } catch (_) {}
+            twoPassState = null;
+            try { finishAiStream(); } catch (e) {}
+            return;
+          }
           if (data.type === 'error' && (data.code === 'LIMIT_EXCEEDED' || /limit tugadi/i.test(data.message || ''))) {
             try {
               if (typeof applyServerUsage === 'function') applyServerUsage(data);

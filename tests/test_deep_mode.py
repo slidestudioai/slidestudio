@@ -105,3 +105,46 @@ def test_bottom_field_deep_searches_for_one_slide_only(ai, client, monkeypatch):
 def test_side_panel_topic_in_empty_deck_is_still_a_new_deck(ai, client):  # noqa: F811
     _turn_scope(client, "Iqlim o'zgarishi haqida", "fast", EMPTY, "all_slides")
     assert ai["planner"] and not ai["calls"][0].get("tools")
+
+
+# ---------------------------------------------------------------- v83: Deep AI is closed in the free mode
+from backend import monitoring  # noqa: E402
+
+U = monitoring.UNIT
+
+
+def _u(free=200, paid=0, **kw):
+    return dict({"user_id": "x", "email": "x@x.uz", "free_credits": free, "paid_credits": paid,
+                 "last_reset_time": "2099-01-01T00:00:00+00:00"}, **kw)
+
+
+def test_deep_allowed_only_for_unlimited_or_paid_above_the_limit():
+    lim = monitoring.rt("deep_min_paid_pages")
+    assert lim == 10
+    assert not monitoring.deep_allowed(_u(free=10_000))                    # free pages never open Deep AI
+    assert not monitoring.deep_allowed(_u(paid=lim * U))                   # exactly 10 pages: not «above 10»
+    assert monitoring.deep_allowed(_u(paid=lim * U + 1))
+    assert monitoring.deep_allowed(_u(paid=0, unlimited=True))
+    assert monitoring.deep_allowed(_u(paid=0, plan="vip"))
+    assert not monitoring.deep_allowed(_u(paid=-40))                       # debt
+    p = monitoring.usage_payload(_u())
+    assert p["deep_allowed"] is False and p["deep_min_paid_pages"] == 10
+
+
+def test_free_user_gets_deep_locked_and_no_ai_call(ai, sb, client):  # noqa: F811
+    sb.tables["user_usage"][0]["paid_credits"] = 0
+    got = _turn(client, "Iqlim o'zgarishi haqida", "deep", EMPTY)
+    assert got[-1]["type"] == "error" and got[-1]["code"] == "DEEP_LOCKED" and got[-1]["deep_allowed"] is False
+    assert ai["calls"] == []                                               # nothing was generated or charged
+    got = _turn(client, "Iqlim o'zgarishi haqida", "fast", EMPTY)          # Fast AI still works
+    assert got[-1]["type"] == "end"
+
+
+def test_admin_can_change_the_deep_limit():
+    from backend import appsettings
+    try:
+        appsettings.set_many({"deep_min_paid_pages": 0})
+        assert monitoring.deep_allowed(_u(paid=1))
+    finally:
+        appsettings.set_many({"deep_min_paid_pages": 10})
+    assert not monitoring.deep_allowed(_u(paid=1))

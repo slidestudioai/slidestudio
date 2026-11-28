@@ -1,5 +1,6 @@
 """v75: «Toza bot» — bitta kirish nuqtasi (Muharrir), Mini App telefonda fullscreen emas, fayl chatga keladi."""
 import asyncio
+import pytest
 import hashlib
 import hmac
 import json
@@ -131,3 +132,40 @@ def test_settings_button_opens_settings_with_language(sb, monkeypatch):
     assert sent, "the ⚙️ Sozlamalar button did nothing"
     datas = [b.get("callback_data") for row in sent[-1]["reply_markup"]["inline_keyboard"] for b in row]
     assert "langpick" in datas
+
+
+def test_bot_deep_mode_is_locked_for_a_free_user(sb, monkeypatch):
+    monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
+    http = _bot(monkeypatch)
+    tb._chats.pop(5551, None)
+    sb.tables.setdefault("user_usage", [])
+    asyncio.run(tb.handle_update(_cb("smode:deep")))
+    st = tb._state(5551)
+    assert st.get("mode") != "deep"
+    assert any("🔒" in str(p.get("text")) for m, p in http.calls if m == "sendMessage")
+
+
+@pytest.mark.parametrize("text", ["salom", "Assalomu alaykum aka", "salooom", "Ассалому алайкум", "Привет бот",
+                                  "Доброе утро", "Hiii", "Good morning!", "xayrli tong", "👋", "Salom, bot!"])
+def test_many_greetings_are_recognised(text):
+    assert tb.is_greeting(text)
+
+
+@pytest.mark.parametrize("text", ["salom kosmos haqida slayd", "Assalomu alaykum, menga 5 ta slayd kerak",
+                                  "Amir Temur", "Hello world prezentatsiyasi", "привет мир"])
+def test_topics_are_not_greetings(text):
+    assert not tb.is_greeting(text)
+
+
+def test_greeting_after_new_slide_is_not_used_as_a_topic(sb, monkeypatch):
+    monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
+    http = _bot(monkeypatch)
+    tb._chats.pop(5551, None)
+    st = tb._state(5551)
+    st.update(ui="new", ui_ts=time.time())
+    started = []
+    monkeypatch.setattr(tb, "_run_new", lambda *a: started.append(a))
+    asyncio.run(tb.handle_update(_msg("Assalomu alaykum")))
+    assert started == [] and st.get("ui") == "new"                  # no deck about «salom», the session stays open
+    assert any("Salom" in str(p.get("text")) or "Привет" in str(p.get("text")) or "Hello" in str(p.get("text"))
+               for m, p in http.calls if m == "sendMessage")

@@ -830,6 +830,9 @@ window.SS_I18N = {
     "Xabar juda qisqa": ["Сообщение слишком короткое", "Message is too short"],
     "Xabar yuborildi. Admin tez orada javob beradi": ["Сообщение отправлено. Администратор скоро ответит", "Message sent. An admin will reply soon"],
     "Murojaatingiz": ["Ваше обращение", "Your request"],
+    "🔒 Chuqur AI yopiq": ["🔒 Глубокий AI закрыт", "🔒 Deep AI is locked"],
+    "Balansni to‘ldirish": ["Пополнить баланс", "Top up balance"],
+    "Tez AI bilan davom etish": ["Продолжить с Быстрым AI", "Continue with Fast AI"],
     "adminga yuborildi. Javob shu yerga keladi": ["отправлено администратору. Ответ придёт сюда", "was sent to the admin. The reply will come here"],
     "⏳ Kirish tayyorlanmoqda, bir soniya...": ["⏳ Готовим вход, секунду...", "⏳ Getting sign-in ready, one moment..."],
     "Server hali javob bermayapti. Bir ozdan keyin qayta bosing.": ["Сервер ещё не отвечает. Нажмите снова чуть позже.", "The server is not answering yet. Tap again in a moment."],
@@ -879,6 +882,9 @@ window.SS_I18N = {
     "Bo'yiga": ["По вертикали", "Down"]
   },
   patterns: [
+    ["^Chuqur AI qimmat, shuning uchun u faqat pullik balans (\\d+) varaqdan baland bo‘lsa \\(yoki cheksiz rejimda\\) ochiladi\\. Hozir ⚡ Tez AI ishlaydi\\.$",
+     "Глубокий AI дорогой, поэтому он открывается только при платном балансе больше $1 листов (или в безлимитном режиме). Сейчас работает ⚡ Быстрый AI.",
+     "Deep AI is expensive, so it opens only when your paid balance is above $1 pages (or on the unlimited plan). ⚡ Fast AI is used for now."],
     ["^(\\d+) ta fayl \\((\\d+) video\\) · ([\\d.]+) MB · diskka yozilmaydi$", "Файлов: $1 (видео: $2) · $3 МБ · не сохраняется на диск", "$1 files ($2 videos) · $3 MB · not written to disk"],
     ["^(\\d+) ta savol = 1 varaq$", "$1 вопроса = 1 стр.", "$1 questions = 1 page"],
     ["^(\\d+) ta qidiruv = 1 varaq$", "$1 поиска = 1 стр.", "$1 searches = 1 page"],

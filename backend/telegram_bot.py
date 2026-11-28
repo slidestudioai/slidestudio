@@ -308,6 +308,65 @@ DEFAULT_SLIDES = 8
 HELP = i18n.HELP_UZ          # v66: 3 tilda — backend/bot_i18n.py
 ABOUT = HELP
 GREETING_RE = re.compile(r"^(salom|assalomu\s*alaykum|assalom|hello|hi|hey|привет|здравствуй\w*|qalay|nima gap|start|boshla)[\s!.,?]*$", re.I)
+
+# v83: ko'p tildagi va turli yozilishdagi salomlashuvlar (salooom, Ассалому алайкум, Доброе утро, xayrli tong, 👋 ...).
+# Butun xabar faqat salom (+ «aka», «bot», «hammaga» kabi so'zlar) bo'lsa — salom javobi; «Salom, kosmos haqida slayd» — mavzu.
+_GREET_PHRASES = {
+    # o'zbekcha (lotin)
+    "salom", "salomlar", "salam", "slm", "assalom", "assalomu alaykum", "assalomu aleykum", "assalomu alaikum",
+    "assalamu alaykum", "assalamu alaikum", "assalam", "asalomu alaykum", "asalom", "salomu alaykum", "assalomualaykum",
+    "va alaykum assalom", "vaalaykum assalom", "alaykum assalom", "salom alaykum", "salam aleykum", "salam alaykum",
+    "xayrli tong", "hayrli tong", "xayrli kun", "hayrli kun", "xayrli kech", "hayrli kech", "xayrli oqshom", "hayrli oqshom",
+    "qalay", "qalaysiz", "qalesiz", "qalaysan", "nima gap", "nima gaplar", "yaxshimisiz", "yaxshimisan", "ishlar qalay",
+    "salom qalay", "salom qalaysiz", "salom yaxshimisiz", "start", "boshla", "boshlash", "boshladik",
+    # o'zbekcha (kirill)
+    "салом", "ассалом", "ассалому алайкум", "ассалому алейкум", "салом алайкум", "хайрли тонг", "хайрли кун", "қалайсиз",
+    "қалай", "яхшимисиз",
+    # ruscha
+    "привет", "приветик", "приветствую", "здравствуйте", "здравствуй", "здрасте", "здрасьте", "здорово", "салют",
+    "доброе утро", "добрый день", "добрый вечер", "доброй ночи", "хай", "хеллоу", "салам", "салам алейкум", "ку",
+    "privet", "zdravstvuyte", "dobroe utro", "dobriy den", "dobryy den",
+    # inglizcha va boshqalar
+    "hello", "hi", "hey", "hiya", "howdy", "greetings", "good morning", "good afternoon", "good evening", "good day",
+    "hello there", "hi there", "hey there", "whats up", "what's up", "sup", "yo",
+    "hola", "bonjour", "salut", "ciao", "hallo", "merhaba", "selam", "selamlar", "namaste", "salaam", "salam alaikum",
+}
+_GREET_FILLER = {"bot", "botjon", "aka", "akajon", "opa", "opajon", "uka", "do'stim", "dostim", "do'st", "brat", "bro",
+                 "hammaga", "hammangizga", "barchaga", "sizga", "senga", "ai", "admin", "there", "everyone", "all", "friend",
+                 "guys", "team", "бот", "брат", "всем", "друг", "дорогой", "ака", "ука", "the", "va", "and", "и",
+                 "sizlarga", "aleykum", "alaykum", "алайкум", "алейкум"}
+_GREET_EMOJI_RE = re.compile(r"^[\s👋🙋🙋‍♂️🙋‍♀️🤝✋🖐️🖐😊🙂😀😃☺️🤗❤️!.,?]+$")
+
+
+def is_greeting(text: str) -> bool:
+    """v83: «salom», «Assalomu alaykum aka!», «salooom», «Привет бот», «Good morning», «👋» -> True."""
+    t = str(text or "").strip()
+    if not t or len(t) > 60:
+        return False
+    if GREETING_RE.match(t) or _GREET_EMOJI_RE.match(t) and any(e in t for e in "👋🙋🤝✋🖐"):
+        return True
+    t = t.lower().replace("ʻ", "'").replace("’", "'").replace("‘", "'").replace("`", "'")
+    t = re.sub(r"[^\w\s']+", " ", t)                       # emoji va tinish belgilari
+    t = re.sub(r"(\w)\1{2,}", r"\1", t)                     # salooom -> salom, hiii -> hi, приветтт -> привет
+    words = [w for w in t.split() if w]
+    if not words:
+        return False
+    # oxiridagi «aka», «bot», «hammaga» ... olib tashlanadi; qolgani to'liq salom iborasi bo'lishi kerak
+    while True:
+        if " ".join(words) in _GREET_PHRASES:
+            return True
+        if len(words) > 1 and words[-1] in _GREET_FILLER:
+            words.pop()
+            continue
+        break
+    # «salom salom», «hi hello», «assalomu alaykum va rahmatullohi» kabi
+    for i in range(len(words), 0, -1):
+        head = " ".join(words[:i])
+        if head in _GREET_PHRASES:
+            rest = words[i:]
+            return all(w in _GREET_FILLER or w in _GREET_PHRASES or w in ("rahmatullohi", "barakatuh", "barakotuh",
+                                                                          "va", "rahmatulloh") for w in rest)
+    return False
 COUNT_RE = re.compile(r"(\d{1,2})\s*(?:ta|tadan|ta\.)?\s*[-–]?\s*(?:slayd\w*|slaid\w*|slide\w*|слайд\w*|varaq\w*|sahifa\w*|page\w*)", re.I)
 MIN_SLIDES, MAX_SLIDES = 3, 20
 
@@ -941,6 +1000,7 @@ async def _balance_info(user: dict) -> Optional[dict]:
         "wait": _fmt_wait(p.get("next_reset_in_seconds")) if p.get("window_started") else "",
         "linked": email != _tg_email(int(user["id"])), "email": email,
         "suspended": bool(p.get("free_suspended")), "plan": p.get("plan", "free"), "until": until, "unlimited": bool(p.get("unlimited")), "ad_free": bool(p.get("ad_free")),
+        "deep_ok": bool(p.get("deep_allowed")),
     }
 
 
@@ -3338,6 +3398,10 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
         if usage.get("blocked"):
             await _edit(chat_id, msg_id, "⛔ Akkauntingiz bloklangan.")
             return
+        deep_note = ""
+        if mode == "deep" and not _deep_ok_usage(usage):          # v83: balans tushib ketgan bo'lsa ham — Tez AI
+            mode = st["mode"] = "fast"
+            deep_note = "\n\n" + _deep_lock_text()
         afford = int(_deps["total_credits"](usage) // _page_units(mode, usage))
         if afford < 1:
             await _edit(chat_id, msg_id, *_no_credit_reply(mode, usage))
@@ -3347,7 +3411,7 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
             note = f"\n\nℹ️ Balansingizda {afford} varaq bor — shuncha slayd yaratiladi."
             n = max(1, afford)
         n = max(1, n)
-        extra = f"\n\n{n} ta slayd · {'🧠 Chuqur' if mode == 'deep' else '⚡ Tez'} AI" + ("\n<i>Chuqur rejim 1–2 daqiqa olishi mumkin.</i>" if mode == "deep" else "") + note
+        extra = f"\n\n{n} ta slayd · {'🧠 Chuqur' if mode == 'deep' else '⚡ Tez'} AI" + ("\n<i>Chuqur rejim 1–2 daqiqa olishi mumkin.</i>" if mode == "deep" else "") + note + deep_note
         await _edit(chat_id, msg_id, _steps(1, extra))
 
         async def _queued(pos: int) -> None:
@@ -3439,6 +3503,9 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         deck = st["deck"]
         uid, email = await _ensure_uid(user)
         usage = await asyncio.to_thread(_usage_now_sync, uid, email)
+        if mode == "deep" and not _deep_ok_usage(usage):          # v83: bepul rejimda Chuqur AI yopiq — Tez AI
+            mode = st["mode"] = "fast"
+            await _send(chat_id, _deep_lock_text())
         if _deps["total_credits"](usage) < _deps["MODES"][mode]["chat"]:
             await _send(chat_id, *_no_credit_reply(mode, usage))
             return
@@ -4177,6 +4244,38 @@ async def _handle_ref_start(cid: int, user: dict, code: str) -> None:
     await _claim_ref(cid, user, code)
 
 
+def _deep_lock_text() -> str:
+    n = 10
+    try:
+        n = int(_deps["usage_payload"]({}).get("deep_min_paid_pages", 10))
+    except Exception:
+        pass
+    return ("🔒 <b>Chuqur AI yopiq</b>\n"
+            "Chuqur AI qimmat, shuning uchun u faqat pullik balans " + str(n) + " varaqdan baland bo'lsa (yoki cheksiz rejimda) ochiladi."
+            "\nHozir ⚡ Tez AI ishlaydi.")
+
+
+def _deep_ok_usage(usage: Optional[dict]) -> bool:
+    try:
+        return bool(_deps["usage_payload"](usage or {}).get("deep_allowed"))
+    except Exception:
+        return False
+
+
+async def _deep_ok(user: dict) -> bool:
+    """v83: Chuqur AI faqat cheksiz yoki pullik balansi chegaradan baland foydalanuvchiga (bepul rejimda yopiq)."""
+    try:
+        uid, email = await _ensure_uid(user)
+        return _deep_ok_usage(await asyncio.to_thread(_usage_now_sync, uid, email))
+    except Exception as e:
+        _warn("deep", str(e)[:120])
+        return False
+
+
+async def _deep_refused(cid: int) -> None:
+    await _send(cid, _deep_lock_text(), {"inline_keyboard": [[_btn("➕ Varaq sotib olish", "buy")], [_btn("💳 Balans", "bal")]]})
+
+
 async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> None:
     st = _state(cid)
     try:
@@ -4194,7 +4293,8 @@ async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> Non
     text = f"⚙️ <b>Sozlamalar</b>{bal}{acc}\n🤖 AI: <b>{'🧠 Chuqur' if deep else '⚡ Tez'}</b>"
     kb = {"inline_keyboard": [
         first,
-        [_btn(("✅ " if not deep else "") + "⚡ Tez", "smode:fast"), _btn(("✅ " if deep else "") + "🧠 Chuqur", "smode:deep")],
+        [_btn(("✅ " if not deep else "") + "⚡ Tez", "smode:fast"),
+         _btn(("✅ " if deep else "") + ("🧠 Chuqur" if (info or {}).get("deep_ok") else "🔒 Chuqur"), "smode:deep")],
         [_btn("💳 Balans", "bal")],
         [_btn(SUP_BTN, "sup")],
         [_btn("🌐 Til / Язык / Language", "langpick")],
@@ -4304,7 +4404,12 @@ async def _handle_callback(cb: dict) -> None:
     elif data == "set":
         await _show_settings(cid, user)
     elif data.startswith("smode:"):
-        st["mode"] = "deep" if data.endswith("deep") else "fast"
+        want = "deep" if data.endswith("deep") else "fast"
+        if want == "deep" and not await _deep_ok(user):
+            st["mode"] = "fast"
+            await _deep_refused(cid)
+            return
+        st["mode"] = want
         await _show_settings(cid, user, mid)
     elif data.startswith("pptxai:"):
         try:
@@ -4339,7 +4444,12 @@ async def _handle_callback(cb: dict) -> None:
         else:
             await _send(cid, "Bu slayd topilmadi (o'chirilgan bo'lishi mumkin).")
     elif data.startswith("mode:"):
-        st["mode"] = "deep" if data.endswith("deep") else "fast"
+        want = "deep" if data.endswith("deep") else "fast"
+        if want == "deep" and not await _deep_ok(user):
+            st["mode"] = "fast"
+            await _deep_refused(cid)
+            return
+        st["mode"] = want
         if st.get("topic"):
             await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup=kb_count(st["mode"]))
     elif data.startswith("cnt:"):                         # eski xabarlardagi tugmalar uchun
@@ -4561,8 +4671,12 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
                     {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")]]})
         return
     ui = st.get("ui")
-    if ui not in ("new", "edit") and GREETING_RE.match(text):
-        await _send_welcome(chat_id, user)
+    if is_greeting(text):
+        if ui in ("new", "edit") and not _new_expired(st):
+            # v83: «🆕 Yangi slayd» ochiq — salom MAVZU emas (avval «salom» haqida slayd yasalib, varaq yechilardi)
+            await _send(chat_id, "👋 Salom! Mavzuni yozing — AI taqdimot tayyorlaydi 👇")
+        else:
+            await _send_welcome(chat_id, user)
         return
     clean_text = " ".join(text.split())[:1500]
     expired = _new_expired(st)
@@ -4746,7 +4860,12 @@ async def handle_update(data: dict) -> None:
         elif cmd in ("/clear", "/tozalash"):
             await _ask_clear(chat_id)
         elif cmd == "/mode":
-            st["mode"] = "deep" if st.get("mode") != "deep" else "fast"
+            want = "deep" if st.get("mode") != "deep" else "fast"
+            if want == "deep" and not await _deep_ok(user):
+                st["mode"] = "fast"
+                await _deep_refused(chat_id)
+                return
+            st["mode"] = want
             await _send(chat_id, f"Rejim: <b>{'🧠 Chuqur AI' if st['mode'] == 'deep' else '⚡ Tez AI'}</b>\n"
                                  f"<i>{f'Murakkab mavzular uchun, 1 slayd = {_deep_mult()} Tez-varaq, sekinroq.' if st['mode'] == 'deep' else 'Tez va tejamkor: 1 slayd = 1 varaq.'}</i>")
         elif cmd in ("/credits", "/kredit", "/kreditlar", "/balance", "/balans"):

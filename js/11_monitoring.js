@@ -220,6 +220,9 @@
     _state.plan_until = data.plan_until || null;
     _state.unlimited = !!data.unlimited;
     _state.ad_free = typeof data.ad_free === 'boolean' ? data.ad_free : (_state.unlimited || _state.is_pro);
+    if (typeof data.deep_allowed === 'boolean') _state.deep_allowed = data.deep_allowed;            // v83
+    if (typeof data.deep_min_paid_pages === 'number') _state.deep_min_paid_pages = data.deep_min_paid_pages;
+    try { markDeepOption(); } catch (_) {}
     try { document.dispatchEvent(new CustomEvent('ss:usage', { detail: getState() })); } catch (_) {}
     if (typeof data.total_tokens === 'number') _state.total_tokens = data.total_tokens;
     if (typeof data.user_total_tokens === 'number') _state.total_tokens = data.user_total_tokens;
@@ -238,9 +241,35 @@
     renderUI();
   }
 
+  // v83: Chuqur AI qimmat — bepul rejimda yopiq. Faqat cheksiz yoki pullik balansi chegaradan baland bo'lsa ochiladi
+  // (server ham tekshiradi: DEEP_LOCKED). Bu yerda foydalanuvchi tanlashi bilan aytiladi va Tez AI ga qaytariladi.
+  function deepLocked() { return isLoggedIn() && !_state.unlimited && _state.deep_allowed === false; }
+  function markDeepOption() {
+    const sel = document.getElementById('aiModelSelect');
+    const opt = sel && sel.querySelector('option[value="deep"]');
+    if (!opt) return;
+    if (!opt.__ssBase) opt.__ssBase = opt.textContent.replace(/^🔒\s*/, '');
+    opt.textContent = (deepLocked() ? '🔒 ' : '') + opt.__ssBase;
+    if (deepLocked() && sel.value === 'deep') { sel.value = 'fast'; renderUI(); }
+  }
+  function showDeepLocked() {
+    const sel = document.getElementById('aiModelSelect');
+    if (sel && sel.value === 'deep') sel.value = 'fast';
+    try { renderUI(); } catch (_) {}
+    const n = _state.deep_min_paid_pages != null ? _state.deep_min_paid_pages : 10;
+    const text = 'Chuqur AI qimmat, shuning uchun u faqat pullik balans ' + n + ' varaqdan baland bo‘lsa (yoki cheksiz rejimda) ochiladi. Hozir ⚡ Tez AI ishlaydi.';
+    if (window.Swal && Swal.fire) {
+      Swal.fire({ title: '🔒 Chuqur AI yopiq', text: text, icon: 'info', showCancelButton: true, heightAuto: false,
+        confirmButtonText: 'Balansni to‘ldirish', cancelButtonText: 'Tez AI bilan davom etish' })
+        .then(function (r) { if (r && r.isConfirmed) { try { showLimitModal(); } catch (_) {} } });
+    } else {
+      try { showToast(text, 'info'); } catch (_) {}
+    }
+  }
   // Rejim almashganda: balans darhol qayta ko'rsatiladi (server birliklari / yangi varaq birligi)
   document.addEventListener('change', function (e) {
     if (e.target && e.target.id === 'aiModelSelect') {
+      if (e.target.value === 'deep' && deepLocked()) { showDeepLocked(); return; }
       renderUI();
       try { showToast('Balans: ' + fmt(toPages(totalUnits(), curMode())) + ' ' + (curMode() === 'deep' ? 'Chuqur' : 'Tez') + '-varaq', 'info'); } catch (_) {}
     }
@@ -381,6 +410,8 @@
     renderUI: renderUI,
     startCheckout: startCheckout,
     showLimitModal: showLimitModal,
+    showDeepLocked: showDeepLocked,
+    markDeepOption: markDeepOption,
     guardSend: guardSend,
     handlePaymentReturn: handlePaymentReturn,
     getState: getState,

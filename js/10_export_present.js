@@ -794,6 +794,7 @@
           select.innerHTML = data.models.map(m =>
             `<option value="${m.value}" ${m.value === data.default ? 'selected' : ''}>${m.label}</option>`
           ).join('');
+          try { if (window.Monitoring && window.Monitoring.markDeepOption) window.Monitoring.markDeepOption(); } catch (e) {}   // v83 🔒
         }
       } catch (e) {}
     }
