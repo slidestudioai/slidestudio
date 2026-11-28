@@ -99,6 +99,7 @@
         var te = document.getElementById('presentationTitle'); if (te) te.innerText = projectTitle;
       } catch (e) {}
       addSlide('title');                                       // boshlang'ich holat (tarixga yoziladi)
+      try { if (window.ssDropDraft) window.ssDropDraft(); } catch (e) {}    // v83: saved draft + cloud copy too
       try { updateAllImageBadges(); } catch (e) {}
       try { hasUnsavedChanges = false; } catch (e) {}
       setTimeout(function () { try { saveCurrentSlideState(); baseSig = workSig(); } catch (e) {} }, 600);

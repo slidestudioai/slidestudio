@@ -310,6 +310,7 @@
   }
   window.ssIsPristineDeck = isPristineDeck;
   var savedKeys = {};                 // shu sessiyada haqiqatan saqlangan qoralamalar (faqat shularni o'chirish mumkin)
+  var restoredKeys = {};              // v83: shu sessiyada ochilgan (tiklangan) qoralamalar — tozalansa ular ham o'chadi
 
   var lastSavedSig = '', saving = false;
   // v79: 2 AKKAUNT XAVFSIZLIGI. Ekrandagi slaydlar qaysi akkauntga tegishli — shu yerda eslanadi. Boshqa akkauntga
@@ -338,7 +339,9 @@
       if (sig === lastSavedSig) return;
       if (isPristineDeck()) {
         // foydalanuvchi o'zi hammasini tozalagan bo'lsa — eski qoralama ham qolmasin; boshqa holatda hech narsa yozilmaydi
-        if (savedKeys[key]) { await idbDel(key); delete savedKeys[key]; cloudDelete(); }
+        // v83: also a draft RESTORED in this session (not only one saved in it): «Hamma varaqni tozalash» right after
+        // the page opened left the old draft (here and in the cloud) and it came back after a reload.
+        if (savedKeys[key] || restoredKeys[key]) { await idbDel(key); delete savedKeys[key]; delete restoredKeys[key]; cloudDelete(); }
         lastSavedSig = sig;
         return;
       }
@@ -405,8 +408,9 @@
     if (job.key !== draftKey() || window.__ssUserLogout || window.__ssAcctSwitch) { cloud.pending = null; return; }
     cloud.pending = null; cloud.busy = true;
     try {
-      var r = await fetch('/api/draft/save', { method: 'POST', headers: await cloudAuth(), keepalive: false,
-        body: JSON.stringify({ deck: job.rec, saved_at: job.rec.savedAt }) });
+      var body = JSON.stringify({ deck: job.rec, saved_at: job.rec.savedAt });
+      // keepalive: a small deck saved while the tab is closing still reaches the server (limit 64 KB)
+      var r = await fetch('/api/draft/save', { method: 'POST', headers: await cloudAuth(), keepalive: body.length < 60000, body: body });
       if (r.status === 413) {
         cloud.tooBig = true;
         toast('Taqdimot juda katta (ko‘p rasm/video) — faqat shu qurilmada saqlandi.', 'info');
@@ -436,6 +440,16 @@
     cloudAuth().then(function (h) { return fetch('/api/draft/delete', { method: 'POST', headers: h, body: '{}' }); }).catch(function () {});
   }
   window.ssCloudSavedAt = function () { return cloud.savedAt; };
+  /** v83: «Hamma varaqni tozalash» — this account's draft is removed here AND in the cloud at once (no reload surprise). */
+  window.ssDropDraft = function () {
+    var key = draftKey();
+    clearTimeout(cloud.timer); cloud.pending = null;
+    delete savedKeys[key]; delete restoredKeys[key];
+    lastSavedSig = '';
+    cloud.savedAt = 0; window.__ssDraftSavedAt = 0;
+    cloudDelete();
+    return idbDel(key).catch(function () {});
+  };
 
   /** v79: shu akkauntning qoralamasi qachon saqlangan (ms, yo'q bo'lsa 0) — 36_v45_tgdeck.js «eng oxirgisi» uchun.
    *  v83: the cloud copy counts too (the newest edit on ANY device of this account). */
@@ -475,6 +489,7 @@
       }
       if (!rec) return null;
       lastSavedSig = '';
+      restoredKeys[key] = true;
       window.__ssDraftSavedAt = +rec.savedAt || 0;               // v79: Mini App — botdagi taqdimot yangiroqmi?
       return rec;
     } catch (e) { return null; }

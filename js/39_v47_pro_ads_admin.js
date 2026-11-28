@@ -29,8 +29,10 @@
   function openExternal(url) {
     var abs = /^https?:/i.test(url) ? url : location.origin + url;
     try { if (tgw && typeof tgw.openLink === 'function') { tgw.openLink(abs); return; } } catch (e) {}
-    var w = null; try { w = window.open(abs, '_blank', 'noopener'); } catch (e) {}
-    if (!w) location.href = abs;
+    // v83: window.open(..., 'noopener') ALWAYS returns null (by the spec), even when the tab opened. So the old
+    // «if (!w) location.href = abs» ALSO turned this site into the admin panel. The link opener is cut by hand now.
+    var w = null; try { w = window.open(abs, '_blank'); if (w) { try { w.opener = null; } catch (e) {} } } catch (e) {}
+    if (!w) location.href = abs;                       // only when the browser really blocked the new tab
   }
 
   /* ------------------------------------------------------------------ CSS */

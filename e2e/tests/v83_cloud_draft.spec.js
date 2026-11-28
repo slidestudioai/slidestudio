@@ -74,3 +74,31 @@ test('a fresh local draft (under 3 days) still opens after a reload', async ({ p
   await page.waitForFunction(() => typeof canvas !== 'undefined' && canvas && slides.length > 0);
   await expect.poll(() => page.evaluate(() => JSON.stringify(slides.map((s) => s.json)))).toContain('Yangi qoralama');
 });
+
+test('«Hamma varaqni tozalash» right after the page opened: the old deck does not come back after a reload', async ({ page }) => {
+  await openEditor(page);
+  await page.evaluate(() => { canvas.add(new fabric.Textbox('Eski taqdimot', { left: 100, top: 100, width: 300 })); saveCurrentSlideState(); });
+  await page.evaluate(() => window.ssPersistNow());
+  await page.reload();
+  await page.waitForFunction(() => typeof canvas !== 'undefined' && canvas && slides.length > 0);
+  await expect.poll(() => page.evaluate(() => JSON.stringify(slides.map((s) => s.json)))).toContain('Eski taqdimot');
+  // clear everything at once, right after the restore (the confirm dialog is answered «yes»)
+  await page.evaluate(async () => { window.Swal.fire = async () => ({ isConfirmed: true }); await window.ssResetCanvas(); });
+  await page.waitForTimeout(800);
+  await page.reload();
+  await page.waitForFunction(() => typeof canvas !== 'undefined' && canvas && slides.length > 0);
+  await page.waitForTimeout(1500);
+  expect(await page.evaluate(() => JSON.stringify(slides.map((s) => s.json)))).not.toContain('Eski taqdimot');
+});
+
+test('clearing the deck also removes the cloud copy of the account', async ({ page }) => {
+  const store = { saves: [], deck: null, at: 0 };
+  await fakeCloud(page, store);
+  await openEditor(page);
+  await login(page);
+  await page.evaluate(() => { canvas.add(new fabric.Textbox('Bulutdagi eski', { left: 100, top: 100, width: 300 })); saveCurrentSlideState(); });
+  await page.evaluate(() => window.ssPersistNow());
+  await expect.poll(() => store.deck, { timeout: 15000 }).not.toBeNull();
+  await page.evaluate(async () => { window.Swal.fire = async () => ({ isConfirmed: true }); await window.ssResetCanvas(); });
+  await expect.poll(() => store.deck).toBeNull();
+});
