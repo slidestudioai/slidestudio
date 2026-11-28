@@ -87,7 +87,7 @@
     if (!ready) { toast('Muharrir yuklanmadi — sahifani yangilang.', 'error'); return; }
     if (inTg) await waitFor(logged, 20000);                       // Mini App: avtomatik kirish tugasin (u slaydlarni tegmaydi, lekin xavfsiz)
     await sleep(600);
-    toast('Slaydlar muharrirga ochilmoqda…');
+    toast('⏳ Taqdimotingiz ochilmoqda…');
     for (var a = 0; a < 3; a++) {
       try {
         var r = await fetch('/api/telegram/deck-file?t=' + encodeURIComponent(deckTok));
@@ -96,7 +96,9 @@
         var blob = await r.blob();
         var f = new File([blob], 'slayd.pptx', { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
         lsDel('tgdeck');
-        await window.importPptxClient(f);
+        await window.importPptxClient(f, { quiet: true });      // v83: no file dialogs — it is just «your deck»
+        toast('✅ Oxirgi taqdimotingiz ochildi');
+        try { if (window.ssPersistNow) window.ssPersistNow(); } catch (e) {}   // -> the account's cloud copy at once
         return;
       } catch (e) { await sleep(2500 * (a + 1)); }                // Render uyg'onguncha qayta urinadi
     }

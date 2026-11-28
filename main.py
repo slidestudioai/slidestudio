@@ -49,6 +49,7 @@ try:
         cost_for_action,
         normalize_user_row,
         apply_24h_reset,
+        deep_allowed,
         charge_for_ai_turn,
         turn_cost,
         max_debt_units,
@@ -3411,6 +3412,12 @@ except Exception as _cm_err:
 
 # Yordam (Support): foydalanuvchi saytda (⚙️ Sozlamalar → 💬 Yordam) yoki botda (⚙️ Sozlamalar → 💬 Adminga yozish)
 # adminga yozadi; admin sayt admin panelida yoki botdagi admin menyuda (💬 Yordam) o'qiydi va javob beradi.
+try:                                   # v83: the editor's last deck in the cloud (one per account, 3 days)
+    from backend.services.drafts import register_drafts
+    register_drafts(app, {"get_supabase": lambda: supabase, "auth_user": lambda tok: auth_user_cached(tok)})
+except Exception as _dr_err:
+    print(f"[DRAFT] yuklanmadi: {_dr_err}")
+
 try:
     from backend.support import register_support
     register_support(app, {
@@ -3691,6 +3698,21 @@ def _user_rate_hit(uid: str, kind: str) -> int:
         for k in list(_UWIN.keys())[:5000]:
             _UWIN.pop(k, None)
     return 0
+
+async def _refuse_deep(websocket, usage: dict, bill_mode: str) -> bool:
+    """v83: Chuqur AI qimmat — bepul rejimda yopiq. Faqat cheksiz yoki pullik balansi deep_min_paid_pages dan baland
+    foydalanuvchiga ochiq. Rad etilsa True (xabar yuborilgan)."""
+    if bill_mode != "deep" or deep_allowed(usage):
+        return False
+    _metrics.inc("ai_turns_total", {"result": "deep_locked"})
+    await websocket.send_json({
+        "type": "error", "code": "DEEP_LOCKED",
+        "message": (f"🧠 Chuqur AI faqat pullik balans {rt('deep_min_paid_pages')} varaqdan baland bo'lsa "
+                    f"(yoki cheksiz rejimda) ishlaydi. ⚡ Tez AI bilan davom eting yoki balansni to'ldiring."),
+        **usage_payload(usage),
+    })
+    return True
+
 
 # ---- Audit C2: one AI turn at a time per user ----
 # The balance is checked BEFORE generation and charged AFTER it. Without this guard a user could open many tabs
@@ -4273,9 +4295,9 @@ async def ws_chat(websocket: WebSocket):
                 if appsettings.get("maintenance") and not is_unlimited(usage):
                     await websocket.send_json({"type": "error", "code": "maintenance", "message": appsettings.get("maintenance_text")})
                     continue
-
                 usage = apply_24h_reset(usage)
                 bill_mode = mode_for_model(model)
+                if await _refuse_deep(websocket, usage, bill_mode): continue   # noqa: E701 — v83: bepul rejimda Chuqur AI yopiq
                 bal_units = total_credits(usage)
                 if not can_afford(usage, bill_mode):
                     _metrics.inc("ai_turns_total", {"result": "limit"})

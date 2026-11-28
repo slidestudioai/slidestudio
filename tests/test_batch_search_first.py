@@ -51,7 +51,8 @@ class _Stream:
 def ai(sb, monkeypatch):
     ip._pools.clear()
     sb.add_user("tok-1", "u1", "a@x.com")
-    sb.tables["user_usage"] = [{"user_id": "u1", "email": "a@x.com", "free_credits": 2000, "paid_credits": 0,
+    # v83: paid balance — Deep AI is open only above deep_min_paid_pages (the free mode has no Deep AI)
+    sb.tables["user_usage"] = [{"user_id": "u1", "email": "a@x.com", "free_credits": 2000, "paid_credits": 2000,
                                 "last_reset_time": "2099-01-01T00:00:00+00:00"}]
     monkeypatch.setitem(main.config, "api_key", "test-key")
     st = {"calls": [], "searches": [], "planner": []}

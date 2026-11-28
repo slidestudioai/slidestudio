@@ -13,6 +13,7 @@ Jadvallar: SUPABASE_SCHEMA.sql
 """
 from __future__ import annotations
 
+from backend.services import smalltalk as _smalltalk   # v83: salom/rahmat/xayr — AI tokenisiz
 import asyncio
 import base64
 import gc
@@ -308,6 +309,36 @@ DEFAULT_SLIDES = 8
 HELP = i18n.HELP_UZ          # v66: 3 tilda — backend/bot_i18n.py
 ABOUT = HELP
 GREETING_RE = re.compile(r"^(salom|assalomu\s*alaykum|assalom|hello|hi|hey|привет|здравствуй\w*|qalay|nima gap|start|boshla)[\s!.,?]*$", re.I)
+
+def is_greeting(text: str) -> bool:
+    """v83: «salom», «slm», «Assalomu alaykum aka!», «privt», «helo», «Доброе утро», «👋» -> True.
+    The phrases are shared with the site: js/data/smalltalk.json (backend/services/smalltalk.py)."""
+    r = _smalltalk.classify(text)
+    return bool(r and r["intent"] == "greet") or bool(GREETING_RE.match(str(text or "").strip()))
+    if GREETING_RE.match(t) or _GREET_EMOJI_RE.match(t) and any(e in t for e in "👋🙋🤝✋🖐"):
+        return True
+    t = t.lower().replace("ʻ", "'").replace("’", "'").replace("‘", "'").replace("`", "'")
+    t = re.sub(r"[^\w\s']+", " ", t)                       # emoji va tinish belgilari
+    t = re.sub(r"(\w)\1{2,}", r"\1", t)                     # salooom -> salom, hiii -> hi, приветтт -> привет
+    words = [w for w in t.split() if w]
+    if not words:
+        return False
+    # oxiridagi «aka», «bot», «hammaga» ... olib tashlanadi; qolgani to'liq salom iborasi bo'lishi kerak
+    while True:
+        if " ".join(words) in _GREET_PHRASES:
+            return True
+        if len(words) > 1 and words[-1] in _GREET_FILLER:
+            words.pop()
+            continue
+        break
+    # «salom salom», «hi hello», «assalomu alaykum va rahmatullohi» kabi
+    for i in range(len(words), 0, -1):
+        head = " ".join(words[:i])
+        if head in _GREET_PHRASES:
+            rest = words[i:]
+            return all(w in _GREET_FILLER or w in _GREET_PHRASES or w in ("rahmatullohi", "barakatuh", "barakotuh",
+                                                                          "va", "rahmatulloh") for w in rest)
+    return False
 COUNT_RE = re.compile(r"(\d{1,2})\s*(?:ta|tadan|ta\.)?\s*[-–]?\s*(?:slayd\w*|slaid\w*|slide\w*|слайд\w*|varaq\w*|sahifa\w*|page\w*)", re.I)
 MIN_SLIDES, MAX_SLIDES = 3, 20
 
@@ -941,6 +972,7 @@ async def _balance_info(user: dict) -> Optional[dict]:
         "wait": _fmt_wait(p.get("next_reset_in_seconds")) if p.get("window_started") else "",
         "linked": email != _tg_email(int(user["id"])), "email": email,
         "suspended": bool(p.get("free_suspended")), "plan": p.get("plan", "free"), "until": until, "unlimited": bool(p.get("unlimited")), "ad_free": bool(p.get("ad_free")),
+        "deep_ok": bool(p.get("deep_allowed")),
     }
 
 
@@ -3338,6 +3370,10 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
         if usage.get("blocked"):
             await _edit(chat_id, msg_id, "⛔ Akkauntingiz bloklangan.")
             return
+        deep_note = ""
+        if mode == "deep" and not _deep_ok_usage(usage):          # v83: balans tushib ketgan bo'lsa ham — Tez AI
+            mode = st["mode"] = "fast"
+            deep_note = "\n\n" + _deep_lock_text()
         afford = int(_deps["total_credits"](usage) // _page_units(mode, usage))
         if afford < 1:
             await _edit(chat_id, msg_id, *_no_credit_reply(mode, usage))
@@ -3347,7 +3383,7 @@ async def _run_generate(chat_id: int, user: dict, topic: str, n: int) -> None:
             note = f"\n\nℹ️ Balansingizda {afford} varaq bor — shuncha slayd yaratiladi."
             n = max(1, afford)
         n = max(1, n)
-        extra = f"\n\n{n} ta slayd · {'🧠 Chuqur' if mode == 'deep' else '⚡ Tez'} AI" + ("\n<i>Chuqur rejim 1–2 daqiqa olishi mumkin.</i>" if mode == "deep" else "") + note
+        extra = f"\n\n{n} ta slayd · {'🧠 Chuqur' if mode == 'deep' else '⚡ Tez'} AI" + ("\n<i>Chuqur rejim 1–2 daqiqa olishi mumkin.</i>" if mode == "deep" else "") + note + deep_note
         await _edit(chat_id, msg_id, _steps(1, extra))
 
         async def _queued(pos: int) -> None:
@@ -3439,6 +3475,9 @@ async def _run_edit(chat_id: int, user: dict, text: str) -> None:
         deck = st["deck"]
         uid, email = await _ensure_uid(user)
         usage = await asyncio.to_thread(_usage_now_sync, uid, email)
+        if mode == "deep" and not _deep_ok_usage(usage):          # v83: bepul rejimda Chuqur AI yopiq — Tez AI
+            mode = st["mode"] = "fast"
+            await _send(chat_id, _deep_lock_text())
         if _deps["total_credits"](usage) < _deps["MODES"][mode]["chat"]:
             await _send(chat_id, *_no_credit_reply(mode, usage))
             return
@@ -4177,6 +4216,38 @@ async def _handle_ref_start(cid: int, user: dict, code: str) -> None:
     await _claim_ref(cid, user, code)
 
 
+def _deep_lock_text() -> str:
+    n = 10
+    try:
+        n = int(_deps["usage_payload"]({}).get("deep_min_paid_pages", 10))
+    except Exception:
+        pass
+    return ("🔒 <b>Chuqur AI yopiq</b>\n"
+            "Chuqur AI qimmat, shuning uchun u faqat pullik balans " + str(n) + " varaqdan baland bo'lsa (yoki cheksiz rejimda) ochiladi."
+            "\nHozir ⚡ Tez AI ishlaydi.")
+
+
+def _deep_ok_usage(usage: Optional[dict]) -> bool:
+    try:
+        return bool(_deps["usage_payload"](usage or {}).get("deep_allowed"))
+    except Exception:
+        return False
+
+
+async def _deep_ok(user: dict) -> bool:
+    """v83: Chuqur AI faqat cheksiz yoki pullik balansi chegaradan baland foydalanuvchiga (bepul rejimda yopiq)."""
+    try:
+        uid, email = await _ensure_uid(user)
+        return _deep_ok_usage(await asyncio.to_thread(_usage_now_sync, uid, email))
+    except Exception as e:
+        _warn("deep", str(e)[:120])
+        return False
+
+
+async def _deep_refused(cid: int) -> None:
+    await _send(cid, _deep_lock_text(), {"inline_keyboard": [[_btn("➕ Varaq sotib olish", "buy")], [_btn("💳 Balans", "bal")]]})
+
+
 async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> None:
     st = _state(cid)
     try:
@@ -4194,7 +4265,8 @@ async def _show_settings(cid: int, user: dict, mid: Optional[int] = None) -> Non
     text = f"⚙️ <b>Sozlamalar</b>{bal}{acc}\n🤖 AI: <b>{'🧠 Chuqur' if deep else '⚡ Tez'}</b>"
     kb = {"inline_keyboard": [
         first,
-        [_btn(("✅ " if not deep else "") + "⚡ Tez", "smode:fast"), _btn(("✅ " if deep else "") + "🧠 Chuqur", "smode:deep")],
+        [_btn(("✅ " if not deep else "") + "⚡ Tez", "smode:fast"),
+         _btn(("✅ " if deep else "") + ("🧠 Chuqur" if (info or {}).get("deep_ok") else "🔒 Chuqur"), "smode:deep")],
         [_btn("💳 Balans", "bal")],
         [_btn(SUP_BTN, "sup")],
         [_btn("🌐 Til / Язык / Language", "langpick")],
@@ -4304,7 +4376,12 @@ async def _handle_callback(cb: dict) -> None:
     elif data == "set":
         await _show_settings(cid, user)
     elif data.startswith("smode:"):
-        st["mode"] = "deep" if data.endswith("deep") else "fast"
+        want = "deep" if data.endswith("deep") else "fast"
+        if want == "deep" and not await _deep_ok(user):
+            st["mode"] = "fast"
+            await _deep_refused(cid)
+            return
+        st["mode"] = want
         await _show_settings(cid, user, mid)
     elif data.startswith("pptxai:"):
         try:
@@ -4339,7 +4416,12 @@ async def _handle_callback(cb: dict) -> None:
         else:
             await _send(cid, "Bu slayd topilmadi (o'chirilgan bo'lishi mumkin).")
     elif data.startswith("mode:"):
-        st["mode"] = "deep" if data.endswith("deep") else "fast"
+        want = "deep" if data.endswith("deep") else "fast"
+        if want == "deep" and not await _deep_ok(user):
+            st["mode"] = "fast"
+            await _deep_refused(cid)
+            return
+        st["mode"] = want
         if st.get("topic"):
             await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup=kb_count(st["mode"]))
     elif data.startswith("cnt:"):                         # eski xabarlardagi tugmalar uchun
@@ -4546,6 +4628,31 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
         st["busy"] = False
 
 
+async def _smalltalk_reply(cid: int, user: dict, st: dict, talk: dict) -> None:
+    """v83: salomga — 1-marta asosiy salom (balans + menyu), 2-marta jonli javob, 3+ — hazil aralash yo'naltirish
+    (oxirgi 5 daqiqada). Har safar boshqacha matn; xabarlar o'chirilmaydi. Rahmat / xayr / «nima qila olasan» ham.
+    Hech qanday AI chaqirilmaydi. «🆕 Yangi slayd» ochiq bo'lsa — sessiya buzilmaydi (salom MAVZU emas)."""
+    now = time.time()
+    lang = _cur_lang(cid)
+    name = str(user.get("first_name") or "").strip()[:40]
+    in_new = st.get("ui") in ("new", "edit") and not _new_expired(st)
+    kb = None if in_new else {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")]]}
+    if talk["intent"] == "greet":
+        greets = [t for t in (st.get("greets") or []) if now - t < 300] + [now]
+        st["greets"] = greets[-20:]
+        level = _smalltalk.greet_level(len(greets))
+        if level == "greet1" and not in_new:
+            await _send_welcome(cid, user)
+            return
+        key = level
+    else:
+        st.pop("greets", None)
+        key = talk["intent"]
+    text = _smalltalk.reply(key, lang, esc(name), avoid=st.get("talk_last"))
+    st["talk_last"] = text
+    await _send(cid, text, kb)
+
+
 async def _handle_text(chat_id: int, user: dict, text: str) -> None:
     st = _state(chat_id)
     act = MENU.get(text.strip())
@@ -4561,9 +4668,11 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
                     {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")]]})
         return
     ui = st.get("ui")
-    if ui not in ("new", "edit") and GREETING_RE.match(text):
-        await _send_welcome(chat_id, user)
+    talk = _smalltalk.classify(text) or ({"intent": "greet", "lang": ""} if GREETING_RE.match(text) else None)
+    if talk:                                   # v83: salom / rahmat / xayr / «nima qila olasan» — AI tokenisiz
+        await _smalltalk_reply(chat_id, user, st, talk)
         return
+    st.pop("greets", None)                     # «ketma-ket» salomlar sanog'i boshqa xabardan keyin boshidan
     clean_text = " ".join(text.split())[:1500]
     expired = _new_expired(st)
     if ui not in ("new", "edit") or expired:
@@ -4746,7 +4855,12 @@ async def handle_update(data: dict) -> None:
         elif cmd in ("/clear", "/tozalash"):
             await _ask_clear(chat_id)
         elif cmd == "/mode":
-            st["mode"] = "deep" if st.get("mode") != "deep" else "fast"
+            want = "deep" if st.get("mode") != "deep" else "fast"
+            if want == "deep" and not await _deep_ok(user):
+                st["mode"] = "fast"
+                await _deep_refused(chat_id)
+                return
+            st["mode"] = want
             await _send(chat_id, f"Rejim: <b>{'🧠 Chuqur AI' if st['mode'] == 'deep' else '⚡ Tez AI'}</b>\n"
                                  f"<i>{f'Murakkab mavzular uchun, 1 slayd = {_deep_mult()} Tez-varaq, sekinroq.' if st['mode'] == 'deep' else 'Tez va tejamkor: 1 slayd = 1 varaq.'}</i>")
         elif cmd in ("/credits", "/kredit", "/kreditlar", "/balance", "/balans"):

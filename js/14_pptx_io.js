@@ -2696,7 +2696,16 @@
     recordGlobalState();
   }
 
-  async function importPptxClient(file) {
+  async function importPptxClient(file, opts) {
+    // v83: quiet = a deck that comes from the bot / the account: no «PPTX ochilmoqda / ochildi» file dialogs,
+    // only a small toast — for the user it simply IS their presentation, not a file being opened.
+    var quiet = !!(opts && opts.quiet);
+    var SwalQ = quiet ? { fire: function (a, b, c) {
+      var o = (a && typeof a === 'object') ? a : { title: a, text: b, icon: c };
+      if (o.icon === 'error') { try { showToast((o.title || 'Xato') + ': ' + (o.text || ''), 'error'); } catch (e) {} }
+      return Promise.resolve({});
+    }, showLoading: function () {} } : null;
+    var Swal = SwalQ || window.Swal;
     Swal.fire({ title: 'PPTX ochilmoqda…', allowOutsideClick: false, didOpen: function () { Swal.showLoading(); } });
     try {
       if (!window.JSZip) { Swal.fire('Xato', 'JSZip yuklanmadi. Internetni tekshiring.', 'error'); return; }

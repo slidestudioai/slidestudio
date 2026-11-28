@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 AUTO_ID_TABLES = {"support_messages"}
 UNIQUE_KEYS = {"payment_events": "order_id", "user_usage": "user_id", "tg_link_codes": "code",
                "referrals": "invitee_id", "referral_codes": "user_id", "tg_prefs": "tg_id",
-               "tg_pending_refs": "tg_id"}
+               "tg_pending_refs": "tg_id", "cloud_drafts": "user_id"}
 
 
 class FakeAPIError(Exception):

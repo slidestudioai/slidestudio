@@ -79,6 +79,7 @@ class _Stream:
 
 
 def test_ws_streams_thinking_for_deep_model(sb, client, monkeypatch):
+    monkeypatch.setattr(main, "deep_allowed", lambda u: True)          # v83: the dev user is free (no Deep AI)
     monkeypatch.setenv("SLIDE_STUDIO_DEV_MODE", "1")
     monkeypatch.setenv("SLIDE_STUDIO_DEV_TOKEN", "devtok")
     monkeypatch.setitem(main.config, "api_key", "test-key")

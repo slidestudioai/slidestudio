@@ -26,6 +26,7 @@ DEFAULTS: Dict[str, Any] = {
     "deep_ai_cost": mon.DEEP_MULT,                 # 1 Chuqur slayd = shuncha birlik ($1=100 -> 50 Chuqur)
     "free_daily_fast_limit": mon.FREE_DAILY_PAGES,  # bepul kunlik Tez limit
     "free_daily_deep_limit": mon.FREE_DAILY_PAGES // mon.DEEP_MULT,   # bepul kunlik Chuqur limit
+    "deep_min_paid_pages": mon.DEEP_MIN_PAID_PAGES,  # v83: Chuqur AI shu pullik balansdan (Tez-varaq) BALAND bo'lsa ochiladi
     "daily_message_limit": 200,                    # bitta foydalanuvchining kunlik AI xabarlari
     "ads_enabled": True,                           # umumiy reklama kaliti
     "ads_site": True,                              # saytda (chap panel)
@@ -36,10 +37,12 @@ DEFAULTS: Dict[str, Any] = {
     "maintenance_text": "Texnik ishlar olib borilmoqda. Birozdan keyin urinib ko'ring.",
     "announcement": "",                            # saytda tepada ko'rinadigan e'lon (bo'sh = yo'q)
 }
-INT_KEYS = {"slides_per_dollar", "free_daily_fast_limit", "free_daily_deep_limit", "daily_message_limit", "ad_bot_interval_min"}
+INT_KEYS = {"slides_per_dollar", "free_daily_fast_limit", "free_daily_deep_limit", "daily_message_limit", "ad_bot_interval_min",
+            "deep_min_paid_pages"}
 FLOAT_KEYS = {"fast_ai_cost", "deep_ai_cost"}
 ALIASES = {"free_daily_pages": "free_daily_fast_limit", "pack_pages": "slides_per_dollar"}   # v75 gacha bo'lgan kalitlar
-TARIFF_KEYS = ("slides_per_dollar", "fast_ai_cost", "deep_ai_cost", "free_daily_fast_limit", "free_daily_deep_limit")
+TARIFF_KEYS = ("slides_per_dollar", "fast_ai_cost", "deep_ai_cost", "free_daily_fast_limit", "free_daily_deep_limit",
+               "deep_min_paid_pages")
 BOOL_KEYS = {"ads_enabled", "ads_site", "ads_bot", "maintenance", "ad_purge_on_expire"}
 STR_KEYS = {"maintenance_text", "announcement"}
 _cache: Dict[str, Any] = dict(DEFAULTS)
@@ -76,7 +79,8 @@ def _apply_runtime() -> None:
                     pack_pages=_cache.get("slides_per_dollar"),
                     fast_ai_cost=_cache.get("fast_ai_cost"),
                     deep_ai_cost=_cache.get("deep_ai_cost"),
-                    free_daily_deep_limit=_cache.get("free_daily_deep_limit"))
+                    free_daily_deep_limit=_cache.get("free_daily_deep_limit"),
+                    deep_min_paid_pages=_cache.get("deep_min_paid_pages"))
 
 
 def load(force: bool = False) -> Dict[str, Any]:
