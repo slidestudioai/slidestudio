@@ -11,6 +11,13 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
 AUTO_ID_TABLES = {"support_messages"}
+
+
+def _num_or_none(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 UNIQUE_KEYS = {"payment_events": "order_id", "user_usage": "user_id", "tg_link_codes": "code",
                "referrals": "invitee_id", "referral_codes": "user_id", "tg_prefs": "tg_id",
                "tg_pending_refs": "tg_id", "cloud_drafts": "user_id"}
@@ -84,6 +91,12 @@ class _Query:
         self.filters.append(lambda r: r.get(col) is not None and r.get(col) < val)
         return self
 
+    def gt(self, col, val):
+        return self._add(lambda r: _num_or_none(r.get(col)) is not None and _num_or_none(r.get(col)) > float(val))
+
+    def lte(self, col, val):
+        return self._add(lambda r: (_num_or_none(r.get(col)) or 0) <= float(val))
+
     def gte(self, col, val):
         self.filters.append(lambda r: r.get(col) is not None and str(r.get(col)) >= str(val))
         return self
@@ -100,6 +113,10 @@ class _Query:
             if op == "ilike":
                 rx = re.compile("^" + re.escape(val).replace("%", ".*") + "$", re.I)
                 parts.append(lambda r, c=col, rx=rx: bool(rx.match(str(r.get(c) or ""))))
+            elif op == "gt":
+                parts.append(lambda r, c=col, v=val: (_num_or_none(r.get(c)) or 0) > float(v))
+            elif op == "eq" and val in ("true", "false"):
+                parts.append(lambda r, c=col, v=val: bool(r.get(c)) == (v == "true"))
             else:
                 parts.append(lambda r, c=col, v=val: str(r.get(c)) == v)
         return self._add(lambda r: any(f(r) for f in parts))

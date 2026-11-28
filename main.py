@@ -3704,6 +3704,8 @@ async def _refuse_deep(websocket, usage: dict, bill_mode: str) -> bool:
     foydalanuvchiga ochiq. Rad etilsa True (xabar yuborilgan)."""
     if bill_mode != "deep" or deep_allowed(usage):
         return False
+    if os.environ.get("SLIDE_STUDIO_DEV_MODE", "").strip() == "1" and str(usage.get("user_id") or "").startswith("dev-"):
+        return False                       # local dev / e2e user only (DEV mode is never on in production)
     _metrics.inc("ai_turns_total", {"result": "deep_locked"})
     await websocket.send_json({
         "type": "error", "code": "DEEP_LOCKED",

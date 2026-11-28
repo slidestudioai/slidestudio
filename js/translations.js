@@ -831,6 +831,8 @@ window.SS_I18N = {
     "Xabar yuborildi. Admin tez orada javob beradi": ["Сообщение отправлено. Администратор скоро ответит", "Message sent. An admin will reply soon"],
     "Murojaatingiz": ["Ваше обращение", "Your request"],
     "🔒 Chuqur AI yopiq": ["🔒 Глубокий AI закрыт", "🔒 Deep AI is locked"],
+    "Loyiha haqida": ["О проекте", "About the project"],
+    "Yordam / Imkoniyatlar": ["Помощь / Возможности", "Help / Features"],
     "⏳ Taqdimotingiz ochilmoqda…": ["⏳ Открываем вашу презентацию…", "⏳ Opening your presentation…"],
     "✅ Oxirgi taqdimotingiz ochildi": ["✅ Ваша последняя презентация открыта", "✅ Your latest presentation is open"],
     "Taqdimot juda katta (ko‘p rasm/video) — faqat shu qurilmada saqlandi.": ["Презентация слишком большая (много фото/видео) — сохранена только на этом устройстве.", "The presentation is too big (many photos/videos) — it is saved on this device only."],

@@ -105,7 +105,7 @@ def test_balance_view_spec_sequence(sb):
     sb.tables["user_usage"] = [{"user_id": "u1", "email": "a@x.uz", "paid_credits": 0, "free_credits": 200,
                                 "last_reset_time": _now(30)}]
     b = admin_core.user_brief("u1")["balance"]
-    assert b["text"] == "Bepul: Tez 10/10 | Chuqur 5/5"
+    assert b["text"] == "Bepul: Tez 10/10 · Chuqur 🔒"          # v83: no Deep AI in the free mode
     _ledger(sb, "u1", "purchase", 100 * U, 100 * U, 5, usd=1.49)       # $1 -> 100
     sb.usage("u1")["paid_credits"] = 100 * U
     assert admin_core.user_brief("u1")["balance"]["text"] == "Pullik: 100 / 100 ($1.49)"

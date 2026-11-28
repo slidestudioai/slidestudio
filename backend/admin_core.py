@@ -334,8 +334,9 @@ def _balance_view(u: Dict[str, Any], led: Optional[Dict[str, Any]]) -> Dict[str,
     deep = {"left": free_units // dp if daily else 0, "limit": (daily // dp) if daily else 0}
     if not daily and TG_EMAIL_RE.match(str(u.get("email") or "")):
         return {"mode": "free", "fast": fast, "deep": deep, "text": "Bepul limit yo'q (TG_FREE_DAILY_PAGES=0)"}
+    # v83: bepul rejimda Chuqur AI yopiq — faqat Tez varaqlar ko'rsatiladi
     return {"mode": "free", "fast": fast, "deep": deep,
-            "text": f"Bepul: Tez {fast['left']}/{fast['limit']} | Chuqur {deep['left']}/{deep['limit']}"}
+            "text": f"Bepul: Tez {fast['left']}/{fast['limit']} · Chuqur 🔒"}
 
 
 def _brief(row: Dict[str, Any], tgmap: Dict[str, int], led: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -373,6 +374,7 @@ def _brief(row: Dict[str, Any], tgmap: Dict[str, int], led: Optional[Dict[str, D
         "last_spend_at": li.get("last_spend_at"), "last_topup_at": li.get("last_topup_at"),
         "plan": plan, "plan_until": None,
         "unlimited": mon.is_unlimited(u), "unlimited_flag": bool(row.get("unlimited")), "vip_admin": vip_rt,
+        "deep_ok": mon.deep_allowed(u),                    # v83: Chuqur AI ochiqmi (cheksiz yoki pullik > chegara)
         "free_pages": round(int(u["free_credits"]) / mon.UNIT, 2), "paid_pages": round(int(u["paid_credits"]) / mon.UNIT, 2),
         "daily_override_pages": (None if row.get("daily_units_override") in (None, "") else round(int(row["daily_units_override"]) / mon.UNIT, 2)),
         "daily_pages": round(mon.daily_units_for(u) / mon.UNIT, 2),
@@ -381,7 +383,12 @@ def _brief(row: Dict[str, Any], tgmap: Dict[str, int], led: Optional[Dict[str, D
     }
 
 
-USER_FILTERS = ("all", "google", "tg", "linked", "tg_only", "vip", "unlimited", "blocked")
+USER_FILTERS = ("all", "google", "tg", "linked", "tg_only", "vip", "unlimited", "blocked", "free", "paid", "deep")
+
+
+def _deep_or() -> str:
+    """v83: Chuqur AI ochiq = cheksiz / VIP yoki pullik balans chegaradan baland (monitoring.deep_allowed bilan bir xil)."""
+    return f"paid_credits.gt.{int(mon.deep_min_paid_units())},unlimited.eq.true,plan.eq.vip"
 
 
 # ---- v83: «Yordam» (support): who wrote — name, @username, Telegram ID, email (before: only the technical id) ----
@@ -512,6 +519,10 @@ def _find_users_impl(q: str, flt: str, limit: int, offset: int) -> List[Dict[str
             "vip": lambda x: x.eq("plan", "vip"),
             "unlimited": lambda x: x.eq("unlimited", True),
             "blocked": lambda x: x.eq("blocked", True),
+            # v83: bepul (pullik balansi yo'q) / pullik / Chuqur AI ochiq
+            "free": lambda x: x.lte("paid_credits", 0),
+            "paid": lambda x: x.gt("paid_credits", 0),
+            "deep": lambda x: x.or_(_deep_or()),
         }.get(flt, lambda x: x)
         rows, _full = _select_users(build(extra, *page))
     tg_by_uid = _tg_map([r["user_id"] for r in rows])
@@ -915,22 +926,33 @@ def stats() -> Dict[str, Any]:
     d30 = _iso_z(now - timedelta(days=30))
     nowz = _iso_z(now)
     sb = _sb()
-    out: Dict[str, Any] = {
-        "users_total": _count("user_usage"),
-        "users_24h": _count("user_usage", lambda q: q.gte("last_active", day)),
-        "users_7d": _count("user_usage", lambda q: q.gte("last_active", d7)),
-        "new_7d": _count("user_usage", lambda q: q.gte("created_at", d7)),
-        "tg_users": _count("user_usage", lambda q: q.like("email", "tg%@t.me")),
-        "google_users": _count("user_usage", lambda q: q.not_.like("email", "tg%@t.me").not_.like("email", "%@slidestudio.local")),
-        "linked": _count("tg_links"),
-        "vip": _count("user_usage", lambda q: q.eq("plan", "vip")),
-        "unlimited": _count("user_usage", lambda q: q.eq("unlimited", True)),
-        "blocked": _count("user_usage", lambda q: q.eq("blocked", True)),
-        "ads_active": _count("ads", lambda q: q.eq("active", True)),
-        "purchases_30d": _count("usage_ledger", lambda q: q.eq("kind", "purchase").gte("created_at", d30)),
-        "orders_total": _count("payment_events"),
-        "support_unread": _count("support_messages", lambda q: q.eq("from_admin", False).eq("read_by_admin", False)),
+    jobs = {
+        "users_total": ("user_usage", None),
+        "users_24h": ("user_usage", lambda q: q.gte("last_active", day)),
+        "users_7d": ("user_usage", lambda q: q.gte("last_active", d7)),
+        "new_7d": ("user_usage", lambda q: q.gte("created_at", d7)),
+        "tg_users": ("user_usage", lambda q: q.like("email", "tg%@t.me")),
+        "google_users": ("user_usage", lambda q: q.not_.like("email", "tg%@t.me").not_.like("email", "%@slidestudio.local")),
+        "linked": ("tg_links", None),
+        "vip": ("user_usage", lambda q: q.eq("plan", "vip")),
+        "unlimited": ("user_usage", lambda q: q.eq("unlimited", True)),
+        "blocked": ("user_usage", lambda q: q.eq("blocked", True)),
+        "ads_active": ("ads", lambda q: q.eq("active", True)),
+        "purchases_30d": ("usage_ledger", lambda q: q.eq("kind", "purchase").gte("created_at", d30)),
+        "orders_total": ("payment_events", None),
+        "support_unread": ("support_messages", lambda q: q.eq("from_admin", False).eq("read_by_admin", False)),
+        # v83: bepul / pullik / Chuqur AI ochiq
+        "free_users": ("user_usage", lambda q: q.lte("paid_credits", 0)),
+        "paid_now": ("user_usage", lambda q: q.gt("paid_credits", 0)),
+        "deep_open": ("user_usage", lambda q: q.or_(_deep_or())),
     }
+    # v83: the ~17 counts run AT THE SAME TIME (before: one after another — with a big DB the «Bosh» tab took so long
+    # that it looked broken)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {k: ex.submit(_count, t, b) for k, (t, b) in jobs.items()}
+        out: Dict[str, Any] = {k: f.result() for k, f in futs.items()}
+    out["deep_min_paid_pages"] = mon.rt("deep_min_paid_pages")
     imp = clk = 0
     if sb:
         try:

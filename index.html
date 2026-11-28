@@ -80,7 +80,7 @@
   <!-- Google Search Console: site ownership -->
   <meta name="google-site-verification" content="faIm498mQA0y-NhL6pXWpqVHeNM6nTfn1pwpH7PDlk8" />
   <!-- SEO -->
-  <title>SlideStudio — AI yordamida slayd va taqdimot yasash</title>
+  <title>SlideStudio</title>
   <meta name="description" content="SlideStudio (Slide Studio) yordamida sun&#39;iy intellekt (AI) orqali bir necha soniyada tayyor slayd, taqdimot va prezentatsiya yasang. Online taqdimot yasash, avtomatik prezentatsiya tayyorlash, PowerPoint (PPTX) va PDF yuklab olish — bepul boshlang.">
   <meta name="keywords" content="SlideStudio, Slide Studio, SlideStudio AI, Slide Studio AI, slayd yasash, AI bilan slayd yasash, AI yordamida slayd yasash, AI slayd, slayd yaratish, taqdimot yasash, online taqdimot yasash, taqdimot yaratish, prezentatsiya yasash, avtomatik prezentatsiya tayyorlash, prezentatsiya yaratish, onlayn slayd yasash, onlayn prezentatsiya, sun&#39;iy intellekt slayd, sun&#39;iy intellekt bilan taqdimot, AI taqdimot, bepul slayd yasash, slayd shablonlari, referat uchun slayd, AI slide maker, AI presentation maker, slide AI, create slides with AI, online presentation maker, AI presentation generator, free AI slides, PowerPoint AI, AI PowerPoint generator, presentation templates, создать слайды с ИИ, ИИ презентация, сделать презентацию онлайн, генератор презентаций, создать презентацию с помощью ИИ, нейросеть для презентаций, презентация онлайн бесплатно, слайды онлайн">
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
@@ -176,6 +176,11 @@
   <link rel="stylesheet" href="v54.css?v=8">
   <link rel="stylesheet" href="topup.css?v=4">
   <link rel="stylesheet" href="v68.css?v=2">
+  <style>
+    /* v83: «ℹ️ Yordam / Imkoniyatlar» — small round button in the header */
+    .ss-help-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:0;border-radius:50%;background:transparent;color:#444746;cursor:pointer;flex:none}
+    .ss-help-btn:hover{background:#e8eaed}.ss-help-btn .material-symbols-outlined{font-size:22px}
+  </style>
 </head>
 <body>
 <!-- SEO: sahifaning asosiy sarlavhasi va qisqa tavsifi. Muharrir butun ekranni egallaydi, shuning uchun bu blok
@@ -264,6 +269,9 @@
     </div>
 
     <div class="header-actions">
+      <button class="ss-help-btn" id="ssHelpBtn" onclick="ssShowAbout()" title="Yordam / Imkoniyatlar" aria-label="Yordam / Imkoniyatlar">
+        <span class="material-symbols-outlined">info</span>
+      </button>
       <button class="btn-login" id="googleLoginBtn" onclick="handleGoogleLogin()">
         <span class="material-symbols-outlined" style="color:#4285F4;">account_circle</span>
         <span id="loginBtnText">Login</span>

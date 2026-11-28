@@ -137,3 +137,27 @@ def reply(key: str, lang: str, name: str = "", avoid: Optional[str] = None) -> s
 
 def greet_level(count: int) -> str:
     return "greet1" if count <= 1 else ("greet2" if count == 2 else "greet3")
+
+
+def guide_text(lang: str, deep_min: Any = 10, html: bool = True) -> str:
+    """«ℹ️ Bot haqida» / «ℹ️ Yordam / Imkoniyatlar»: features, 3-day storage rule and a short how-to (same as the site)."""
+    g = _load_raw().get("guide", {})
+    t = g.get(lang) or g.get("uz") or {}
+    b = (lambda s: f"<b>{s}</b>") if html else (lambda s: s)
+    esc = (lambda s: str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")) if html else (lambda s: s)
+    parts = [b(esc(t.get("title", ""))), "",
+             b(esc(t.get("features_title", ""))), *["• " + esc(x) for x in t.get("features", [])], "",
+             b(esc(t.get("storage_title", ""))), esc(t.get("storage", "")), "",
+             b(esc(t.get("howto_title", ""))), *[f"{i}. " + esc(x) for i, x in enumerate(t.get("howto", []), 1)], "",
+             esc(str(t.get("modes", "")).replace("{deep_min}", str(deep_min)))]
+    return "\n".join(parts).strip()
+
+
+_raw: Dict[str, Any] = {}
+
+
+def _load_raw() -> Dict[str, Any]:
+    if not _raw:
+        with open(DATA_FILE, encoding="utf-8") as f:
+            _raw.update(json.load(f))
+    return _raw

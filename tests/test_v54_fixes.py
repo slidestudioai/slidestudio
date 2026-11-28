@@ -159,4 +159,4 @@ def test_welcome_is_short_and_not_blocked_by_slow_db(monkeypatch):
     assert len(sent) == 1 and not spawned
     text, kb = sent[0]
     assert "Salom" in text and "Mavzuni yozing" in text and "Google" not in text and "Akkauntingiz tayyor" not in text
-    assert [b.get("callback_data") or b["text"] for row in kb["inline_keyboard"] for b in row] == ["new", "🚀 Muharrir", "bal", "set"]
+    assert [b.get("callback_data") or b["text"] for row in kb["inline_keyboard"] for b in row] == ["new", "🚀 Muharrir", "bal", "set", "about"]

@@ -313,3 +313,19 @@ def test_bot_admin_sees_name_not_tech_email_and_delete_button(sb, client, monkey
     assert "a:spd:u-tg" in datas
     asyncio.run(tb._admin_cb(777, 10, {"id": 777}, "a:spD:u-tg"))
     assert "o'chirildi" in sent[-1][1] and not sb.tables["support_messages"]
+
+
+def test_admin_stats_and_filters_know_free_paid_and_deep(sb):
+    U = admin_core.mon.UNIT
+    sb.tables["user_usage"] = [
+        {"user_id": "f1", "email": "a@x.uz", "free_credits": 100, "paid_credits": 0},
+        {"user_id": "p1", "email": "b@x.uz", "free_credits": 0, "paid_credits": 100 * U},
+        {"user_id": "p2", "email": "tg5@t.me", "free_credits": 0, "paid_credits": 5 * U},
+        {"user_id": "v1", "email": "c@x.uz", "free_credits": 0, "paid_credits": 0, "unlimited": True}]
+    s = admin_core._dispatch("stats", {}, "t")
+    assert (s["free_users"], s["paid_now"], s["deep_open"], s["deep_min_paid_pages"]) == (2, 2, 2, 10)
+    ids = lambda f: sorted(u["user_id"] for u in admin_core._dispatch("users", {"filter": f}, "t")["users"])
+    assert ids("free") == ["f1", "v1"] and ids("paid") == ["p1", "p2"] and ids("deep") == ["p1", "v1"]
+    by = {u["user_id"]: u for u in admin_core._dispatch("users", {}, "t")["users"]}
+    assert by["p1"]["deep_ok"] and by["v1"]["deep_ok"] and not by["p2"]["deep_ok"] and not by["f1"]["deep_ok"]
+    assert "🔒" in by["f1"]["balance"]["text"]

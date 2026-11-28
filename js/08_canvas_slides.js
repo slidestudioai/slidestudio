@@ -295,7 +295,7 @@
       const aboutBtn = document.createElement('div');
       aboutBtn.className = 'btn-about-bot';
       aboutBtn.onclick = (e) => { e.stopPropagation(); if (window.ssShowAbout) window.ssShowAbout(); };
-      aboutBtn.innerHTML = `<span class="material-symbols-outlined">info</span> Bot haqida`;
+      aboutBtn.innerHTML = `<span class="material-symbols-outlined">info</span> Loyiha haqida`;
       scrollArea.appendChild(aboutBtn);
       sidebar.appendChild(scrollArea);
       sidebar.appendChild(_dock);
