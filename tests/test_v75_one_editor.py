@@ -169,3 +169,43 @@ def test_greeting_after_new_slide_is_not_used_as_a_topic(sb, monkeypatch):
     assert started == [] and st.get("ui") == "new"                  # no deck about «salom», the session stays open
     assert any("Salom" in str(p.get("text")) or "Привет" in str(p.get("text")) or "Hello" in str(p.get("text"))
                for m, p in http.calls if m == "sendMessage")
+
+
+@pytest.mark.parametrize("text", ["slm", "asalm", "privt", "helo", "slaom", "hormang", "kak dela", "how r u", "are you there"])
+def test_misspelled_greetings_are_recognised(text):
+    assert tb.is_greeting(text)
+
+
+def test_repeated_greetings_get_different_lively_answers(sb, monkeypatch):
+    monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
+    http = _bot(monkeypatch)
+    tb._chats.pop(5551, None)
+    asked = []
+    monkeypatch.setattr(tb, "_run_new", lambda *a: asked.append(a))
+
+    def last_text():
+        return [p for m, p in http.calls if m == "sendMessage"][-1]
+    asyncio.run(tb.handle_update(_msg("salom")))
+    first = last_text()
+    assert first["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "new"
+    assert len(first["reply_markup"]["inline_keyboard"]) == 3                  # the main menu (4 buttons in 3 rows)
+    texts = []
+    for t in ("salom", "slm", "привет", "hello"):
+        asyncio.run(tb.handle_update(_msg(t)))
+        p = last_text()
+        texts.append(p["text"])
+        assert p["reply_markup"] == {"inline_keyboard": [[{"text": p["reply_markup"]["inline_keyboard"][0][0]["text"], "callback_data": "new"}]]}
+    assert all(a != b for a, b in zip(texts, texts[1:]))                      # never the same text twice in a row
+    assert asked == []                                                         # no AI, nothing charged
+    # a real message resets the count: the next greeting is the main welcome again
+    tb._state(5551)["greets"] = []
+    asyncio.run(tb.handle_update(_msg("rahmat")))
+    assert "inline_keyboard" in last_text()["reply_markup"]
+
+
+def test_what_can_you_do_is_answered_without_ai(sb, monkeypatch):
+    http = _bot(monkeypatch)
+    tb._chats.pop(5551, None)
+    asyncio.run(tb.handle_update(_msg("sen nima qila olasan?")))
+    t = [p for m, p in http.calls if m == "sendMessage"][-1]["text"]
+    assert "PPTX" in t and ("taqdimot" in t or "презентац" in t or "presentation" in t)

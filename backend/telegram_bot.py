@@ -13,6 +13,7 @@ Jadvallar: SUPABASE_SCHEMA.sql
 """
 from __future__ import annotations
 
+from backend.services import smalltalk as _smalltalk   # v83: salom/rahmat/xayr — AI tokenisiz
 import asyncio
 import base64
 import gc
@@ -309,40 +310,11 @@ HELP = i18n.HELP_UZ          # v66: 3 tilda — backend/bot_i18n.py
 ABOUT = HELP
 GREETING_RE = re.compile(r"^(salom|assalomu\s*alaykum|assalom|hello|hi|hey|привет|здравствуй\w*|qalay|nima gap|start|boshla)[\s!.,?]*$", re.I)
 
-# v83: ko'p tildagi va turli yozilishdagi salomlashuvlar (salooom, Ассалому алайкум, Доброе утро, xayrli tong, 👋 ...).
-# Butun xabar faqat salom (+ «aka», «bot», «hammaga» kabi so'zlar) bo'lsa — salom javobi; «Salom, kosmos haqida slayd» — mavzu.
-_GREET_PHRASES = {
-    # o'zbekcha (lotin)
-    "salom", "salomlar", "salam", "slm", "assalom", "assalomu alaykum", "assalomu aleykum", "assalomu alaikum",
-    "assalamu alaykum", "assalamu alaikum", "assalam", "asalomu alaykum", "asalom", "salomu alaykum", "assalomualaykum",
-    "va alaykum assalom", "vaalaykum assalom", "alaykum assalom", "salom alaykum", "salam aleykum", "salam alaykum",
-    "xayrli tong", "hayrli tong", "xayrli kun", "hayrli kun", "xayrli kech", "hayrli kech", "xayrli oqshom", "hayrli oqshom",
-    "qalay", "qalaysiz", "qalesiz", "qalaysan", "nima gap", "nima gaplar", "yaxshimisiz", "yaxshimisan", "ishlar qalay",
-    "salom qalay", "salom qalaysiz", "salom yaxshimisiz", "start", "boshla", "boshlash", "boshladik",
-    # o'zbekcha (kirill)
-    "салом", "ассалом", "ассалому алайкум", "ассалому алейкум", "салом алайкум", "хайрли тонг", "хайрли кун", "қалайсиз",
-    "қалай", "яхшимисиз",
-    # ruscha
-    "привет", "приветик", "приветствую", "здравствуйте", "здравствуй", "здрасте", "здрасьте", "здорово", "салют",
-    "доброе утро", "добрый день", "добрый вечер", "доброй ночи", "хай", "хеллоу", "салам", "салам алейкум", "ку",
-    "privet", "zdravstvuyte", "dobroe utro", "dobriy den", "dobryy den",
-    # inglizcha va boshqalar
-    "hello", "hi", "hey", "hiya", "howdy", "greetings", "good morning", "good afternoon", "good evening", "good day",
-    "hello there", "hi there", "hey there", "whats up", "what's up", "sup", "yo",
-    "hola", "bonjour", "salut", "ciao", "hallo", "merhaba", "selam", "selamlar", "namaste", "salaam", "salam alaikum",
-}
-_GREET_FILLER = {"bot", "botjon", "aka", "akajon", "opa", "opajon", "uka", "do'stim", "dostim", "do'st", "brat", "bro",
-                 "hammaga", "hammangizga", "barchaga", "sizga", "senga", "ai", "admin", "there", "everyone", "all", "friend",
-                 "guys", "team", "бот", "брат", "всем", "друг", "дорогой", "ака", "ука", "the", "va", "and", "и",
-                 "sizlarga", "aleykum", "alaykum", "алайкум", "алейкум"}
-_GREET_EMOJI_RE = re.compile(r"^[\s👋🙋🙋‍♂️🙋‍♀️🤝✋🖐️🖐😊🙂😀😃☺️🤗❤️!.,?]+$")
-
-
 def is_greeting(text: str) -> bool:
-    """v83: «salom», «Assalomu alaykum aka!», «salooom», «Привет бот», «Good morning», «👋» -> True."""
-    t = str(text or "").strip()
-    if not t or len(t) > 60:
-        return False
+    """v83: «salom», «slm», «Assalomu alaykum aka!», «privt», «helo», «Доброе утро», «👋» -> True.
+    The phrases are shared with the site: js/data/smalltalk.json (backend/services/smalltalk.py)."""
+    r = _smalltalk.classify(text)
+    return bool(r and r["intent"] == "greet") or bool(GREETING_RE.match(str(text or "").strip()))
     if GREETING_RE.match(t) or _GREET_EMOJI_RE.match(t) and any(e in t for e in "👋🙋🤝✋🖐"):
         return True
     t = t.lower().replace("ʻ", "'").replace("’", "'").replace("‘", "'").replace("`", "'")
@@ -4656,6 +4628,31 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
         st["busy"] = False
 
 
+async def _smalltalk_reply(cid: int, user: dict, st: dict, talk: dict) -> None:
+    """v83: salomga — 1-marta asosiy salom (balans + menyu), 2-marta jonli javob, 3+ — hazil aralash yo'naltirish
+    (oxirgi 5 daqiqada). Har safar boshqacha matn; xabarlar o'chirilmaydi. Rahmat / xayr / «nima qila olasan» ham.
+    Hech qanday AI chaqirilmaydi. «🆕 Yangi slayd» ochiq bo'lsa — sessiya buzilmaydi (salom MAVZU emas)."""
+    now = time.time()
+    lang = _cur_lang(cid)
+    name = str(user.get("first_name") or "").strip()[:40]
+    in_new = st.get("ui") in ("new", "edit") and not _new_expired(st)
+    kb = None if in_new else {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")]]}
+    if talk["intent"] == "greet":
+        greets = [t for t in (st.get("greets") or []) if now - t < 300] + [now]
+        st["greets"] = greets[-20:]
+        level = _smalltalk.greet_level(len(greets))
+        if level == "greet1" and not in_new:
+            await _send_welcome(cid, user)
+            return
+        key = level
+    else:
+        st.pop("greets", None)
+        key = talk["intent"]
+    text = _smalltalk.reply(key, lang, esc(name), avoid=st.get("talk_last"))
+    st["talk_last"] = text
+    await _send(cid, text, kb)
+
+
 async def _handle_text(chat_id: int, user: dict, text: str) -> None:
     st = _state(chat_id)
     act = MENU.get(text.strip())
@@ -4671,13 +4668,11 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
                     {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")]]})
         return
     ui = st.get("ui")
-    if is_greeting(text):
-        if ui in ("new", "edit") and not _new_expired(st):
-            # v83: «🆕 Yangi slayd» ochiq — salom MAVZU emas (avval «salom» haqida slayd yasalib, varaq yechilardi)
-            await _send(chat_id, "👋 Salom! Mavzuni yozing — AI taqdimot tayyorlaydi 👇")
-        else:
-            await _send_welcome(chat_id, user)
+    talk = _smalltalk.classify(text) or ({"intent": "greet", "lang": ""} if GREETING_RE.match(text) else None)
+    if talk:                                   # v83: salom / rahmat / xayr / «nima qila olasan» — AI tokenisiz
+        await _smalltalk_reply(chat_id, user, st, talk)
         return
+    st.pop("greets", None)                     # «ketma-ket» salomlar sanog'i boshqa xabardan keyin boshidan
     clean_text = " ".join(text.split())[:1500]
     expired = _new_expired(st)
     if ui not in ("new", "edit") or expired:
