@@ -69,3 +69,13 @@ def test_schema_section_14_is_safe():
                    "usage_ledger_topup_idx", "create or replace function public.purge_old_rows",
                    "revoke all on function public.purge_old_rows", "revoke all on public.ai_turn_results"):
         assert needle in block
+
+
+def test_refunded_pages_counts_only_this_payment(sb):
+    # «_» is a LIKE wildcard and the old pattern had no «-» end: pay_1's refunds also counted pay_10 and payX1
+    sb.tables["payment_events"] = [
+        {"order_id": "refund-dodo-pay_1-r1", "pages": 5},
+        {"order_id": "refund-dodo-pay_10-r1", "pages": 40},
+        {"order_id": "refund-dodo-payX1-r1", "pages": 7},
+    ]
+    assert main._refunded_pages("dodo-pay_1") == 5

@@ -80,7 +80,7 @@
     var atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     list.innerHTML = msgs.map(function (m) {
       return '<div class="sssup-m ' + (m.from_admin ? 'adm' : 'me') + '" data-no-i18n>' + esc(m.body) +
-        '<small>' + (m.from_admin ? esc(tr('Admin')) + ' · ' : '') + esc(fdate(m.created_at)) + '</small></div>';
+        '<small>' + (m.from_admin ? esc(tr('Admin')) + ' · ' : (m.id != null ? '№' + esc(String(m.id)) + ' · ' : '')) + esc(fdate(m.created_at)) + '</small></div>';
     }).join('');
     if (atBottom || list.__first !== false) { list.scrollTop = list.scrollHeight; list.__first = false; }
   }
@@ -134,9 +134,11 @@
       if (body.length < 2) { toast('Xabar juda qisqa', 'warning'); ta.focus(); return; }
       busy = true; send.disabled = true;
       try {
-        await api('send', { body: body });
+        var sent = await api('send', { body: body });
         ta.value = ''; cnt.textContent = '0 / ' + MAX_LEN;
-        toast('Xabar yuborildi. Admin tez orada javob beradi', 'success');
+        var no = sent && sent.message && sent.message.id;              // v83: the message number («Murojaat №…»)
+        if (no != null) toast(tr('Murojaatingiz') + ' №' + no + ' ' + tr('adminga yuborildi. Javob shu yerga keladi'), 'success');
+        else toast('Xabar yuborildi. Admin tez orada javob beradi', 'success');
         await load(list);
       } catch (e) {
         toast(e.message || 'Yuborib bo‘lmadi', 'error');

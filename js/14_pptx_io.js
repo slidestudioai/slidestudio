@@ -1680,7 +1680,10 @@
       if (cs) kids(cs, NS_A).forEach(function (n) {
         var c = n.firstElementChild;
         if (!c) return;
-        var v = c.getAttribute('val') || c.getAttribute('lastClr');
+        // v83: <a:sysClr val="window" lastClr="FFFFFF"/> — the colour is lastClr («window» is a name). Before, the
+        // name won, failed the hex test, and every white/black theme colour (lt1/dk1, bg1/tx1) was lost.
+        var v = c.localName === 'sysClr' ? (c.getAttribute('lastClr') || ({ window: 'FFFFFF', windowText: '000000' })[c.getAttribute('val')])
+          : c.getAttribute('val');
         if (v && /^[0-9a-f]{6}$/i.test(v)) colors[n.localName] = v.toUpperCase();
       });
       var fs = themeDoc.getElementsByTagNameNS(NS_A, 'fontScheme')[0];
@@ -2503,8 +2506,12 @@
             var lnS = spPr && kid(spPr, NS_A, 'ln');
             // v68: PowerPoint'da chizilgan shakl rangini ko'pincha <p:style> (mavzu ranglari) dan oladi
             var pStyle = kid(n, NS_P, 'style');
-            var styleLine = null;
+            var styleLine = null, styleFont = null;
             if (pStyle) {
+              // v83: text colour of a shape with no run colour comes from <a:fontRef> (PowerPoint / python-pptx shapes:
+              // white «lt1» text on an accent fill). Before, it was read as black.
+              var fRef = kid(pStyle, NS_A, 'fontRef');
+              if (fRef && fRef.firstElementChild) styleFont = readColorNode(fRef.firstElementChild, theme);
               var hasF = spPr && ['solidFill', 'gradFill', 'noFill', 'grpFill', 'blipFill', 'pattFill'].some(function (k) { return kid(spPr, NS_A, k); });
               var fr = kid(pStyle, NS_A, 'fillRef');
               if (!hasF && fr && num(fr.getAttribute('idx'), 0) > 0) { var fc = readColorNode(fr.firstElementChild, theme); if (fc) fill = fc; }
@@ -2581,7 +2588,8 @@
                 var fontPx = tb.pt * 12700 * scale;
                 var tw = Math.max(10, W - (lIns + rIns) * scale);
                 var th = Math.max(10, H - (tIns + bIns) * scale);
-                var tcol = tb.color ? tb.color.hex : ((fill && !fill.none && isDark(fill.hex)) ? '#ffffff' : '#1f1f1f');
+                var tcol = tb.color ? tb.color.hex : (styleFont && styleFont.hex ? styleFont.hex
+                  : ((fill && !fill.none && isDark(fill.hex)) ? '#ffffff' : '#1f1f1f'));
                 var tObj = {
                   type: 'textbox', version: FAB_VER, originX: 'left', originY: 'top',
                   width: tw, angle: xf.rot, scaleX: 1, scaleY: 1,

@@ -97,22 +97,39 @@ def _public(row: Dict[str, Any]) -> Dict[str, Any]:
             "source": row.get("source") or "site", "created_at": row.get("created_at")}
 
 
-def _insert(row: Dict[str, Any]) -> None:
-    """Yozadi; bazada `source` ustuni hali bo'lmasa (eski SQL) — usiz qayta urinadi."""
+def _insert(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Yozadi; bazada `source` ustuni hali bo'lmasa (eski SQL) — usiz qayta urinadi. Yozilgan qator (id bilan) qaytadi."""
     sb = _sb()
     try:
-        sb.table(TABLE).insert(row).execute()
+        res = sb.table(TABLE).insert(row).execute()
     except Exception as e:
         if "source" not in str(e).lower() or "source" not in row:
             raise
-        sb.table(TABLE).insert({k: v for k, v in row.items() if k != "source"}).execute()
+        res = sb.table(TABLE).insert({k: v for k, v in row.items() if k != "source"}).execute()
+    data = getattr(res, "data", None)
+    return data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+
+
+# v83: Telegram media in a support message (photo, video, voice...). The file itself stays in Telegram: the bot copies
+# the original message to the admins; the DB keeps a readable line, e.g. «📷 Rasm» + the caption.
+MEDIA_LABELS = {"photo": "📷 Rasm", "video": "🎬 Video", "voice": "🎤 Ovozli xabar", "audio": "🎵 Audio",
+                "video_note": "📹 Video xabar", "document": "📎 Fayl", "animation": "🎞 GIF", "sticker": "🙂 Stiker"}
+
+
+def media_body(kind: str, caption: Any = "", file_name: str = "") -> str:
+    label = MEDIA_LABELS.get(kind, "📎 Fayl")
+    if file_name and kind == "document":
+        label += f" ({str(file_name)[:80]})"
+    cap = _clean(caption)
+    return (label + "\n" + cap) if cap else label
 
 
 # ----------------------------------------------------------------------------------------------
 # Foydalanuvchi amallari (sayt API va Telegram bot ikkalasi ham shulardan foydalanadi — sinxron)
 # ----------------------------------------------------------------------------------------------
-def user_send(uid: str, email: str, author: str, text: Any, source: str = "site") -> Dict[str, Any]:
-    """Foydalanuvchi xabarini saqlaydi va adminlarga xabar beradi. Xato bo'lsa SupportError."""
+def user_send(uid: str, email: str, author: str, text: Any, source: str = "site", notify: bool = True) -> Dict[str, Any]:
+    """Foydalanuvchi xabarini saqlaydi va adminlarga xabar beradi. Xato bo'lsa SupportError.
+    notify=False: the caller tells the admins itself (bot: with the photo / voice copied under the text)."""
     uid = str(uid or "").strip()
     if not uid:
         raise SupportError("Avval tizimga kiring", 401)
@@ -130,12 +147,15 @@ def user_send(uid: str, email: str, author: str, text: Any, source: str = "site"
            "source": "tg" if source == "tg" else "site", "from_admin": False, "read_by_admin": False,
            "read_by_user": True, "created_at": _now_iso()}
     try:
-        _insert(row)
+        saved = _insert(row)
     except Exception as e:
         print(f"[SUPPORT SEND] {str(e)[:200]}")
         raise SupportError(NO_TABLE, 503)
+    if saved.get("id") is not None:
+        row["id"] = saved["id"]                 # v83: the message number («Murojaat №…») shown to the user
     _remember(uid, now)
-    _schedule(_deps.get("notify_admins"), uid, email, body, row["source"])
+    if notify:
+        _schedule(_deps.get("notify_admins"), uid, email, body, row["source"], row.get("id"))
     return _public(row)
 
 
@@ -256,6 +276,19 @@ def admin_reply(uid: str, text: Any) -> Dict[str, Any]:
         raise SupportError("Saqlanmadi: " + str(e)[:140], 502)
     _schedule(_deps.get("notify_reply"), uid, body)      # Telegram ulangan bo'lsa — javob matni botga ham boradi
     return {"ok": True}
+
+
+def admin_delete(uid: str) -> Dict[str, Any]:
+    """v83: admin clears one user's whole support conversation (both sides)."""
+    uid = str(uid or "").strip()
+    if not uid:
+        raise SupportError("user_id kerak")
+    sb = _sb()
+    try:
+        res = sb.table(TABLE).delete().eq("user_id", uid).execute()
+    except Exception as e:
+        raise SupportError("O'chirilmadi: " + str(e)[:140], 502)
+    return {"ok": True, "deleted": len(getattr(res, "data", None) or [])}
 
 
 def _schedule(fn: Optional[Callable], *args) -> None:

@@ -18,7 +18,7 @@
       uploadedImagesStore = [];
       bottomAiImages = [];
       var _authP = null;
-      try { _authP = initSupabaseAuth(); } catch (e) { console.error("initSupabaseAuth:", e); }
+      try { _authP = initSupabaseAuth(); window.__ssAuthInitP = _authP; } catch (e) { console.error("initSupabaseAuth:", e); }
       var _authLate = false;
       try { _authLate = (await ssWithin(_authP, 8000, 'auth')) === '__timeout__'; } catch (e) { console.error("initSupabaseAuth:", e); }
       if (window.ssIsOauthPopup()) return;   // v36: popup — faqat sessiyani almashtirish
@@ -193,11 +193,29 @@
       setTimeout(bootApp, 0);
     }
     window.addEventListener('load', () => { hideLoading(); });
-    async function initSupabaseAuth() {
+    // The first open after the free server slept: /api/config/public can fail or be slow. Before, one failed request
+    // meant NO login client until a page reload, and an early click on «Google bilan kirish» did nothing.
+    async function ssFetchPublicConfig() {
+      const waits = [0, 1000, 2500, 5000];
+      for (let i = 0; i < waits.length; i++) {
+        if (waits[i]) await new Promise(function (r) { setTimeout(r, waits[i]); });
+        try {
+          const res = await fetch('/api/config/public', { cache: 'no-store' });
+          if (res.ok) return await res.json();
+        } catch (e) { console.warn('[auth] config:', e); }
+      }
+      return null;
+    }
+    let _ssAuthInflight = null;
+    function initSupabaseAuth() {                 // one start at a time (the login button may ask again while it runs)
+      if (!_ssAuthInflight) _ssAuthInflight = ssInitSupabaseAuthOnce().finally(function () { _ssAuthInflight = null; });
+      return _ssAuthInflight;
+    }
+    async function ssInitSupabaseAuthOnce() {
+      if (supabaseClient) return;
       try {
-        const res = await fetch('/api/config/public');
-        if (!res.ok) return;
-        const cfg = await res.json();
+        const cfg = await ssFetchPublicConfig();
+        if (!cfg || supabaseClient) return;
         if (cfg.supabase_url && cfg.supabase_publishable_key) {
           // v39: faqat AUTH sessiyasi (token) alohida kalit 'ss-auth-v39' ostida localStorage'da saqlanadi — sahifa yangilanganda akkaunt chiqib ketmaydi. Slayd/media hamon faqat RAM'da.
           const _ssHash = ssParseOauthHash();
@@ -466,7 +484,16 @@
       window._ssLoginBusy = Date.now();
       try {
         if (!supabaseClient) {
-          showToast("Supabase konfiguratsiyasi topilmadi (/api/config/public).", 'error');
+          // the page is still starting (slow first open): wait for the login client instead of doing nothing
+          showToast("⏳ Kirish tayyorlanmoqda, bir soniya...");
+          try {
+            if (window.__ssAuthInitP) await ssWithin(window.__ssAuthInitP, 15000, 'login wait');
+            if (!supabaseClient) await ssWithin(initSupabaseAuth(), 15000, 'login retry');
+          } catch (e) { console.warn('handleGoogleLogin wait:', e); }
+          window._ssLoginBusy = Date.now();
+        }
+        if (!supabaseClient) {
+          showToast("Server hali javob bermayapti. Bir ozdan keyin qayta bosing.", 'error');
           console.warn("handleGoogleLogin: supabaseClient null");
           return;
         }

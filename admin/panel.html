@@ -104,12 +104,16 @@ let _arBusy=false;
 setInterval(async()=>{
   if(document.visibilityState!=='visible'||$('#sheet')||_arBusy)return;
   const a=document.activeElement;if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.tagName==='SELECT'))return;
-  if(tab!=='home'&&tab!=='users'&&tab!=='support')return;
-  if(tab==='users'&&window.scrollY>200)return;            // pastga tushib ko'rayotgan bo'lsa ro'yxat sakramasin
+  // v83: «Odamlar» is NOT rebuilt by the timer any more: the rebuild threw away the «Yana yuklash» pages, jumped the
+  // list and moved rows under the finger (the wrong user opened). It refreshes when you open the tab or search.
+  if(tab!=='home'&&tab!=='support')return;
   _arBusy=true;try{await load();}catch(e){}finally{_arBusy=false;}
 },30000);
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!$('#sheet'))load();});
-async function load(force){nav();const m=$('#main');try{await ({home,users,support,ads,settings,more}[tab]||home)(m);}catch(e){if(e.message!=='expired')m.innerHTML='<div class="empty">Yuklanmadi: '+esc(e.message)+'</div>';}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!$('#sheet')&&tab!=='users')load();});
+/* v83: every load draws into a NEW #main. Before, a slow tab that finished after you switched tabs wrote over the new
+   tab (or broke it: «Cannot set properties of null») — the panel «mixed itself up». The old one now writes into a
+   detached node that nobody sees. */
+async function load(force){nav();const old=$('#main'),m=old.cloneNode(false);old.replaceWith(m);try{await ({home,users,support,ads,settings,more}[tab]||home)(m);}catch(e){if(e.message!=='expired')m.innerHTML='<div class="empty">Yuklanmadi: '+esc(e.message)+'</div>';}}
 
 /* ---------------- BOSH ---------------- */
 async function home(m){
@@ -148,14 +152,17 @@ async function users(m){
 }
 function userRow(u){
   const when=u.source==='google'?'kirgan: '+ago(u.created_at):(u.linked_at?'ulangan: '+ago(u.linked_at):'kirgan: '+ago(u.created_at));
-  return `<div class="item ur" onclick="openUser('${esc(u.user_id)}')"><div class="t"><b>${esc(uLabel(u))}</b>
+  return `<div class="item ur" data-id="${esc(u.user_id)}" onclick="openUser('${esc(u.user_id)}')"><div class="t"><b>${esc(uLabel(u))}</b>
   <small>${srcBadge(u)} ${planBadge(u)} ${u.tg_id?'✈️ '+u.tg_id+' · ':''}<b>faol: ${ago(u.last_active||u.created_at)}</b> · ${when}</small>
   <small>${balText(u)} · ${spendText(u)}</small></div>${u.blocked?'<span class="badge bad">blok</span>':''}</div>`;
 }
 /* v79: Telegram akkauntida texnik email emas — ism va @username (backend «label» beradi) */
 function uLabel(u){return u.label||u.email||u.user_id;}
 /* v79: «Yordam» xabarlarida ham Telegram foydalanuvchi texnik email emas, ismi bilan */
-function who(x){return /^tg\d+@t\.me$/i.test(x.email||'')?(x.author||x.email):(x.email||x.author||x.user_id);}
+function who(x){if(x.who)return x.who;return /^tg\d+@t\.me$/i.test(x.email||'')?(x.author||x.email):(x.email||x.author||x.user_id);}
+/* v83: the writer's profile in the support thread */
+function profBox(p){if(!p)return '';const k=(a,b)=>b?`<div class="kv"><span>${a}</span><span>${b}</span></div>`:'';
+  return `<div class="card" style="margin:8px 0">${k('Ism',esc(p.name||''))}${k('Telegram',p.username?'<a href="https://t.me/'+esc(p.username)+'" target="_blank" rel="noopener">@'+esc(p.username)+'</a>'+(p.tg_id?' · ID '+p.tg_id:''):(p.tg_id?'ID '+p.tg_id:''))}${k('Email',esc(p.email||''))}${k('Akkaunt',(SRC[p.source]||SRC.google)[1]+(p.blocked?' · <b style="color:var(--bad)">bloklangan</b>':''))}${k('Ro\'yxatdan o\'tgan',p.created_at?fdate(p.created_at):'')}${k('Oxirgi faollik',p.last_active?ago(p.last_active):'')}</div>`;}
 function planBadge(u){if(u.vip_admin||u.plan==='vip')return '<span class="badge vip">VIP</span>';if(u.unlimited)return '<span class="badge vip">∞</span>';if((u.balance||{}).mode==='paid')return '<span class="badge ok">Pullik</span>';return '<span class="badge">Bepul</span>';}
 async function openUser(id){
   const r=await api('user',{user_id:id});const u=r.user;
@@ -177,7 +184,12 @@ async function openUser(id){
   <h2>Oxirgi harakatlar</h2><div class="card" style="padding:0">${(r.ledger||[]).map(l=>`<div class="item"><div class="t"><b>${esc(l.kind)}</b><small>${fdate(l.created_at)}</small></div><b class="${l.amount>0?'pill-ok':''}">${l.amount>0?'+':''}${num(Math.round(l.amount/(r.unit||20)*100)/100)}</b></div>`).join('')||'<div class="empty">Yo\'q</div>'}</div>`);
 }
 async function act(id,action,extra){
-  try{const r=await api('user_action',Object.assign({user_id:id,action},extra));toast('✓ '+(r.note||'Saqlandi'));await openUser(id);if(tab==='users')users($('#main'));}catch(e){}
+  try{const r=await api('user_action',Object.assign({user_id:id,action},extra));toast('✓ '+(r.note||'Saqlandi'));await openUser(id);refreshUserRow(id);}catch(e){}
+}
+/* v83: only this user's row is redrawn (the list keeps its pages and scroll) */
+async function refreshUserRow(id){
+  try{const r=await api('user',{user_id:id});const old=document.querySelector('#ulist [data-id="'+CSS.escape(id)+'"]');
+    if(old&&r.user){const t=document.createElement('div');t.innerHTML=userRow(r.user);old.replaceWith(t.firstElementChild);}}catch(e){}
 }
 
 /* ---------------- REKLAMA ---------------- */
@@ -277,14 +289,17 @@ async function support(m){
 }
 async function openThread(uid){
   const r=await api('support_thread',{user_id:uid});
-  const msgs=(r.messages||[]).map(x=>`<div class="sp-m${x.from_admin?' adm':''}">${esc(x.body)}<small>${x.from_admin?'Admin · ':x.source==='tg'?'✈️ Telegram · ':'🌐 Sayt · '}${fdate(x.created_at)}</small></div>`).join('')||'<div class="empty">Bo\'sh</div>';
-  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc(who(r)||'Foydalanuvchi')}</h3><small style="color:var(--mut)"><a href="#" id="sp_user">Foydalanuvchi kartasi →</a></small>
+  const msgs=(r.messages||[]).map(x=>`<div class="sp-m${x.from_admin?' adm':''}">${esc(x.body)}<small>${x.id!=null&&!x.from_admin?'№'+x.id+' · ':''}${x.from_admin?'Admin · ':x.source==='tg'?'✈️ Telegram · ':'🌐 Sayt · '}${fdate(x.created_at)}</small></div>`).join('')||'<div class="empty">Bo\'sh</div>';
+  const s=sheet(`<button class="x" onclick="closeSheet()">×</button><h3>${esc((r.profile&&r.profile.label)||who(r)||'Foydalanuvchi')}</h3>${profBox(r.profile)}<small style="color:var(--mut)"><a href="#" id="sp_user">Foydalanuvchi kartasi →</a> · <a href="#" id="sp_del" style="color:var(--bad)">🗑 Yozishmani o'chirish</a></small>
+  <p style="color:var(--mut);font-size:12px;margin:6px 0 0">Telegram'dan kelgan rasm / video / ovozli xabarning o'zi admin botiga yuboriladi.</p>
   <div class="sp-msgs" id="sp_msgs">${msgs}</div>
   <label>Javob (foydalanuvchi saytda ⚙️ Sozlamalar → 💬 Yordam da ko'radi; Telegram ulangan bo'lsa javob botga ham boradi)</label>
   <textarea id="sp_t" maxlength="2000" placeholder="Javob yozing…"></textarea>
   <div class="row" style="margin-top:10px"><button class="btn" id="sp_s">Yuborish</button></div>`);
   const ml=$('#sp_msgs');ml.scrollTop=ml.scrollHeight;
   $('#sp_user').onclick=e=>{e.preventDefault();openUser(uid);};
+  $('#sp_del').onclick=async e=>{e.preventDefault();if(!confirm("Shu foydalanuvchi bilan butun yozishma o'chirilsinmi? Qaytarib bo'lmaydi."))return;
+    try{const d=await api('support_delete',{user_id:uid});toast('🗑 O\'chirildi ('+(d.deleted||0)+' ta xabar)');closeSheet();if(tab==='support')support($('#main'));else refreshUnread();}catch(e2){}};
   $('#sp_s').onclick=async()=>{const t=$('#sp_t').value.trim();if(t.length<2)return toast('Javob yozing',1);
     $('#sp_s').disabled=true;try{await api('support_reply',{user_id:uid,text:t});toast('✓ Yuborildi');await openThread(uid);}catch(e){$('#sp_s').disabled=false;}};
   if(tab==='support')support($('#main'));else refreshUnread();

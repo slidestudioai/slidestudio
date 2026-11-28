@@ -346,7 +346,9 @@ def kb_home() -> dict:
     avtomatik kirish), 💳 Balans (holat + Dodo orqali to'ldirish)."""
     editor = ({"text": BTN_HOME_EDITOR, "web_app": {"url": _app_url()}} if _https()
               else {"text": BTN_HOME_EDITOR, "url": _app_url()})
-    return {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")], [editor], [_btn("💳 Balans", "bal")]]}
+    # Sozlamalar (til, AI rejimi, Google) — oldin faqat /settings buyrug'i bilan ochilardi, ko'rinadigan tugma yo'q edi
+    return {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")], [editor],
+                                [_btn("💳 Balans", "bal"), _btn("⚙️ Sozlamalar", "set")]]}
 
 
 def _menu_button() -> dict:
@@ -1391,18 +1393,40 @@ def _sup_author(user: dict) -> str:
     return name[:60] or f"tg{user.get('id')}"
 
 
-async def support_notify_admins(uid: str, email: str, body: str, source: str = "site") -> None:
-    """Yangi xabar haqida har bir Telegram adminga: matn + «Javob yozish» tugmasi."""
+async def _sup_who(uid: str, email: str = "", fallback: str = "") -> str:
+    """v83: «Ali Valiyev · @ali · TG 12345 · ali@gmail.com» — the admin sees WHO wrote (before: only an id / tg…@t.me)."""
+    adm = _deps.get("admin")
+    line = ""
+    try:
+        if adm and hasattr(adm, "user_profiles"):
+            p = (await asyncio.to_thread(adm.user_profiles, [str(uid)])).get(str(uid))
+            line = adm.profile_line(p, "")
+    except Exception as e:
+        _warn("support-who", str(e)[:100])
+    if not line:
+        tech = bool(re.match(r"(?i)^tg\d+@t\.me$", email or ""))
+        line = " · ".join(x for x in (fallback, "" if tech else email) if x) or email or uid
+    return line
+
+
+async def support_notify_admins(uid: str, email: str, body: str, source: str = "site", msg_no: Any = None,
+                                copy_from: Optional[Tuple[int, int]] = None, author: str = "") -> None:
+    """Yangi xabar haqida har bir Telegram adminga: kim yozgani, murojaat raqami, matn + «Javob yozish» tugmasi.
+    copy_from=(chat_id, message_id): the user's photo / video / voice is copied under the text."""
     adm = _deps.get("admin")
     if not ENABLED or not adm:
         return
     src = "Telegram bot" if source == "tg" else "sayt"
-    text = (f"💬 <b>Yangi yordam xabari</b> ({src})\n👤 {esc(email or uid)}\n\n{esc(str(body)[:1500])}")
+    who = await _sup_who(uid, email, author)
+    no = f" №{msg_no}" if msg_no is not None else ""
+    text = (f"💬 <b>Yangi yordam xabari{no}</b> ({src})\n👤 {esc(who)}\n\n{esc(str(body)[:1500])}")
     row = [b for b in (_sup_cb("a:spr:", uid), _sup_cb("a:spt:", uid)) if b]
     kb = {"inline_keyboard": [[_btn("✍️ Javob yozish", row[0]), _btn("📂 Yozishma", row[1])]]} if len(row) == 2 else None
     for tid in adm.admin_tg_ids():
         try:
             await _send(int(tid), text, kb)
+            if copy_from:
+                await tg("copyMessage", chat_id=int(tid), from_chat_id=int(copy_from[0]), message_id=int(copy_from[1]))
         except Exception as e:
             _warn("support-admin", f"adminga yuborilmadi: {str(e)[:100]}")
 
@@ -1442,18 +1466,37 @@ async def _support_open(cid: int, user: dict) -> None:
         hist = ""
     st["sup_await"] = True
     text = ("💬 <b>Adminga yozish</b>\nSavol, taklif yoki muammoni bitta xabarda yozib yuboring — admin javob beradi. "
-            "Javob shu yerga keladi.")
+            "Matn, rasm (skrinshot), video, ovozli xabar yoki fayl yuborishingiz mumkin. Javob shu yerga keladi.")
     if hist:
         text += "\n\n<b>Oxirgi xabarlar:</b>\n\n" + hist
     await _send(cid, text, {"inline_keyboard": [[_btn("✖️ Bekor qilish", "sup_x")]]})
 
 
-async def _support_take(cid: int, user: dict, text: str) -> None:
+_SUP_MEDIA_KEYS = ("photo", "video", "voice", "audio", "video_note", "animation", "sticker", "document")
+
+
+def _support_media(msg: dict) -> Optional[Tuple[str, str, str]]:
+    """v83: (kind, caption, file_name) of a photo / video / voice / file / sticker message, or None."""
+    for k in _SUP_MEDIA_KEYS:                      # «animation» before «document» (a GIF has both keys)
+        v = msg.get(k)
+        if v:
+            name = str(v.get("file_name") or "") if isinstance(v, dict) else ""
+            return k, str(msg.get("caption") or ""), name
+    return None
+
+
+async def _support_take(cid: int, user: dict, text: str, media: Optional[Tuple[str, str, str]] = None,
+                        msg_id: Optional[int] = None) -> None:
     st = _state(cid)
     sp = _support()
     try:
         uid, email = await _ensure_uid(user)
-        await asyncio.to_thread(sp.user_send, uid, email, _sup_author(user), text, "tg")
+        if media:
+            text = sp.media_body(*media)
+        saved = await asyncio.to_thread(sp.user_send, uid, email, _sup_author(user), text, "tg", False)
+        no = saved.get("id") if isinstance(saved, dict) else None
+        _spawn(support_notify_admins(uid, email, text, "tg", no,
+                                     (cid, msg_id) if media and msg_id else None, _sup_author(user)))
     except sp.SupportError as e:
         if e.code != 400:
             st.pop("sup_await", None)
@@ -1465,14 +1508,22 @@ async def _support_take(cid: int, user: dict, text: str) -> None:
         await _send(cid, "⚙️ Hozir yuborib bo'lmadi. Keyinroq urinib ko'ring.")
         return
     st.pop("sup_await", None)
-    await _send(cid, "✅ Xabaringiz adminga yuborildi. Javob shu yerga keladi.",
+    no_txt = f" <b>№{no}</b>" if no is not None else ""
+    await _send(cid, f"✅ Murojaatingiz{no_txt} adminga yuborildi. Javob shu yerga keladi.",
                 {"inline_keyboard": [[_btn("✍️ Yana yozish", "sup")]]})
+
+
+def _sup_admin_api(name: str):
+    """v83: admin_core.support_*_full (with the writer's profile); plain support.admin_* if it is missing."""
+    adm = _deps.get("admin")
+    fn = getattr(adm, name + "_full", None) if adm else None
+    return fn or getattr(_support(), {"support_list": "admin_list", "support_thread": "admin_thread"}[name])
 
 
 async def _admin_support(cid: int, mid: Optional[int]) -> None:
     sp = _support()
     try:
-        r = await asyncio.to_thread(sp.admin_list, 12)
+        r = await asyncio.to_thread(_sup_admin_api("support_list"), 12)
     except sp.SupportError as e:
         await _show(cid, mid, f"⚠️ {esc(e.msg)}", _akb([_HOME]))
         return
@@ -1482,7 +1533,7 @@ async def _admin_support(cid: int, mid: Optional[int]) -> None:
         return
     lines, rows = [], []
     for t in th:
-        who = t.get("email") or t.get("author") or t.get("user_id")
+        who = t.get("who") or t.get("email") or t.get("author") or t.get("user_id")
         mark = f"🔴 {t['unread']} · " if t.get("unread") else ""
         pre = "↩️ " if t.get("last_from_admin") else ""
         lines.append(f"{mark}<b>{esc(who)}</b> · <i>{esc(_sup_when(t.get('last_at')))}</i>\n{pre}{esc(str(t.get('last_body') or '')[:90])}")
@@ -1496,16 +1547,19 @@ async def _admin_support(cid: int, mid: Optional[int]) -> None:
 async def _admin_support_thread(cid: int, mid: Optional[int], uid: str, note: str = "") -> None:
     sp = _support()
     try:
-        r = await asyncio.to_thread(sp.admin_thread, uid)
+        r = await asyncio.to_thread(_sup_admin_api("support_thread"), uid)
     except sp.SupportError as e:
         await _show(cid, mid, f"⚠️ {esc(e.msg)}", _akb([[_btn("⬅️ Ro'yxat", "a:sup")], _HOME]))
         return
     body = _sup_thread_text(r.get("messages") or [], me="👤 Foydalanuvchi") or "Bo'sh"
-    text = (note + "\n\n" if note else "") + f"💬 <b>{esc(r.get('email') or uid)}</b>\n\n{body}"
+    text = (note + "\n\n" if note else "") + f"💬 <b>{esc(r.get('who') or r.get('email') or uid)}</b>\n\n{body}"
     rows = []
     cbd = _sup_cb("a:spr:", uid)
     if cbd:
         rows.append([_btn("✍️ Javob yozish", cbd)])
+    dbd = _sup_cb("a:spd:", uid)
+    if dbd:
+        rows.append([_btn("🗑 Yozishmani o'chirish", dbd)])
     rows += [[_btn("⬅️ Ro'yxat", "a:sup")], _HOME]
     await _show(cid, mid, text[:3990], _akb(rows))
 
@@ -2516,6 +2570,21 @@ async def _admin_cb(cid: int, mid: Optional[int], user: dict, data: str) -> None
         await _admin_support(cid, mid)
     elif cmd == "spt" and len(parts) > 2:
         await _admin_support_thread(cid, mid, ":".join(parts[2:]))
+    elif cmd == "spd" and len(parts) > 2:              # v83: clear one support conversation (asks first)
+        uid = ":".join(parts[2:])
+        yes = _sup_cb("a:spD:", uid)
+        await _show(cid, mid, "🗑 <b>Shu foydalanuvchi bilan butun yozishma o'chirilsinmi?</b>\nBuni qaytarib bo'lmaydi.",
+                    _akb(([[_btn("✅ Ha, o'chirish", yes)]] if yes else []) + [[_btn("↩️ Yo'q", "a:spt:" + uid)]]))
+    elif cmd == "spD" and len(parts) > 2:
+        uid = ":".join(parts[2:])
+        try:
+            r = await asyncio.to_thread(_support().admin_delete, uid)
+            if adm:
+                await asyncio.to_thread(adm.audit, actor, "support.delete", uid, {"deleted": r.get("deleted")})
+            await _show(cid, mid, f"🗑 Yozishma o'chirildi ({int(r.get('deleted') or 0)} ta xabar).",
+                        _akb([[_btn("⬅️ Ro'yxat", "a:sup")], _HOME]))
+        except Exception as e:
+            await _show(cid, mid, f"⚠️ {esc(getattr(e, 'msg', str(e))[:200])}", _akb([[_btn("⬅️ Ro'yxat", "a:sup")], _HOME]))
     elif cmd == "spr" and len(parts) > 2:
         uid = ":".join(parts[2:])
         st["adm"] = {"await": "sup_reply", "uid": uid}
@@ -4232,6 +4301,8 @@ async def _handle_callback(cb: dict) -> None:
         await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
     elif data == "about":
         await _send(cid, ABOUT, kb_home())
+    elif data == "set":
+        await _show_settings(cid, user)
     elif data.startswith("smode:"):
         st["mode"] = "deep" if data.endswith("deep") else "fast"
         await _show_settings(cid, user, mid)
@@ -4577,10 +4648,16 @@ async def _send_welcome(chat_id: int, user: dict) -> None:
     """v78: mustaqil Telegram akkaunti shu yerda ochiladi (yo'q bo'lsa) — boshlang'ich bepul balans bilan.
     Hech qanday «sayt akkauntini ulang» / «brauzerda oching» xabari yo'q."""
     _state(chat_id)["ui"] = None
-    await _drop_old_keyboard(chat_id)
-    try:
-        info = await asyncio.wait_for(_balance_info(user), timeout=6)
-    except Exception:
+
+    async def _info():
+        try:
+            return await asyncio.wait_for(_balance_info(user), timeout=6)
+        except Exception:
+            return None
+    # v83: the 3 keyboard-cleanup Telegram calls and the account/balance DB reads run AT THE SAME TIME
+    # (before: one after another — the very first answer of the bot waited for all of them)
+    _drop, info = await asyncio.gather(_drop_old_keyboard(chat_id), _info(), return_exceptions=True)
+    if isinstance(info, BaseException):
         info = None
     await _send(chat_id, _welcome_text(user.get("first_name") or "", info), kb_home())
 
@@ -4615,6 +4692,13 @@ async def handle_update(data: dict) -> None:
         if (_ast.get("adm") or {}).get("await") and await _admin_input(chat_id, user, msg, _ast):
             return
 
+    _sst = _state(chat_id)
+    if _sst.get("sup_await") and not (msg.get("text") or "").startswith("/"):
+        _media = _support_media(msg)
+        if _media:                              # v83: «💬 Adminga yozish» — a screenshot / voice goes to the admin
+            await _support_take(chat_id, user, "", _media, msg.get("message_id"))
+            return
+
     incoming = _incoming_file(msg)
     if incoming:
         if _is_busy(_state(chat_id)):
@@ -4625,6 +4709,11 @@ async def handle_update(data: dict) -> None:
 
     text = (msg.get("text") or "").strip()
     if not text:
+        if msg.get("voice") or msg.get("audio") or msg.get("video_note"):
+            await _send(chat_id, "🎤 Ovozli xabarni hozircha tushunmayman. Mavzuni <b>matn</b> bilan yozing, masalan: "
+                                 "<i>«Sun'iy intellekt kelajagi»</i>.\nAdminga ovozli xabar yubormoqchi bo'lsangiz: "
+                                 "<b>⚙️ Sozlamalar → 💬 Adminga yozish</b>.", kb_reply())
+            return
         await _send(chat_id, "Mavzuni <b>matn</b> ko'rinishida yozib yuboring, masalan: <i>«Sun'iy intellekt kelajagi»</i>.\nRasm yoki fayl yuborsangiz — muharrirda ochib beraman.", kb_reply())
         return
 

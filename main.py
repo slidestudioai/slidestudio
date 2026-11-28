@@ -2265,8 +2265,11 @@ def _refunded_pages(order_key: str) -> int:
     if not supabase or not order_key:
         return 0
     try:
-        rows = supabase.table("payment_events").select("pages").like("order_id", f"refund-{order_key}%").execute().data or []
-        return sum(_int_or(r.get("pages"), 0) for r in rows)
+        # same rule as SQL apply_refund: starts_with(order_id, 'refund-' || key || '-'). In LIKE, «_» (payment ids
+        # are «pay_...») matches ANY char and there was no «-» end, so refunds of another payment could be counted.
+        prefix = f"refund-{order_key}-"
+        rows = supabase.table("payment_events").select("order_id,pages").like("order_id", prefix + "%").execute().data or []
+        return sum(_int_or(r.get("pages"), 0) for r in rows if str(r.get("order_id") or "").startswith(prefix))
     except Exception as e:
         print(f"[DODO WEBHOOK] refund tarixini o'qib bo'lmadi: {str(e)[:120]}")
         raise
@@ -4419,7 +4422,11 @@ async def ws_chat(websocket: WebSocket):
                             _stream_text[:websocket.delivered_chars], _deck_slide_count(deck_state), active_slide)
                         _m = mode_for_model(model)
                         _ns = int(n_searches or 0)
-                        _extra_units = max(0, turn_cost(int(pages_from_actions), _ns, _m)[0] - turn_cost(int(_delivered), _ns, _m)[0])
+                        # same price list as the charge itself (charge_turn_atomic passes the user: free Deep AI
+                        # has its own page price) — before, the 2nd part used the default price
+                        _cu = apply_24h_reset(dict(usage))
+                        _extra_units = max(0, turn_cost(int(pages_from_actions), _ns, _m, _cu)[0]
+                                           - turn_cost(int(_delivered), _ns, _m, _cu)[0])
                         pages_from_actions = int(_delivered)
                 except Exception as _me:
                     print(f"[MONITORING] cost calc: {_me}")

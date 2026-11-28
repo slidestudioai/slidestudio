@@ -10,6 +10,7 @@ import threading
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
+AUTO_ID_TABLES = {"support_messages"}
 UNIQUE_KEYS = {"payment_events": "order_id", "user_usage": "user_id", "tg_link_codes": "code",
                "referrals": "invitee_id", "referral_codes": "user_id", "tg_prefs": "tg_id",
                "tg_pending_refs": "tg_id"}
@@ -148,16 +149,21 @@ class _Query:
             if self.op in ("insert", "upsert"):
                 items = self.payload if isinstance(self.payload, list) else [self.payload]
                 key = UNIQUE_KEYS.get(self.table)
+                out_items = []
                 for it in items:
                     if key:
                         ex = [r for r in rows if r.get(key) == it.get(key)]
                         if ex:
                             if self.op == "upsert":
                                 ex[0].update(it)
+                                out_items.append(dict(ex[0]))
                                 continue
                             raise FakeAPIError("duplicate key value violates unique constraint (23505)")
+                    if self.table in AUTO_ID_TABLES and it.get("id") is None:     # bigserial, like the real DB
+                        it = dict(it, id=max([int(r.get("id") or 0) for r in rows] + [0]) + 1)
                     rows.append(dict(it))
-                return _Res([dict(i) for i in items])
+                    out_items.append(dict(it))
+                return _Res(out_items)
             if self.op == "update":
                 hit = [r for r in rows if self._match(r)]
                 for r in hit:

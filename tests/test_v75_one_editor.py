@@ -31,8 +31,9 @@ def test_home_keyboard_three_buttons(monkeypatch):
     """v78: /start — faqat 🆕 Yangi slayd · 🚀 Muharrir (Mini App) · 💳 Balans."""
     monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
     rows = tb.kb_home()["inline_keyboard"]
-    assert [len(r) for r in rows] == [1, 1, 1]
+    assert [len(r) for r in rows] == [1, 1, 2]
     assert rows[0][0]["callback_data"] == "new" and rows[2][0]["callback_data"] == "bal"
+    assert rows[2][1]["callback_data"] == "set"                      # visible settings button (language is there)
     assert rows[1][0]["text"] == "🚀 Muharrir" and "web_app" in rows[1][0]
 
 
@@ -120,3 +121,13 @@ def test_tg_send_module_loaded_and_exports_use_it():
     assert "/api/telegram/send-file" in _read("js/58_tg_send.js")
     assert "(window.downloadBlob || downloadBlob)(outBlob" in _read("js/14_pptx_io.js")
     assert "doc.save(" not in _read("js/10_export_present.js")
+
+
+def test_settings_button_opens_settings_with_language(sb, monkeypatch):
+    monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
+    http = _bot(monkeypatch)
+    asyncio.run(tb.handle_update(_cb("set")))
+    sent = [p for m, p in http.calls if m in ("sendMessage", "editMessageText") and "⚙️" in str(p.get("text"))]
+    assert sent, "the ⚙️ Sozlamalar button did nothing"
+    datas = [b.get("callback_data") for row in sent[-1]["reply_markup"]["inline_keyboard"] for b in row]
+    assert "langpick" in datas

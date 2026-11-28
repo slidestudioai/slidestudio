@@ -149,3 +149,13 @@ def test_debt_repaid_once_in_sql_charge_path():
     sb.tables["user_usage"][0]["last_reset_time"] = old
     sb._charge_units("u1", U, "chat", daily, monitoring.max_debt_units(), p_charge_id="c2")
     assert sb.usage("u1")["free_credits"] == daily - U                       # no second cut the next day
+
+
+def test_bad_slide_number_is_not_read_as_slide_1():
+    # the browser (js/07_ai_commands.js) ignores slide 0 now, so the server must not charge for it either
+    for a in ({"action": "delete_slide", "slide": 0},
+              {"action": "move_slide", "from": 0, "to": 2},
+              {"action": "swap_slides", "a": 0, "b": 2}):
+        assert monitoring.calculate_page_cost([a], 3, 1)[0] == 0, a
+    assert monitoring.calculate_page_cost([{"action": "delete_slide"}], 3, 1)[0] == 1        # missing number = slide 1
+    assert monitoring.calculate_page_cost([{"action": "swap_slides", "a": 1, "b": 3}], 3, 1)[0] == 2
