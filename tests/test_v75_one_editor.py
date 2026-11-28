@@ -32,7 +32,7 @@ def test_home_keyboard_three_buttons(monkeypatch):
     """v78: /start — faqat 🆕 Yangi slayd · 🚀 Muharrir (Mini App) · 💳 Balans."""
     monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
     rows = tb.kb_home()["inline_keyboard"]
-    assert [len(r) for r in rows] == [1, 1, 2]
+    assert [len(r) for r in rows] == [1, 1, 2, 1]
     assert rows[0][0]["callback_data"] == "new" and rows[2][0]["callback_data"] == "bal"
     assert rows[2][1]["callback_data"] == "set"                      # visible settings button (language is there)
     assert rows[1][0]["text"] == "🚀 Muharrir" and "web_app" in rows[1][0]
@@ -60,7 +60,7 @@ def test_old_keyboard_buttons_still_work(sb, monkeypatch):
     http = _bot(monkeypatch)
     tb._lang_remember(5551, "uz")
     asyncio.run(tb.handle_update(_msg("ℹ️ Yordam")))
-    assert any("Muharrirda tahrirlash" in t for t in _texts(http))
+    assert any("PPTX" in t and "3" in t for t in _texts(http))           # v83: the new guide (features, 3-day storage)
 
 
 # ------------------------------------------------------------------ Mini App → chatga fayl
@@ -157,18 +157,30 @@ def test_topics_are_not_greetings(text):
     assert not tb.is_greeting(text)
 
 
-def test_greeting_after_new_slide_is_not_used_as_a_topic(sb, monkeypatch):
+def test_after_new_slide_even_a_greeting_is_the_topic(sb, monkeypatch):
+    """v83 (owner's rule): after «🆕 Yangi slayd» the greeting filter is OFF — «salom» becomes the topic."""
     monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
-    http = _bot(monkeypatch)
+    _bot(monkeypatch)
     tb._chats.pop(5551, None)
     st = tb._state(5551)
     st.update(ui="new", ui_ts=time.time())
     started = []
-    monkeypatch.setattr(tb, "_run_new", lambda *a: started.append(a))
-    asyncio.run(tb.handle_update(_msg("Assalomu alaykum")))
-    assert started == [] and st.get("ui") == "new"                  # no deck about «salom», the session stays open
-    assert any("Salom" in str(p.get("text")) or "Привет" in str(p.get("text")) or "Hello" in str(p.get("text"))
-               for m, p in http.calls if m == "sendMessage")
+
+    async def fake_gen(cid, user, topic, n):
+        started.append((topic, n))
+    monkeypatch.setattr(tb, "_run_generate", fake_gen)
+    monkeypatch.setattr(tb, "_spawn", lambda c: asyncio.get_event_loop().create_task(c))
+
+    async def run():
+        await tb.handle_update(_msg("Assalomu alaykum"))
+        await asyncio.sleep(0.01)
+    asyncio.run(run())
+    assert started == [("Assalomu alaykum", tb.DEFAULT_SLIDES)]
+    # without «🆕 Yangi slayd» the same text is just a greeting (no deck)
+    started.clear()
+    tb._chats.pop(5551, None)
+    asyncio.run(run())
+    assert started == []
 
 
 @pytest.mark.parametrize("text", ["slm", "asalm", "privt", "helo", "slaom", "hormang", "kak dela", "how r u", "are you there"])
@@ -188,7 +200,7 @@ def test_repeated_greetings_get_different_lively_answers(sb, monkeypatch):
     asyncio.run(tb.handle_update(_msg("salom")))
     first = last_text()
     assert first["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "new"
-    assert len(first["reply_markup"]["inline_keyboard"]) == 3                  # the main menu (4 buttons in 3 rows)
+    assert len(first["reply_markup"]["inline_keyboard"]) == 4                  # the main menu (5 buttons in 4 rows)
     texts = []
     for t in ("salom", "slm", "привет", "hello"):
         asyncio.run(tb.handle_update(_msg(t)))
@@ -209,3 +221,25 @@ def test_what_can_you_do_is_answered_without_ai(sb, monkeypatch):
     asyncio.run(tb.handle_update(_msg("sen nima qila olasan?")))
     t = [p for m, p in http.calls if m == "sendMessage"][-1]["text"]
     assert "PPTX" in t and ("taqdimot" in t or "презентац" in t or "presentation" in t)
+
+
+
+def test_about_button_sends_the_guide_with_3_day_rule(sb, monkeypatch):
+    monkeypatch.setattr(tb, "SITE_URL", "https://slidestudio.example")
+    http = _bot(monkeypatch)
+    tb._chats.pop(5551, None)
+    rows = tb.kb_home()["inline_keyboard"]
+    assert rows[3][0]["callback_data"] == "about"
+    asyncio.run(tb.handle_update(_cb("about")))
+    t = [p for m, p in http.calls if m == "sendMessage"][-1]["text"]
+    assert "3" in t and "PPTX" in t and "PDF" in t and ("Yangi slayd" in t or "Новые слайды" in t or "New slides" in t)
+
+
+@pytest.mark.parametrize("text", ["nimalar qila olasan", "imkoniyatlar", "qanday ishlaydi", "yordam", "help",
+                                  "что ты умеешь", "возможности", "помощь", "what can you do", "features"])
+def test_capability_questions_get_the_feature_list(sb, monkeypatch, text):
+    http = _bot(monkeypatch)
+    tb._chats.pop(5551, None)
+    asyncio.run(tb.handle_update(_msg(text)))
+    t = [p for m, p in http.calls if m == "sendMessage"][-1]["text"]
+    assert "PPTX" in t and "PDF" in t

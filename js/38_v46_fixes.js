@@ -122,9 +122,30 @@
     '<p><b>Narx.</b> 1 slayd = 1 varaq (Chuqur AI — 3 baravar). Har kuni bepul varaqlar beriladi.</p>' +
     '<p><b>Maxfiylik.</b> Slayd va rasmlar serverda saqlanmaydi, brauzer xotirasiga ham yozilmaydi: sahifa yangilansa yangi, toza varaqdan boshlanadi — ishingizni yuklab olib saqlang.</p>' +
     '</div>';
-  window.ssShowAbout = function () {
-    if (window.Swal && Swal.fire) Swal.fire({ title: 'Bot haqida', html: ABOUT_HTML, confirmButtonText: 'Yopish', width: 560 });
-    else alert('Slide Studio AI — AI yordamida slayd yaratish. Sayt va Telegram bot bitta akkaunt va balansdan foydalanadi.');
+  // v83: «ℹ️ Loyiha haqida» / «ℹ️ Yordam / Imkoniyatlar» — the SAME guide as the bot's «ℹ️ Bot haqida»
+  // (js/data/smalltalk.json → guide): features, the 3-day storage rule, how to use, Fast / Deep AI. In the site language.
+  function escH(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function guideHtml(g) {
+    var deepMin = 10;
+    try { var st = window.Monitoring && Monitoring.getState && Monitoring.getState(); if (st && st.deep_min_paid_pages != null) deepMin = st.deep_min_paid_pages; } catch (e) {}
+    return '<div class="ss-guide" data-no-i18n style="text-align:left;font-size:14px;line-height:1.55;max-height:62vh;overflow:auto">' +
+      '<p style="margin:0 0 6px"><b>' + escH(g.features_title) + '</b></p><ul style="margin:0 0 12px;padding-left:20px">' +
+      (g.features || []).map(function (x) { return '<li>' + escH(x) + '</li>'; }).join('') + '</ul>' +
+      '<p style="margin:0 0 4px"><b>' + escH(g.storage_title) + '</b></p><p style="margin:0 0 12px">' + escH(g.storage) + '</p>' +
+      '<p style="margin:0 0 6px"><b>' + escH(g.howto_title) + '</b></p><ol style="margin:0 0 12px;padding-left:20px">' +
+      (g.howto || []).map(function (x) { return '<li>' + escH(x) + '</li>'; }).join('') + '</ol>' +
+      '<p style="margin:0;color:#5f6368">' + escH(String(g.modes || '').replace('{deep_min}', deepMin)) + '</p></div>';
+  }
+  window.ssShowAbout = async function () {
+    var lang = 'uz';
+    try { lang = (window.SSI18n && SSI18n.lang) || 'uz'; } catch (e) {}
+    var g = null;
+    try { if (window.SSSmallTalk) { await SSSmallTalk.load(); g = SSSmallTalk.guide(lang); } } catch (e) {}
+    var close = ({ ru: 'Закрыть', en: 'Close' })[lang] || 'Yopish';
+    if (window.Swal && Swal.fire) {
+      if (g) Swal.fire({ title: g.title, html: guideHtml(g), confirmButtonText: close, width: 560, heightAuto: false });
+      else Swal.fire({ title: 'Loyiha haqida', html: ABOUT_HTML, confirmButtonText: 'Yopish', width: 560 });
+    } else alert(g ? g.title + '\n\n' + (g.features || []).join('\n') + '\n\n' + g.storage : 'Slide Studio AI');
   };
 
   // ---------------------------------------------------------------------------------------------

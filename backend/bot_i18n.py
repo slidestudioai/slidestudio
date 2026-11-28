@@ -126,6 +126,7 @@ PHRASES: List[Tuple[str, str, str]] = BUTTONS + [
     (" varaqdan baland bo'lsa (yoki cheksiz rejimda) ochiladi.", " листов (или в безлимитном режиме).", " pages (or on the unlimited plan)."),
     ("Hozir ⚡ Tez AI ishlaydi.", "Сейчас работает ⚡ Быстрый AI.", "⚡ Fast AI is used for now."),
     ("🔒 Chuqur", "🔒 Глубокий", "🔒 Deep"),
+    ("ℹ️ Bot haqida", "ℹ️ О боте", "ℹ️ About the bot"),
     ("👋 Salom! Mavzuni yozing — AI taqdimot tayyorlaydi 👇", "👋 Привет! Напишите тему — AI подготовит презентацию 👇",
      "👋 Hello! Write a topic — AI will make the presentation 👇"),
     (" adminga yuborildi. Javob shu yerga keladi.", " отправлено администратору. Ответ придёт сюда.", " was sent to the admin. The reply will come here."),

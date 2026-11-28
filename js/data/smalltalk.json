@@ -397,7 +397,11 @@
     "imkoniyatlaring",
     "imkoniyatlar",
     "сен кимсан",
-    "нима қила оласан"
+    "нима қила оласан",
+    "imkoniyatlaring qanday",
+    "nimalar qilasan",
+    "nima qila olasiz o'zi",
+    "bot nima qiladi"
    ],
    "ru": [
     "что ты умеешь",
@@ -413,7 +417,11 @@
     "помощь",
     "помоги",
     "chto ty umeesh",
-    "kto ty"
+    "kto ty",
+    "возможности",
+    "твои возможности",
+    "что умеет бот",
+    "как это работает"
    ],
    "en": [
     "help",
@@ -427,7 +435,9 @@
     "how do i use",
     "help me",
     "features",
-    "capabilities"
+    "capabilities",
+    "what can u do",
+    "what are your features"
    ]
   }
  },
@@ -535,14 +545,79 @@
   },
   "about": {
    "uz": [
-    "🤖 Men Slide Studio AI'man. Qila olaman:\n• istalgan mavzuda taqdimot (slayd) yasash — rasm, GIF, diagramma, jadval bilan\n• mavjud slaydni tahrirlash: matn, rang, rasm, tartib, animatsiya\n• PPTX / PDF faylni ochish va PPTX, PDF, HTML qilib yuklab olish\n• sayt, Telegram bot va Mini App — bitta akkaunt, oxirgi taqdimot 3 kun saqlanadi\nMavzuni yozing, masalan: «Sun'iy intellekt kelajagi, 8 ta slayd»"
+    "🤖 Men Slide Studio AI'man. Qila olaman:\n• Bir necha soniyada mavzu bo‘yicha tayyor taqdimot (slayd) yaratish\n• O‘zbek, rus va ingliz tillarini qo‘llab-quvvatlash\n• Web va Telegram Mini App muharririda slaydlarni tahrirlash\n• PPTX (PowerPoint) va PDF formatlarda yuklab olish\n• Rasm, jadval, grafik va multimedia qo‘shish\nMavzuni yozing, masalan: «Sun'iy intellekt kelajagi, 8 ta slayd»"
    ],
    "ru": [
-    "🤖 Я Slide Studio AI. Я умею:\n• делать презентации на любую тему — с фото, GIF, диаграммами, таблицами\n• редактировать слайды: текст, цвет, фото, порядок, анимацию\n• открывать PPTX / PDF и скачивать в PPTX, PDF, HTML\n• сайт, Telegram-бот и Mini App — один аккаунт, последняя презентация хранится 3 дня\nНапишите тему, например: «Будущее ИИ, 8 слайдов»"
+    "🤖 Я Slide Studio AI. Я умею:\n• Готовая презентация по теме за несколько секунд\n• Узбекский, русский и английский языки\n• Редактирование слайдов в веб-редакторе и Telegram Mini App\n• Скачивание в PPTX (PowerPoint) и PDF\n• Фото, таблицы, графики и мультимедиа\nНапишите тему, например: «Будущее ИИ, 8 слайдов»"
    ],
    "en": [
-    "🤖 I'm Slide Studio AI. I can:\n• make a presentation on any topic — with photos, GIFs, charts and tables\n• edit slides: text, colours, pictures, order, animation\n• open PPTX / PDF and download as PPTX, PDF or HTML\n• site, Telegram bot and Mini App — one account, your last deck is kept for 3 days\nSend a topic, for example: «The future of AI, 8 slides»"
+    "🤖 I'm Slide Studio AI. I can:\n• A ready presentation on any topic in a few seconds\n• Uzbek, Russian and English\n• Edit slides in the web editor and the Telegram Mini App\n• Download as PPTX (PowerPoint) and PDF\n• Add photos, tables, charts and multimedia\nSend a topic, for example: «The future of AI, 8 slides»"
    ]
+  }
+ },
+ "guide": {
+  "uz": {
+   "title": "ℹ️ Slide Studio haqida",
+   "features_title": "Imkoniyatlar",
+   "features": [
+    "Bir necha soniyada mavzu bo‘yicha tayyor taqdimot (slayd) yaratish",
+    "O‘zbek, rus va ingliz tillarini qo‘llab-quvvatlash",
+    "Web va Telegram Mini App muharririda slaydlarni tahrirlash",
+    "PPTX (PowerPoint) va PDF formatlarda yuklab olish",
+    "Rasm, jadval, grafik va multimedia qo‘shish"
+   ],
+   "storage_title": "💾 Saqlash",
+   "storage": "Oxirgi taqdimotingiz akkauntingizda 3 kun saqlanadi va sayt, Telegram bot va Mini App'da o‘zi ochiladi. 3 kundan keyin o‘chadi — kerakli taqdimotni PPTX yoki PDF qilib yuklab oling.",
+   "howto_title": "📖 Qanday foydalaniladi",
+   "howto": [
+    "«🆕 Yangi slayd» ni bosing (saytda — AI oynasiga yozing)",
+    "Mavzuni yozing, masalan: «Sun'iy intellekt kelajagi, 8 ta slayd»",
+    "Tayyor slaydni muharrirda o‘zgartiring yoki AI'ga yozing: «3-slaydni qisqartir»",
+    "PPTX yoki PDF qilib yuklab oling"
+   ],
+   "modes": "⚡ Tez AI — bepul varaqlar bilan ishlaydi. 🧠 Chuqur AI — cheksiz rejimda yoki pullik balans {deep_min} varaqdan baland bo‘lsa ochiladi."
+  },
+  "ru": {
+   "title": "ℹ️ О Slide Studio",
+   "features_title": "Возможности",
+   "features": [
+    "Готовая презентация по теме за несколько секунд",
+    "Узбекский, русский и английский языки",
+    "Редактирование слайдов в веб-редакторе и Telegram Mini App",
+    "Скачивание в PPTX (PowerPoint) и PDF",
+    "Фото, таблицы, графики и мультимедиа"
+   ],
+   "storage_title": "💾 Хранение",
+   "storage": "Последняя презентация хранится в вашем аккаунте 3 дня и сама открывается на сайте, в Telegram-боте и Mini App. Через 3 дня она удаляется — скачайте нужную в PPTX или PDF.",
+   "howto_title": "📖 Как пользоваться",
+   "howto": [
+    "Нажмите «🆕 Новые слайды» (на сайте — напишите в окно AI)",
+    "Напишите тему, например: «Будущее ИИ, 8 слайдов»",
+    "Измените слайды в редакторе или напишите AI: «сократи 3-й слайд»",
+    "Скачайте в PPTX или PDF"
+   ],
+   "modes": "⚡ Быстрый AI — работает с бесплатными листами. 🧠 Глубокий AI — в безлимите или при платном балансе больше {deep_min} листов."
+  },
+  "en": {
+   "title": "ℹ️ About Slide Studio",
+   "features_title": "Features",
+   "features": [
+    "A ready presentation on any topic in a few seconds",
+    "Uzbek, Russian and English",
+    "Edit slides in the web editor and the Telegram Mini App",
+    "Download as PPTX (PowerPoint) and PDF",
+    "Add photos, tables, charts and multimedia"
+   ],
+   "storage_title": "💾 Storage",
+   "storage": "Your last presentation is kept in your account for 3 days and opens by itself on the site, in the Telegram bot and the Mini App. After 3 days it is deleted — download the one you need as PPTX or PDF.",
+   "howto_title": "📖 How to use",
+   "howto": [
+    "Tap «🆕 New slides» (on the site — write in the AI panel)",
+    "Send a topic, for example: «The future of AI, 8 slides»",
+    "Edit the slides in the editor or ask the AI: «shorten slide 3»",
+    "Download as PPTX or PDF"
+   ],
+   "modes": "⚡ Fast AI works with free pages. 🧠 Deep AI opens on the unlimited plan or when your paid balance is above {deep_min} pages."
   }
  }
 }

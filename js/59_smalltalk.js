@@ -35,7 +35,7 @@
           });
         });
       });
-      D = { phrases: phrases, single: single, maxLen: maxLen, replies: raw.replies,
+      D = { phrases: phrases, single: single, maxLen: maxLen, replies: raw.replies, guide: raw.guide || {},
             filler: new Set(raw.filler.map(norm)), topic: raw.topic_stems.map(norm), block: new Set(raw.fuzzy_block.map(norm)) };
       return D;
     }).catch(function (e) { loading = null; console.warn('[smalltalk]', e); return null; });
@@ -192,7 +192,8 @@
     wrap('sendSidebarAiPrompt', 'aiSidebarInput', function (el) { el.value = ''; try { autoGrowSidebarInput(el); } catch (e) {} });
     wrap('sendBottomAiPrompt', 'bottomAiTextarea', function (el) { el.value = ''; });
   }
-  window.SSSmallTalk = { load: load, classify: classify, answer: answer, norm: norm, busy: function () { return !!typing; } };
+  window.SSSmallTalk = { load: load, classify: classify, answer: answer, norm: norm, busy: function () { return !!typing; },
+                         guide: function (lang) { return D && D.guide ? (D.guide[lang] || D.guide.uz) : null; } };
   load();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install); else install();
   setTimeout(install, 1500);

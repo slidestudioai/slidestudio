@@ -60,3 +60,13 @@ test('Deep AI is locked for a free user (🔒, back to Fast, explanation)', asyn
   await page.selectOption('#aiModelSelect', 'deep');
   expect(await page.inputValue('#aiModelSelect')).toBe('deep');
 });
+
+test('«ℹ️ Yordam / Imkoniyatlar» in the header opens the guide (same text as the bot)', async ({ page }) => {
+  await openEditor(page);
+  await expect(page.locator('#ssHelpBtn')).toBeVisible();
+  await page.click('#ssHelpBtn');
+  const pop = page.locator('.swal2-popup');
+  await expect(pop).toContainText('3');
+  await expect(pop).toContainText('PPTX');
+  await expect(pop.locator('.ss-guide li')).toHaveCount(9);             // 5 features + 4 steps
+});

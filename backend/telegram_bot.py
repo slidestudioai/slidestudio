@@ -379,7 +379,8 @@ def kb_home() -> dict:
               else {"text": BTN_HOME_EDITOR, "url": _app_url()})
     # Sozlamalar (til, AI rejimi, Google) — oldin faqat /settings buyrug'i bilan ochilardi, ko'rinadigan tugma yo'q edi
     return {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")], [editor],
-                                [_btn("💳 Balans", "bal"), _btn("⚙️ Sozlamalar", "set")]]}
+                                [_btn("💳 Balans", "bal"), _btn("⚙️ Sozlamalar", "set")],
+                                [_btn("ℹ️ Bot haqida", "about")]]}           # v83: imkoniyatlar, 3 kun saqlash, yo'riqnoma
 
 
 def _menu_button() -> dict:
@@ -4312,7 +4313,7 @@ async def _menu_action(cid: int, user: dict, action: str) -> None:
     elif action == "set":
         await _show_settings(cid, user)
     elif action == "about":
-        await _send(cid, ABOUT, kb_home())
+        await _send_guide(cid)
     elif action == "inv":
         await _show_invite(cid, user)
 
@@ -4372,7 +4373,7 @@ async def _handle_callback(cb: dict) -> None:
     elif data == "dismiss":
         await tg("editMessageReplyMarkup", chat_id=cid, message_id=mid, reply_markup={"inline_keyboard": []})
     elif data == "about":
-        await _send(cid, ABOUT, kb_home())
+        await _send_guide(cid)
     elif data == "set":
         await _show_settings(cid, user)
     elif data.startswith("smode:"):
@@ -4631,6 +4632,15 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
 SMALLTALK_PAUSE = 1.0          # tests set 0
 
 
+async def _send_guide(cid: int) -> None:
+    """v83: «ℹ️ Bot haqida»: imkoniyatlar, 3 kunlik saqlash qoidasi va qisqa yo'riqnoma (saytdagi bilan bir xil matn)."""
+    try:
+        deep_min = int(_deps["usage_payload"]({}).get("deep_min_paid_pages", 10))
+    except Exception:
+        deep_min = 10
+    await _send(cid, _smalltalk.guide_text(_cur_lang(cid), deep_min), {"inline_keyboard": [[_btn("🆕 Yangi slayd", "new")]]})
+
+
 async def _smalltalk_reply(cid: int, user: dict, st: dict, talk: dict) -> None:
     """v83: salomga — 1-marta asosiy salom (balans + menyu), 2-marta jonli javob, 3+ — hazil aralash yo'naltirish
     (oxirgi 5 daqiqada). Har safar boshqacha matn; xabarlar o'chirilmaydi. Rahmat / xayr / «nima qila olasan» ham.
@@ -4678,6 +4688,12 @@ async def _handle_text(chat_id: int, user: dict, text: str) -> None:
         return
     ui = st.get("ui")
     talk = _smalltalk.classify(text) or ({"intent": "greet", "lang": ""} if GREETING_RE.match(text) else None)
+    if talk and ui == "new" and not _new_expired(st):
+        # v83 (egasining qoidasi): «🆕 Yangi slayd» bosilgan — salom filtri ISHLAMAYDI. Har qanday matn, hatto «salom»,
+        # MAVZU: taqdimot yaratiladi (holat slayd tayyor bo'lgach tozalanadi).
+        st.pop("greets", None)
+        _spawn(_run_generate(chat_id, user, " ".join(text.split())[:1500], DEFAULT_SLIDES))
+        return
     if talk:                                   # v83: salom / rahmat / xayr / «nima qila olasan» — AI tokenisiz
         await _smalltalk_reply(chat_id, user, st, talk)
         return

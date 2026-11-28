@@ -176,6 +176,11 @@
   <link rel="stylesheet" href="v54.css?v=8">
   <link rel="stylesheet" href="topup.css?v=4">
   <link rel="stylesheet" href="v68.css?v=2">
+  <style>
+    /* v83: «ℹ️ Yordam / Imkoniyatlar» — small round button in the header */
+    .ss-help-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:0;border-radius:50%;background:transparent;color:#444746;cursor:pointer;flex:none}
+    .ss-help-btn:hover{background:#e8eaed}.ss-help-btn .material-symbols-outlined{font-size:22px}
+  </style>
 </head>
 <body>
 <!-- SEO: sahifaning asosiy sarlavhasi va qisqa tavsifi. Muharrir butun ekranni egallaydi, shuning uchun bu blok
@@ -264,6 +269,9 @@
     </div>
 
     <div class="header-actions">
+      <button class="ss-help-btn" id="ssHelpBtn" onclick="ssShowAbout()" title="Yordam / Imkoniyatlar" aria-label="Yordam / Imkoniyatlar">
+        <span class="material-symbols-outlined">info</span>
+      </button>
       <button class="btn-login" id="googleLoginBtn" onclick="handleGoogleLogin()">
         <span class="material-symbols-outlined" style="color:#4285F4;">account_circle</span>
         <span id="loginBtnText">Login</span>
