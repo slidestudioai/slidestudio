@@ -229,6 +229,8 @@
   // IndexedDB (not localStorage): slides with images are far bigger than localStorage's ~5 MB, and the storage
   // lock in index.html keeps localStorage for the login token only.
   var DB_NAME = 'slide-studio-v40', STORE = 'project';
+  // v83: a draft lives 3 days (here and in the cloud copy, backend/services/drafts.py), then it is not opened again
+  var DRAFT_TTL_MS = 3 * 24 * 3600 * 1000;
   function draftKey(uid) {
     var u = (uid != null) ? uid : (window._ssAuthUid || '');
     return 'draft:' + (u ? String(u) : 'guest');
@@ -336,7 +338,7 @@
       if (sig === lastSavedSig) return;
       if (isPristineDeck()) {
         // foydalanuvchi o'zi hammasini tozalagan bo'lsa — eski qoralama ham qolmasin; boshqa holatda hech narsa yozilmaydi
-        if (savedKeys[key]) { await idbDel(key); delete savedKeys[key]; }
+        if (savedKeys[key]) { await idbDel(key); delete savedKeys[key]; cloudDelete(); }
         lastSavedSig = sig;
         return;
       }
@@ -348,9 +350,11 @@
       }
       if (window.__ssUserLogout) return;
       pruneBlobMap();
-      await idbPut(key, { v: 2, owner: key, title: projectTitle, activeIndex: activeIndex, slides: out, savedAt: Date.now() });
+      var rec = { v: 2, owner: key, title: projectTitle, activeIndex: activeIndex, slides: out, savedAt: Date.now() };
+      await idbPut(key, rec);
       savedKeys[key] = true;
       lastSavedSig = sig;
+      cloudQueue(rec, force);                     // v83: the same draft goes to the account's cloud copy
     } catch (e) { console.warn('[v40] saqlash:', e); }
     finally { saving = false; blobSeen = null; }
   }
@@ -371,10 +375,75 @@
       return true;
     } catch (e) { return true; }
   };
-  /** v79: shu akkauntning qoralamasi qachon saqlangan (ms, yo'q bo'lsa 0) — 36_v45_tgdeck.js «eng oxirgisi» uchun */
+  // =====================================================================
+  // v83: BULUTDAGI NUSXA — bitta akkaunt = bitta oxirgi taqdimot (sayt, Telegram Mini App, telefon brauzeri).
+  // Before, the deck lived only in THIS browser: the Mini App and the computer each had a different one.
+  // Saved ~10 s after the last change (at once when the page is hidden); the newest copy wins when opening.
+  // =====================================================================
+  var cloud = { timer: null, pending: null, busy: false, tooBig: false, savedAt: 0 };
+  function cloudOn() {
+    try {
+      if (typeof window.fetch !== 'function') return false;
+      var t = (typeof supabaseToken !== 'undefined') ? supabaseToken : '';
+      return !!(t && t !== 'dev-token' && window._ssAuthUid && draftKey() !== draftKey(''));
+    } catch (e) { return false; }
+  }
+  async function cloudAuth() {
+    var t = '';
+    try { t = window.ssFreshToken ? await window.ssFreshToken(false) : supabaseToken; } catch (e) { t = (typeof supabaseToken !== 'undefined') ? supabaseToken : ''; }
+    return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t };
+  }
+  function cloudQueue(rec, now) {
+    if (!cloudOn() || cloud.tooBig) return;
+    cloud.pending = { rec: rec, key: draftKey() };
+    clearTimeout(cloud.timer);
+    cloud.timer = setTimeout(cloudFlush, now ? 0 : 10000);
+  }
+  async function cloudFlush() {
+    var job = cloud.pending;
+    if (!job || cloud.busy) return;
+    if (job.key !== draftKey() || window.__ssUserLogout || window.__ssAcctSwitch) { cloud.pending = null; return; }
+    cloud.pending = null; cloud.busy = true;
+    try {
+      var r = await fetch('/api/draft/save', { method: 'POST', headers: await cloudAuth(), keepalive: false,
+        body: JSON.stringify({ deck: job.rec, saved_at: job.rec.savedAt }) });
+      if (r.status === 413) {
+        cloud.tooBig = true;
+        toast('Taqdimot juda katta (ko‘p rasm/video) — faqat shu qurilmada saqlandi.', 'info');
+      } else if (r.ok) {
+        var j = await r.json().catch(function () { return {}; });
+        cloud.savedAt = +j.saved_at || job.rec.savedAt;
+      }
+    } catch (e) { console.warn('[draft] bulutga saqlanmadi', e); }
+    finally { cloud.busy = false; if (cloud.pending) { clearTimeout(cloud.timer); cloud.timer = setTimeout(cloudFlush, 3000); } }
+  }
+  async function cloudLoad() {
+    if (!cloudOn()) return null;
+    try {
+      var r = await fetch('/api/draft/load', { method: 'POST', headers: await cloudAuth(), body: '{}' });
+      if (!r.ok) return null;
+      var j = await r.json();
+      var d = j && j.deck;
+      if (!d || !Array.isArray(d.slides) || !d.slides.length) return null;
+      var at = +j.saved_at || 0;
+      if (at && Date.now() - at > DRAFT_TTL_MS + 3600000) return null;
+      cloud.savedAt = Math.max(cloud.savedAt, at);
+      return Object.assign({}, d, { owner: draftKey(), savedAt: at, fromCloud: true });
+    } catch (e) { return null; }
+  }
+  function cloudDelete() {
+    if (!cloudOn()) return;
+    cloudAuth().then(function (h) { return fetch('/api/draft/delete', { method: 'POST', headers: h, body: '{}' }); }).catch(function () {});
+  }
+  window.ssCloudSavedAt = function () { return cloud.savedAt; };
+
+  /** v79: shu akkauntning qoralamasi qachon saqlangan (ms, yo'q bo'lsa 0) — 36_v45_tgdeck.js «eng oxirgisi» uchun.
+   *  v83: the cloud copy counts too (the newest edit on ANY device of this account). */
   window.ssDraftSavedAt = async function () {
-    try { var rec = await pTimeoutP(idbGet(draftKey()), 3000); return (rec && rec.owner === draftKey() && +rec.savedAt) || 0; }
-    catch (e) { return 0; }
+    var local = 0;
+    try { var rec = await pTimeoutP(idbGet(draftKey()), 3000); local = (rec && rec.owner === draftKey() && +rec.savedAt) || 0; }
+    catch (e) { local = 0; }
+    return Math.max(local, cloud.savedAt || 0, window.__ssDraftSavedAt || 0);
   };
   /** Logout (confirmed): this account's draft + the guest draft are deleted. The old single 'current' key too. */
   window.ssClearSavedProject = function (uid) {
@@ -392,14 +461,37 @@
     try { if (window.__ssAuthStorage && window.__ssAuthStorage.getItem('ss-auth-v39-guest')) return null; } catch (e) {}
     try {
       ownerKey = draftKey();
-      var rec = await pTimeoutP(idbGet(draftKey()), 3000);
-      if (!rec || rec.owner !== draftKey() || !Array.isArray(rec.slides) || !rec.slides.length) return null;
+      var key = draftKey();
+      var pair = await Promise.all([pTimeoutP(idbGet(key), 3000), pTimeoutP(cloudLoad(), 7000)]);
+      var rec = pair[0], cl = pair[1];
+      if (rec && (rec.owner !== key || !Array.isArray(rec.slides) || !rec.slides.length)) rec = null;
+      if (rec && Date.now() - (+rec.savedAt || 0) > DRAFT_TTL_MS) {          // v83: 3 days passed — not opened again
+        idbDel(key).catch(function () {});
+        rec = null;
+      }
+      if (cl && (!rec || (+cl.savedAt || 0) > (+rec.savedAt || 0))) {
+        rec = cl;                                                           // v83: newer on another device of this account
+        idbPut(key, Object.assign({}, cl, { fromCloud: undefined })).catch(function () {});
+      }
+      if (!rec) return null;
       lastSavedSig = '';
       window.__ssDraftSavedAt = +rec.savedAt || 0;               // v79: Mini App — botdagi taqdimot yangiroqmi?
       return rec;
     } catch (e) { return null; }
   };
   function pTimeoutP(p, ms) { return Promise.race([p, new Promise(function (r) { setTimeout(function () { r(null); }, ms); })]); }
+
+  // v83: first sign-in inside the Telegram Mini App (or Google) happens AFTER the start-up restore. If nothing was
+  // made yet, the account's newest deck (cloud copy) is opened now — the user does not have to open any file.
+  window.addEventListener('ss-logged-in', function () {
+    setTimeout(async function () {
+      try {
+        if (!(window.ssIsPristineDeck && window.ssIsPristineDeck())) return;
+        if (typeof initProjectFromUrl !== 'function') return;
+        await initProjectFromUrl();
+      } catch (e) { console.warn('[draft] kirgandan keyin', e); }
+    }, 300);
+  });
 
   // =====================================================================
   // 3) CHAP PANEL: miniatyuralar harakatsiz (GIF birinchi kadr), sakrash yo'q

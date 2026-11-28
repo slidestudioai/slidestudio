@@ -1007,3 +1007,20 @@ $$;
 
 revoke all on function public.apply_refund(text, text, text, int, int, text) from public, anon, authenticated;
 grant execute on function public.apply_refund(text, text, text, int, int, text) to service_role;
+
+
+-- ============================================================================
+-- 21) v83: Muharrirdagi oxirgi taqdimot BULUTDA — har akkauntga bitta, 3 kun saqlanadi
+--     (sayt, Telegram Mini App va telefon brauzeri bir xil akkauntda bir xil taqdimotni ochadi).
+--     backend/services/drafts.py. 3 kundan eski qoralama qaytarilmaydi va o'chiriladi.
+-- ============================================================================
+create table if not exists public.cloud_drafts (
+  user_id    text primary key,
+  title      text not null default '',
+  data       text not null,
+  size_bytes int  not null default 0,
+  saved_ms   bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+create index if not exists cloud_drafts_updated_idx on public.cloud_drafts (updated_at);
+alter table public.cloud_drafts enable row level security;

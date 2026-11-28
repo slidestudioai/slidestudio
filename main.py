@@ -3412,6 +3412,12 @@ except Exception as _cm_err:
 
 # Yordam (Support): foydalanuvchi saytda (⚙️ Sozlamalar → 💬 Yordam) yoki botda (⚙️ Sozlamalar → 💬 Adminga yozish)
 # adminga yozadi; admin sayt admin panelida yoki botdagi admin menyuda (💬 Yordam) o'qiydi va javob beradi.
+try:                                   # v83: the editor's last deck in the cloud (one per account, 3 days)
+    from backend.services.drafts import register_drafts
+    register_drafts(app, {"get_supabase": lambda: supabase, "auth_user": lambda tok: auth_user_cached(tok)})
+except Exception as _dr_err:
+    print(f"[DRAFT] yuklanmadi: {_dr_err}")
+
 try:
     from backend.support import register_support
     register_support(app, {
