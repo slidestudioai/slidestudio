@@ -4628,6 +4628,9 @@ async def _run_chat(chat_id: int, user: dict, text: str) -> None:
         st["busy"] = False
 
 
+SMALLTALK_PAUSE = 1.0          # tests set 0
+
+
 async def _smalltalk_reply(cid: int, user: dict, st: dict, talk: dict) -> None:
     """v83: salomga — 1-marta asosiy salom (balans + menyu), 2-marta jonli javob, 3+ — hazil aralash yo'naltirish
     (oxirgi 5 daqiqada). Har safar boshqacha matn; xabarlar o'chirilmaydi. Rahmat / xayr / «nima qila olasan» ham.
@@ -4650,6 +4653,12 @@ async def _smalltalk_reply(cid: int, user: dict, st: dict, talk: dict) -> None:
         key = talk["intent"]
     text = _smalltalk.reply(key, lang, esc(name), avoid=st.get("talk_last"))
     st["talk_last"] = text
+    # v83: «yozmoqda…» and a short, natural pause (longer text — a little longer), like a person / the AI answering
+    try:
+        await tg("sendChatAction", chat_id=cid, action="typing")
+        await asyncio.sleep(min(1.4, 0.45 + len(text) / 400) * SMALLTALK_PAUSE)
+    except Exception:
+        pass
     await _send(cid, text, kb)
 
 

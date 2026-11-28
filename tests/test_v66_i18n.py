@@ -29,6 +29,7 @@ class _Http:
 
 
 def _bot(monkeypatch):
+    monkeypatch.setattr(tb, "SMALLTALK_PAUSE", 0)
     http = _Http()
     monkeypatch.setattr(tb, "ENABLED", True)
     monkeypatch.setattr(tb, "_http", lambda: http)

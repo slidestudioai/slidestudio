@@ -138,14 +138,46 @@
     if (clear) clear(el);
     try {
       appendAiChatMessage('user', text);
-      appendAiChatMessage('bot', r);
       saveMessageToLocal('user', text);
+      var id = appendAiChatMessage('bot', '💭 ...');
+      typeOut(id, r);
       saveMessageToLocal('model', r);
     } catch (e) { console.warn('[smalltalk]', e); }
     try { if (window.ssPref) ssPref.del('draft'); } catch (e) {}
     try { if (typeof toggleAISidebar === 'function' && inputId !== 'aiSidebarInput') toggleAISidebar(true); } catch (e) {}
     return true;
   }
+  // v83: the answer is «streamed» like a real AI answer — a short «💭 ...» pause, then it is typed out in small
+  // token-like pieces (before it appeared all at once, so it was obvious that it was a ready-made text).
+  var typing = null;
+  function typeOut(id, full) {
+    if (typing) typing.finish();
+    var node = document.getElementById(id), span = node && node.querySelector('.msg-text');
+    if (!span) return;
+    var body = document.getElementById('aiChatBody'), pos = 0, timer = null, done = false;
+    var chars = Array.from(full);                                  // emoji-safe
+    var think = 380 + Math.floor(Math.random() * 320);
+    var tick = Math.max(14, Math.min(32, Math.floor(1500 / Math.max(1, chars.length / 3))));
+    function show() {
+      span.innerText = chars.slice(0, pos).join('');
+      if (body && body.scrollHeight - body.scrollTop - body.clientHeight < 120) body.scrollTop = body.scrollHeight;
+    }
+    function step() {
+      if (done) return;
+      pos = Math.min(chars.length, pos + 1 + Math.floor(Math.random() * 4));    // 1–4 characters, like tokens
+      show();
+      if (pos >= chars.length) return finish();
+      timer = setTimeout(step, tick + Math.floor(Math.random() * tick));
+    }
+    function finish() {
+      if (done) return;
+      done = true; clearTimeout(timer); pos = chars.length; show();
+      if (typing && typing.id === id) typing = null;
+    }
+    typing = { id: id, finish: finish };
+    timer = setTimeout(step, think);
+  }
+
   function wrap(name, inputId, clear) {
     var orig = window[name];
     if (typeof orig !== 'function' || orig.__ssTalk) return;
@@ -160,7 +192,7 @@
     wrap('sendSidebarAiPrompt', 'aiSidebarInput', function (el) { el.value = ''; try { autoGrowSidebarInput(el); } catch (e) {} });
     wrap('sendBottomAiPrompt', 'bottomAiTextarea', function (el) { el.value = ''; });
   }
-  window.SSSmallTalk = { load: load, classify: classify, answer: answer, norm: norm };
+  window.SSSmallTalk = { load: load, classify: classify, answer: answer, norm: norm, busy: function () { return !!typing; } };
   load();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install); else install();
   setTimeout(install, 1500);
